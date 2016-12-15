@@ -31,11 +31,10 @@ function handleGet(req) {
 
     for(var i = 0 ; i < queryRes.hits.length; i++ ) {
         if(queryRes.hits[i].type){
-            queryRes.hits[i].changeFreq = changefreq[queryRes.hits[i].type] ? changefreq[queryRes.hits[i].type] : "Monthly" ;
+            queryRes.hits[i].changeFreq = changefreq[queryRes.hits[i].type] ? changefreq[queryRes.hits[i].type] : "monthly" ;
         } else {
             queryRes.hits = null;
         }
-        //libs.util.log(queryRes.hits[i].changeFreq + " ----> " + queryRes.hits[i].type);
     }
 
     var model = {
