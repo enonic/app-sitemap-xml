@@ -1,7 +1,9 @@
 # app-sitemap-xml
 
 This app creates the sitemap.xml file for your site. It includes the main tags of sitemap (`<loc>`, `<lastmod>` and `<changefreq>`). Priority tag has the default value of 0.5. App's features can be extended based on your request. 
+
 The app has a setting to add intended content types and their change frequency to sitemap.xml file. It aslo adds a controller mapping to the path of sitemap.xml on the root of site.
+
 Check out [Sitemaps XML format] (https://www.sitemaps.org/protocol.html) to find more about it.
 
 ## Installation
