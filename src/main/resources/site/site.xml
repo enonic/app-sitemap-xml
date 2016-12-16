@@ -2,13 +2,13 @@
 <site>
   <config>
     <item-set name="siteMap">
-      <label>site map </label>
+      <label>Mappings</label>
       <occurrences maximum="0" minimum="0"/>
       <items>
         <input name="contentType" type="ContentTypeFilter">
           <label>Content Type</label>
           <occurrences maximum="1" minimum="0"/>
-          <config/>
+          <help-text>Adds the selected content type to the sitemap.xml</help-text>
         </input>
         <input name="updatePeriod" type="ComboBox">
           <label>Update period</label>
@@ -20,6 +20,7 @@
             <option value="monthly">Monthly</option>
             <option value="yearly">Yearly</option>
           </config>
+          <help-text>For the selected content type, set this update frequency in xml file (default is "monthly")</help-text>
         </input>
       </items>
     </item-set>
