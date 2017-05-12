@@ -8,12 +8,14 @@ buildscript {
     }
 
     dependencies {
+		  classpath 'com.enonic.gradle:gradle-defaults:1.0.1'
         classpath "com.enonic.xp:gradle-plugin:${xpVersion}"
     }
 }
 
 apply plugin: 'com.enonic.xp.app'
-apply plugin: 'maven-publish'
+apply plugin: 'com.enonic.defaults'
+apply plugin: 'maven'
 
 
 app {
@@ -38,18 +40,5 @@ repositories {
     jcenter()
     maven {
         url 'http://repo.enonic.com/public'
-    }
-}
-
-publishing {
-    publications {
-        mavenJava( MavenPublication ) {
-            from components.java
-        }
-    }
-    repositories {
-        maven {
-            url 'http://repo.enonic.net/artifactory/public'
-        }
     }
 }
