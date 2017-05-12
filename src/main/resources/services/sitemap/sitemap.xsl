@@ -26,7 +26,7 @@
     <xsl:template match="item">
         <url>
             <loc>
-                <xsl:value-of select="portal:pageUrl(concat('_id=', _id))"/>
+                <xsl:value-of select="portal:pageUrl(concat('_id=', _id), '_type=absolute')"/>
             </loc>
             <lastmod>
                 <xsl:value-of select="substring-before(modifiedTime, 'T')"/>
