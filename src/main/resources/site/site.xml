@@ -14,11 +14,13 @@
           <label>Update period</label>
           <occurrences  maximum="1" minimum="0"/>
           <config>
+            <option value="always">Always</option>
             <option value="hourly">Hourly</option>
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
             <option value="yearly">Yearly</option>
+            <option value="never">Never</option>
           </config>
           <help-text>For the selected content type, set this update frequency in xml file (default is "monthly")</help-text>
         </input>
