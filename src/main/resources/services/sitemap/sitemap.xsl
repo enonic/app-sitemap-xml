@@ -34,7 +34,7 @@
             <changefreq>
                 <xsl:value-of select="changeFreq"/>
             </changefreq>
-				<piority>0.5</piority>
+				<priority>0.5</priority>
         </url>
     </xsl:template>
 
