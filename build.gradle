@@ -20,7 +20,7 @@ apply plugin: 'maven'
 
 app {
     name = project.appName
-    displayName = project.displayName
+    displayName = 'Sitemap XML'
     vendorName = 'Enonic AS'
     vendorUrl = 'http://enonic.com'
 }
