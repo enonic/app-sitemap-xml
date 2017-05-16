@@ -10,7 +10,7 @@ var globals = {
 	updatePeriod: "monthly",
 	priority: "0.5",
 	alwaysAdd: "portal:site"
-}
+};
 
 function handleGet(req) {
 
@@ -45,25 +45,27 @@ function handleGet(req) {
 	 var contentRoot = '/content' + folderPath + '/';
 	 var query = '_path LIKE "' + contentRoot + '*" OR _path = "' + contentRoot + '"';
 
-    var queryRes = libs.content.query({
+    var result = libs.content.query({
         query: query,
         sort : 'modifiedTime DESC',
         contentTypes: arrContentTypes,
         count: 1000,
     });
 
+	 libs.util.log(result);
+
 	 // Go through the results and add the corresponding settings for each match.
-    for(var i = 0 ; i < queryRes.hits.length; i++ ) {
-        if(queryRes.hits[i].type){
-            queryRes.hits[i].changeFreq = changefreq[queryRes.hits[i].type];
-            queryRes.hits[i].priority = priority[queryRes.hits[i].type];
+    for(var i = 0 ; i < result.hits.length; i++ ) {
+        if(result.hits[i].type){
+            result.hits[i].changeFreq = changefreq[result.hits[i].type];
+            result.hits[i].priority = priority[result.hits[i].type];
         } else {
-            queryRes.hits = null;
+            result.hits = null;
         }
     }
 
     var model = {
-        result: queryRes.hits
+        result: result.hits
     };
 
     return {
