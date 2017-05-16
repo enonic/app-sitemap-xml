@@ -33,15 +33,15 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 
 Cudo's to [@nerdegutt](https://github.com/nerdegutt) for suggestions and pull requests that are part of this release.
 
-**Code improvements**
+**Code improvements**:
 * Refactoring and improvements of code.
 * Move most code logic out of view file and into controller.
 * Send much less (a 20th) of the data from controller to view (XSL).
-* Required XP version: 6.10.
+* Required XP version: **6.10**.
 
-**New functionality**
-* Automatically add the site content, if not added already.
-* Let users control `priority` field from app settings.
+**New functionality**:
+* Automatically add the site content to sitemap.xml output, if not added already in app settings.
+* Let users control `priority` field from app settings per content type.
 * Only fetch content from the current site, even if mapped content types exists on other sites.
 * If present, the robot settings from [SEO Meta Fields](https://market.enonic.com/vendors/enonic/com.enonic.app.metafields) app will be respected and used to filter the sitemap items.
 
