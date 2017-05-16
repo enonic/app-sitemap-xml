@@ -44,11 +44,22 @@ function handleGet(req) {
 	 var contentRoot = '/content' + folderPath + '';
 	 var query = '_path LIKE "' + contentRoot + '/*" OR _path = "' + contentRoot + '"';
 
+	 // Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
     var result = libs.content.query({
         query: query,
         sort : 'modifiedTime DESC',
         contentTypes: arrContentTypes,
         count: 1000,
+		  filters: {
+		    boolean: {
+		      mustNot: {
+		        hasValue: {
+		          field: "x.com-enonic-app-metafields.meta-data.blockrobots",
+		          values: "true"
+				  }
+		      }
+			 }
+		  }
     });
 
 	 // Go through the results and add the corresponding settings for each match.
