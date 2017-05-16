@@ -54,7 +54,7 @@ function handleGet(req) {
 		    boolean: {
 		      mustNot: {
 		        hasValue: {
-		          field: "x.com-enonic-app-metafields.meta-data.blockrobots",
+		          field: "x.com-enonic-app-metafields.meta-data.blockRobots",
 		          values: "true"
 				  }
 		      }
