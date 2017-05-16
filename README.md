@@ -31,6 +31,8 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 
 ### Version 1.1.0
 
+Cudo's to @nerdegutt for suggestions and pull requests that are part of this release.
+
 **Code improvements**
 * Refactoring and improvements of code.
 * Move most code logic out of view file and into controller.
