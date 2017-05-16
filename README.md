@@ -25,7 +25,7 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 ## Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
-| 1.1.0 | 6.8.0 |
+| 1.1.0 | 6.10.2 |
 | 1.0.1 | 6.8.0 |
 | 1.0.0 | 6.8.0 |
 
@@ -38,6 +38,8 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 * Send much less (a 20th) of the data from controller to view (XSL).
 * Let users control priority field from app settings.
 * Only fetch content from the current site, even if mapped content types exists on other sites.
+* If present, the robot settings from [SEO Meta Fields](https://market.enonic.com/vendors/enonic/com.enonic.app.metafields) app will be respected and used to filter the sitemap items.
+* Required XP version: 6.10.
 
 ### Version 1.0.1
 
