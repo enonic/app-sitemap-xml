@@ -24,7 +24,7 @@ function handleGet(req) {
     if (siteMapSettings) {
         for (var j = 0; j < siteMapSettings.length; j++) {
             var cty = siteMapSettings[j].contentType || "";
-				if (cty === globals.alwaysAdd) { siteAdded = true; log.info("site added by user"); } // To be able to automatically add site content type if not already added by user.
+				if (cty === globals.alwaysAdd) { siteAdded = true; } // To be able to automatically add site content type if not already added by user.
 				arrContentTypes.push(cty);
             changefreq[cty] = siteMapSettings[j].updatePeriod || globals.updatePeriod;
             priority[cty] = siteMapSettings[j].priority || globals.priority;
@@ -37,13 +37,12 @@ function handleGet(req) {
 		 arrContentTypes.push(cty);
 		 changefreq[cty] = "Hourly";
 		 priority[cty] = "1.0";
-		 log.info("site added from code");
 	 }
 
 	 // Only allow content from current Site to populate the sitemap.
 	 var folderPath = site._path;
-	 var contentRoot = '/content' + folderPath + '/';
-	 var query = '_path LIKE "' + contentRoot + '*" OR _path = "' + contentRoot + '"';
+	 var contentRoot = '/content' + folderPath + '';
+	 var query = '_path LIKE "' + contentRoot + '/*" OR _path = "' + contentRoot + '"';
 
     var result = libs.content.query({
         query: query,
@@ -51,8 +50,6 @@ function handleGet(req) {
         contentTypes: arrContentTypes,
         count: 1000,
     });
-
-	 libs.util.log(result);
 
 	 // Go through the results and add the corresponding settings for each match.
 	 var items = [];
@@ -71,8 +68,6 @@ function handleGet(req) {
             result.hits = null;
         }
     }
-
-	 libs.util.log(items);
 
     var model = {
         result: items
