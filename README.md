@@ -25,10 +25,19 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 ## Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
+| 1.1.0 | 6.8.0 |
 | 1.0.1 | 6.8.0 |
 | 1.0.0 | 6.8.0 |
 
 ## Changelog
+
+### Version 1.1.0
+
+* Refactoring and improvements of code.
+* Move most code logic out of view file and into controller.
+* Send much less (a 20th) of the data from controller to view (XSL).
+* Let users control priority field from app settings.
+* Only fetch content from the current site, even if mapped content types exists on other sites.
 
 ### Version 1.0.1
 
