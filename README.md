@@ -1,12 +1,10 @@
 # Sitemap.xml
 
-This app creates the sitemap.xml file for your site. It includes the main tags of sitemap (`<loc>`, `<lastmod>`, `<changefreq>` and `<priority>`).
+This app creates the sitemap.xml file for your site. It includes the required tags of a sitemap.xml (`<loc>`, `<lastmod>`, `<changefreq>` and `<priority>`). The app's features are very basic, so sending pull requests are encouraged.
 
-The app's features are very basic, so forking (or sending pull requests with improvements) are encouraged.
+The app has a setting to add any number of content types and their `change frequency` and `priority` to the sitemap.xml file. It also adds a controller mapping to the path of `sitemap.xml` on the root of the site - `[yoursite.something]/sitemap.xml`.
 
-The app has a setting to add content types and their `change frequency` and `priority` to the sitemap.xml file. It also adds a controller mapping to the path of sitemap.xml on the root of the site - `[yoursite.something]/sitemap.xml`.
-
-Be aware that only content on the current site will be added to a site's sitemap.
+Be aware that only content from the current site will be added to a site's sitemap.
 
 ## Defaults
 
@@ -33,13 +31,17 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 
 ### Version 1.1.0
 
+**Code improvements**
 * Refactoring and improvements of code.
 * Move most code logic out of view file and into controller.
 * Send much less (a 20th) of the data from controller to view (XSL).
-* Let users control priority field from app settings.
+* Required XP version: 6.10.
+
+**New functionality**
+* Automatically add the site content, if not added already.
+* Let users control `priority` field from app settings.
 * Only fetch content from the current site, even if mapped content types exists on other sites.
 * If present, the robot settings from [SEO Meta Fields](https://market.enonic.com/vendors/enonic/com.enonic.app.metafields) app will be respected and used to filter the sitemap items.
-* Required XP version: 6.10.
 
 ### Version 1.0.1
 
