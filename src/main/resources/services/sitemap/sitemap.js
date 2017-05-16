@@ -22,11 +22,22 @@ function handleGet(req) {
         }
     }
 
+    var queryArr = [];
+
+    // Limit content to current site
+    var site = libs.portal.getSite();
+    if (site && site._path) {
+        queryArr.push('_path like "/content' + site._path + '/*"');
+    }
+
+    // Respect robot blocking from SEO plugin
+    queryArr.push('x.com-enonic-app-metafields.meta-data.blockRobots != "true"');
+
     var queryRes = libs.content.query({
-        query: '',
+        query: queryArr.join(' AND '),
         sort : 'modifiedTime DESC',
         contentTypes: arrContentTypes,
-        count: 1000,
+        count: 1000
     });
 
     for(var i = 0 ; i < queryRes.hits.length; i++ ) {
