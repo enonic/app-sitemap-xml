@@ -21,7 +21,7 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 ### Version 1.0.1
 
 * **Bug fixed:** Generate absolute URLs for `<loc>`-field.  
-* **Bug fixed:** Add missing `<priority>`-field (mention in the docs but not really added).  
+* **Bug fixed:** Add missing `<priority>`-field (mentioned in the docs but not added in output).
 * Add two more options to the field `<changefreq>` - "always" and "never", according to specification.  
 * Upgrade wrappers and build files to Gradle 3.
 
