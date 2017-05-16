@@ -55,17 +55,27 @@ function handleGet(req) {
 	 libs.util.log(result);
 
 	 // Go through the results and add the corresponding settings for each match.
+	 var items = [];
     for(var i = 0 ; i < result.hits.length; i++ ) {
-        if(result.hits[i].type){
-            result.hits[i].changeFreq = changefreq[result.hits[i].type];
-            result.hits[i].priority = priority[result.hits[i].type];
+		  var item = {};
+        if (result.hits[i].type) {
+            item.changeFreq = changefreq[result.hits[i].type];
+            item.priority = priority[result.hits[i].type];
+				item.url = libs.portal.pageUrl({
+					id: result.hits[i]._id,
+					type: 'absolute'
+				});
+				item.modifiedTime = result.hits[i].modifiedTime;
+				items.push(item);
         } else {
             result.hits = null;
         }
     }
 
+	 libs.util.log(items);
+
     var model = {
-        result: result.hits
+        result: items
     };
 
     return {
