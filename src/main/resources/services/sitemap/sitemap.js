@@ -49,7 +49,7 @@ function handleGet(req) {
         query: query,
         sort : 'modifiedTime DESC',
         contentTypes: arrContentTypes,
-        count: 1000,
+        count: 10000,
 		  filters: {
 		    boolean: {
 		      mustNot: {
