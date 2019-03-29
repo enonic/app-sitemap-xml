@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
-  <config>
+  <form>
     <item-set name="siteMap">
       <label>Mappings</label>
       <occurrences maximum="0" minimum="0"/>
@@ -45,7 +45,7 @@
         </input>
       </items>
     </item-set>
-  </config>
+  </form>
   <mappings>
     <mapping controller="/services/sitemap/sitemap.js" order="10">
       <pattern>/sitemap.xml</pattern>
