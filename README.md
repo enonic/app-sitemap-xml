@@ -23,6 +23,8 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 ## Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
+| 1.2.0 | 7.0.0 |
+| 1.1.1 | 6.10.2 |
 | 1.1.0 | 6.10.2 |
 | 1.0.1 | 6.8.0 |
 | 1.0.0 | 6.8.0 |
