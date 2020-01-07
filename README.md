@@ -6,6 +6,9 @@ The app has a setting to add any number of content types and their `change frequ
 
 Be aware that only content from the current site will be added to a site's sitemap.
 
+The sitemap has a limit of 1000 pages. You should only include the pages that a crawler can not find by itself, or the main pages of you site. 
+Main pages are usually all the pages available from the main menu.
+
 ## Defaults
 
 The `<priority>` tag has the default value of 0.5.
@@ -23,6 +26,7 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 ## Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
+| 1.3.0 | 7.0.0 |
 | 1.2.0 | 7.0.0 |
 | 1.1.1 | 6.10.2 |
 | 1.1.0 | 6.10.2 |
@@ -30,6 +34,11 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 | 1.0.0 | 6.8.0 |
 
 ## Changelog
+
+
+### Version 1.3.0
+
+Improvments, and limiting the sitemap to 1000 sites.
 
 ### Version 1.1.0
 
