@@ -17,8 +17,8 @@ dependencies {
     compile "com.enonic.xp:portal-api:${xpVersion}"
     include "com.enonic.xp:lib-content:${xpVersion}"
     include "com.enonic.xp:lib-portal:${xpVersion}"
-    include "com.enonic.lib:lib-xslt:2.0.0-RC1"
-    include 'com.enonic.lib:lib-util:2.0.0-RC1'
+    include "com.enonic.lib:lib-xslt:2.0.0"
+    include "com.enonic.lib:lib-util:2.2.1"
 }
 
 repositories {
