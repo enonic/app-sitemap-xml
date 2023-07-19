@@ -70,7 +70,7 @@ function handleGet(req) {
             item.changeFreq = changefreq[result.hits[i].type];
             item.priority = priority[result.hits[i].type];
 				item.url = libs.portal.pageUrl({
-					id: result.hits[i]._id,
+                    path: result.hits[i]._path,
 					type: 'absolute'
 				});
 				item.modifiedTime = result.hits[i].modifiedTime;
