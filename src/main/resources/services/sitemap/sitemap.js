@@ -6,10 +6,10 @@ var libs = {
 };
 
 var globals = {
-	view: resolve('sitemap.xsl'),
-	updatePeriod: "monthly",
-	priority: "0.5",
-	alwaysAdd: "portal:site"
+    view: resolve('sitemap.xsl'),
+    updatePeriod: "monthly",
+    priority: "0.5",
+    alwaysAdd: "portal:site"
 };
 
 function handleGet(req) {
@@ -24,8 +24,8 @@ function handleGet(req) {
     if (siteMapSettings) {
         for (var j = 0; j < siteMapSettings.length; j++) {
             var cty = siteMapSettings[j].contentType || "";
-				if (cty === globals.alwaysAdd) { siteAdded = true; } // To be able to automatically add site content type if not already added by user.
-				arrContentTypes.push(cty);
+            if (cty === globals.alwaysAdd) { siteAdded = true; } // To be able to automatically add site content type if not already added by user.
+            arrContentTypes.push(cty);
             changefreq[cty] = siteMapSettings[j].updatePeriod || globals.updatePeriod;
             priority[cty] = siteMapSettings[j].priority || globals.priority;
         }
@@ -44,10 +44,10 @@ function handleGet(req) {
     var contentRoot = '/content' + folderPath + '';
     var query = '_path LIKE "' + contentRoot + '/*" OR _path = "' + contentRoot + '"';
 
-     // Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
+    // Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
     var result = libs.content.query({
         query: query,
-        sort : 'modifiedTime DESC',
+        sort: 'modifiedTime DESC',
         contentTypes: arrContentTypes,
         count: maxItems,
         filters: {
@@ -62,19 +62,19 @@ function handleGet(req) {
         }
     });
 
-	 // Go through the results and add the corresponding settings for each match.
+    // Go through the results and add the corresponding settings for each match.
     var items = [];
-    for(var i = 0 ; i < result.hits.length; i++ ) {
+    for (var i = 0; i < result.hits.length; i++) {
         var item = {};
         if (result.hits[i].type) {
             item.changeFreq = changefreq[result.hits[i].type];
             item.priority = priority[result.hits[i].type];
-				item.url = libs.portal.pageUrl({
-					id: result.hits[i]._id,
-					type: 'absolute'
-				});
-				item.modifiedTime = result.hits[i].modifiedTime;
-				items.push(item);
+            item.url = libs.portal.pageUrl({
+                path: result.hits[i]._path,
+                type: 'absolute'
+            });
+            item.modifiedTime = result.hits[i].modifiedTime;
+            items.push(item);
         } else {
             result.hits = null;
         }
@@ -84,9 +84,16 @@ function handleGet(req) {
         result: items
     };
 
-    return {
-        contentType: 'text/xml',
-        body: libs.xslt.render(globals.view, model)
-    };
+    if (req.headers['Content-Type'] === 'application/json') {
+        return {
+            contentType: 'application/json',
+            body: model.result,
+        }
+    } else {
+        return {
+            contentType: 'text/xml',
+            body: libs.xslt.render(globals.view, model)
+        };
+    }
 }
 exports.get = handleGet;
