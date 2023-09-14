@@ -9,6 +9,25 @@
         <regexp>^[0-9]*$</regexp>
       </config>
     </input>
+    <input name="overrideDomain" type="TextLine">
+      <label>Override the generated domain</label>
+      <help-text>For instance "https://enonic.com"</help-text>
+      <occurrences minimum="0" maximum="1"/>
+      <config>
+        <regexp>^https:\/\/[^\/]+$</regexp>
+      </config>
+    </input>
+    <item-set name="ignoreList">
+      <label>Ignore list</label>
+      <help-text>For instance "/content/test_folder/*"</help-text>
+      <occurrences maximum="0" minimum="0"/>
+      <items>
+        <input name="path" type="TextLine">
+          <label>Path to ignore</label>
+          <occurrences maximum="1" minimum="0"/>
+        </input>
+      </items>
+    </item-set>
     <item-set name="siteMap">
       <label>Mappings</label>
       <occurrences maximum="0" minimum="0"/>
