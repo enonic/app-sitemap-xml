@@ -1,8 +1,8 @@
- const portalLib = require('/lib/xp/portal');
- const xsltLib = require('/lib/xslt');
- const gridLib = require('/lib/xp/grid');
+const portalLib = require('/lib/xp/portal');
+const xsltLib = require('/lib/xslt');
+const gridLib = require('/lib/xp/grid');
 
- const sitemapLib = require('/lib/sitemap');
+const sitemapLib = require('/lib/sitemap');
 
 const handleGet = (req) => {
   const start = Date.now();
