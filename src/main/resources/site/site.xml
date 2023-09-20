@@ -60,6 +60,7 @@
         <allowContentType>media:code</allowContentType>
         <allowPath>${site}</allowPath>
       </config>
+      <help-text>Upload and select sitemap.xml files that you can add to your custom sitemapindex.xml page</help-text>
     </input>
   </form>
   <mappings>
