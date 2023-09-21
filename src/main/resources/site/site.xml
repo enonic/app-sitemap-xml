@@ -60,12 +60,15 @@
         <allowContentType>media:code</allowContentType>
         <allowPath>${site}</allowPath>
       </config>
-      <help-text>Upload and select sitemap.xml files that you can add to your custom sitemapindex.xml page</help-text>
+      <help-text>Adds the selected sitemap.xml files to the sitemapindex.xml</help-text>
     </input>
   </form>
   <mappings>
     <mapping controller="/services/sitemap/sitemap.js" order="10">
       <pattern>/sitemap\.xml</pattern>
+    </mapping>
+    <mapping controller="/services/sitemapindex/sitemapindex.js">
+      <pattern>/sitemapindex\.xml</pattern>
     </mapping>
   </mappings>
 </site>
