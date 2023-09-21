@@ -1,23 +1,21 @@
-var libs = {
-    portal: require('/lib/xp/portal'),
-    content: require('/lib/xp/content'),
-    util: require('/lib/util'),
-};
+const portalLib = require('/lib/xp/portal');
+const contentLib = require('/lib/xp/content');
+const utilLib = require('/lib/util');
 
-function get() {
-    var sitemapXmlAppConfig = libs.portal.getSiteConfig().sitemapXmlFileIds ? libs.portal.getSiteConfig().sitemapXmlFileIds : [];
+const handleGet = () => {
+    const sitemapXmlAppConfig = portalLib.getSiteConfig().sitemapXmlFileIds ? portalLib.getSiteConfig().sitemapXmlFileIds : [];
 
-    var sitemapIndexXmlList = libs.content.query({
+    const sitemapIndexXmlList = contentLib.query({
         start: 0,
         count: sitemapXmlAppConfig.length + 1,
         filters: {
             ids: {
-                values: libs.util.data.forceArray(sitemapXmlAppConfig).map((id) => id),
+                values: utilLib.data.forceArray(sitemapXmlAppConfig).map((id) => id),
             },
         },
     }).hits.map((content) => {
         return {
-            url: libs.portal.attachmentUrl({
+            url: portalLib.attachmentUrl({
                 id: content._id,
                 type: 'absolute',
             }),
@@ -25,15 +23,15 @@ function get() {
         }
     });
 
-    var body = `<?xml version="1.0" encoding="UTF-8"?>
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
     <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
         ${sitemapIndexXmlList
             .map((sitemapXml) => {
-            return `<sitemap>
-                <loc>${sitemapXml.url}</loc>
-                <lastmod>${sitemapXml.lastModified}</lastmod>
-                </sitemap>`
-            })
+                return `<sitemap>
+                    <loc>${sitemapXml.url}</loc>
+                    <lastmod>${sitemapXml.lastModified}</lastmod>
+                    </sitemap>`
+                })
             .join('')}
     </sitemapindex>`;
 
@@ -42,4 +40,4 @@ function get() {
         body,
     };
 }
-exports.get = get;
+exports.get = handleGet
