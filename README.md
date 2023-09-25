@@ -26,6 +26,7 @@ debugLog = false # Show debug logs (uses log.info, no logback yet)
 xsltRender = false # Use XSLT to render XML. Default is to use plain string concat which is much more performant
 scheduledSync = true # Should a full sync be scheduled 
 cronSchedule = 0 4 * * 1,3 # Cron schedule for when a full sync should run if enabled (timezone GMT-2:00) 
+cronTimeZone = 'Europe/Oslo' # Unix Crontab timezone
 syncAtAppStartup = true # Do a full sync when starting the app
 syncOnPublish = true # Update the sitemap when content is published
 ```

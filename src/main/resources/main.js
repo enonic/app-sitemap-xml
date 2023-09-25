@@ -3,6 +3,7 @@ try {
   
   const JOB_NAME = 'sitemap-full-sync';
   const cronSchedule = app.config.cronSchedule || '0 4 * * 1,3'; // At 04:00 on Monday and Wednesday
+  const cronTimeZone = app.config.cronTimeZone || 'Europe/Oslo';
   const doInitialSync = app.config.syncAtAppStartup !== 'false';
   const doScheduledSync = app.config.scheduledSync !== 'false';
   const doSyncOnPublish = app.config.syncOnPublish !== 'false';
@@ -35,7 +36,7 @@ try {
           descriptor: 'com.enonic.app.sitemapxml:fullSync',
           description: 'Generate Sitemap JSON for all content projects and sites',
           enabled: true,
-          schedule: { type: 'CRON', value: cronSchedule, timeZone: 'GMT-2:00' }
+          schedule: { type: 'CRON', value: cronSchedule, timeZone: cronTimeZone }
         });
 
         sitemapLib.debugLog(JSON.stringify(newJob, null, 4));
@@ -48,7 +49,6 @@ try {
       eventLib.listener({
         type: 'node.pushed',
         callback: (event) => {
-          log.info(JSON.stringify(event, null, 4));
           sitemapLib.debugLog(`Sitemap - Received event ${event.type}`);
           const nodes = event.data.nodes.filter((n) => n.repo.indexOf('com.enonic.cms') !== -1 && n.branch == 'master' && n.path.startsWith('/content/'))
       
@@ -65,7 +65,6 @@ try {
       eventLib.listener({
         type: 'node.deleted',
         callback: (event) => {
-          log.info(JSON.stringify(event, null, 4));
           sitemapLib.debugLog(`Sitemap - Received event ${event.type}`);
           const nodes = event.data.nodes.filter((n) => n.repo.indexOf('com.enonic.cms') !== -1 && n.branch == 'master' && n.path.startsWith('/content/'))
       
