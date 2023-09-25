@@ -33,14 +33,24 @@ syncOnPublish = true # Update the sitemap when content is published
 A **full sync** is running through all content projects(repos) and sites, and generating sitemaps for each one and storing them in a shared map.
 All syncs are only run on master node.
 
-## Installation
+# Sitemapindex.xml
+
+You can also create a sitemapindex.xml of uploaded XML files. It a controller mapping to the path of `sitemapindex.xml` on the root of the site - `[yoursite.something]/sitemapindex.xml`.
+
+This list is generated from uploaded/selected files in the site config.
+
+## Specification
+
+Check out [Sitemaps index XML format](https://www.sitemaps.org/protocol.html#index) to learn more about how it all works.
+
+# Installation
 
 Check Enonic Market for further details on installing apps in XP. You have multiple options. The easiest way is to just go to the Application admin tool inside Enonic XP and hit the "Install" button, now find this app and click "Install". Done!
 
-### Build locally
+## Build locally
 Build artifact with `enonic project build`, app JAR file can then be found in `build/libs/sitemapxml.jar`. This can be drag-n-drop installed in Application admin tool.
 
-## Releases and Compatibility
+# Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
 | 2.0.0 | 7.12.0 |
@@ -52,11 +62,11 @@ Build artifact with `enonic project build`, app JAR file can then be found in `b
 | 1.0.1 | 6.8.0 |
 | 1.0.0 | 6.8.0 |
 
-## Changelog
+# Changelog
 
 **Version 1.3 and newer see releases**
 
-### Version 1.1.0
+## Version 1.1.0
 
 Cudo's to [@nerdegutt](https://github.com/nerdegutt) for suggestions and pull requests that are part of this release.
 
@@ -72,13 +82,13 @@ Cudo's to [@nerdegutt](https://github.com/nerdegutt) for suggestions and pull re
 * Only fetch content from the current site, even if mapped content types exists on other sites.
 * If present, the robot settings from [SEO Meta Fields](https://market.enonic.com/vendors/enonic/com.enonic.app.metafields) app will be respected and used to filter the sitemap items.
 
-### Version 1.0.1
+## Version 1.0.1
 
 * **Bug fixed:** Generate absolute URLs for `<loc>`-field.
 * **Bug fixed:** Add missing `<priority>`-field (mentioned in the docs but not added in output).
 * Add two more options to the field `<changefreq>` - "always" and "never", according to specification.
 * Upgrade wrappers and build files to Gradle 3.
 
-### Version 1.0.0
+## Version 1.0.0
 
 * First release
