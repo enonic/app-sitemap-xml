@@ -45,10 +45,22 @@
         </input>
       </items>
     </item-set>
+    <input name="sitemapXmlFileIds" type="MediaSelector">
+      <label>Sitemap XML files</label>
+      <occurrences minimum="0" maximum="0" />
+      <config>
+        <allowContentType>media:code</allowContentType>
+        <allowPath>${site}</allowPath>
+      </config>
+      <help-text>Adds the selected sitemap.xml files to the sitemapindex.xml</help-text>
+    </input>
   </form>
   <mappings>
     <mapping controller="/services/sitemap/sitemap.js" order="10">
       <pattern>/sitemap\.xml</pattern>
+    </mapping>
+    <mapping controller="/services/sitemapindex/sitemapindex.js">
+      <pattern>/sitemapindex\.xml</pattern>
     </mapping>
   </mappings>
 </site>
