@@ -1,14 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
   <form>
-    <input name="maxItems" type="TextLine">
-      <label>Max included items</label>
-      <occurrences maximum="1" minimum="1"/>
-      <default>10000</default>
-      <config>
-        <regexp>^[0-9]*$</regexp>
-      </config>
-    </input>
     <item-set name="siteMap">
       <label>Mappings</label>
       <occurrences maximum="0" minimum="0"/>

@@ -16,14 +16,34 @@ The site content itself will be added automatically with a `priority` set to `1.
 
 Check out [Sitemaps XML format](https://www.sitemaps.org/protocol.html) to learn more about how it all works.
 
+## Config
+Added in version 2.0.0.
+Configuration can be put in `com.enonic.app.sitemapxml.cfg`.
+
+Properties and their defaults are (remove comments if copying directly):
+```
+debugLog = false # Show debug logs (uses log.info, no logback yet)
+xsltRender = false # Use XSLT to render XML. Default is to use plain string concat which is much more performant
+scheduledSync = true # Should a full sync be scheduled 
+cronSchedule = 0 4 * * 1,3 # Cron schedule for when a full sync should run if enabled (timezone GMT-2:00) 
+cronTimeZone = 'Europe/Oslo' # Unix Crontab timezone
+syncAtAppStartup = true # Do a full sync when starting the app
+syncOnPublish = true # Update the sitemap when content is published
+```
+A **full sync** is running through all content projects(repos) and sites, and generating sitemaps for each one and storing them in a shared map.
+All syncs are only run on master node.
+
 ## Installation
 
 Check Enonic Market for further details on installing apps in XP. You have multiple options. The easiest way is to just go to the Application admin tool inside Enonic XP and hit the "Install" button, now find this app and click "Install". Done!
 
+### Build locally
+Build artifact with `enonic project build`, app JAR file can then be found in `build/libs/sitemapxml.jar`. This can be drag-n-drop installed in Application admin tool.
+
 ## Releases and Compatibility
 | Version | XP version |
 | ------------- | ------------- |
-| 1.5.0 | 7.12.0 |
+| 2.0.0 | 7.12.0 |
 | 1.4.0 | 7.1.0 |
 | 1.3.0 | 7.1.0 |
 | 1.2.0 | 7.0.0 |

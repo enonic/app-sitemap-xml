@@ -1,99 +1,89 @@
-var libs = {
-    portal: require('/lib/xp/portal'),
-    content: require('/lib/xp/content'),
-    util: require('/lib/util'),
-    xslt: require('/lib/xslt')
-};
+const portalLib = require('/lib/xp/portal');
+const xsltLib = require('/lib/xslt');
+const gridLib = require('/lib/xp/grid');
 
-var globals = {
-    view: resolve('sitemap.xsl'),
-    updatePeriod: "monthly",
-    priority: "0.5",
-    alwaysAdd: "portal:site"
-};
+const sitemapLib = require('/lib/sitemap');
 
-function handleGet(req) {
-    var site = libs.portal.getSite();
-    var siteConfig = libs.portal.getSiteConfig();
+const handleGet = (req) => {
+  const start = Date.now();
+  const site = portalLib.getSite();
+  const sharedMap = gridLib.getMap(`sitemap-${site._id}`);
+  let sitemapJson = sharedMap.get('sitemap');
 
-    var arrContentTypes = [];
-    var changefreq = {}, priority = {};
-    var siteAdded = false;
-    var siteMapSettings = siteConfig.siteMap ? libs.util.data.forceArray(siteConfig.siteMap) : null;
-    const maxItems = siteConfig.maxItems || 10000;
-    if (siteMapSettings) {
-        for (var j = 0; j < siteMapSettings.length; j++) {
-            var cty = siteMapSettings[j].contentType || "";
-            if (cty === globals.alwaysAdd) { siteAdded = true; } // To be able to automatically add site content type if not already added by user.
-            arrContentTypes.push(cty);
-            changefreq[cty] = siteMapSettings[j].updatePeriod || globals.updatePeriod;
-            priority[cty] = siteMapSettings[j].priority || globals.priority;
-        }
+  if (!sitemapJson) {
+    // Did not find sitemap in shared map, generate it. This should hopefully never happen, might give a timeout
+    sitemapLib.debugLog(`Sitemap - Did not find sitemap in shared map, generating it`);
+    sitemapJson = sitemapLib.runForSite(site);
+  } else {
+    sitemapJson = JSON.parse(sitemapJson);
+  }
+
+  /**
+   * Generating URL'S for each item with portal.pageUrl function is too much of a timesink,
+   * so we generate once for site then append path of each item to that.
+   * This works for most sites, but maybe not those with nested sites and custom vhosts.
+   * pageUrl does not work in task/event context and they are too costly to use here.
+   */
+  const siteUrl = portalLib.pageUrl({ path: site._path, type: 'absolute' });
+  const model = {
+    result: Object.keys(sitemapJson).map((key) => {
+      sitemapJson[key].url = siteUrl + encodeURI(sitemapJson[key].path);
+      return sitemapJson[key]
+    }),
+  };
+
+  if (req.headers['Content-Type'] === 'application/json') {
+    return {
+      contentType: 'application/json',
+      body: model.result,
     }
+  } else {
+    /**
+     * Pure string concat is about 20-30 times faster than xslt rendering.
+     * Even faster from cold start.
+     * Sitemap XML generated in 225ms.
+     * Sitemap string generated in 2ms.
+     */
 
-    // Default settings for site (frontpage) set to be changed and prioritized often.
-    if (!siteAdded) {
-        cty = globals.alwaysAdd;
-        arrContentTypes.push(cty);
-        changefreq[cty] = "Hourly";
-        priority[cty] = "1.0";
-    }
-
-    // Only allow content from current Site to populate the sitemap.
-    var folderPath = site._path;
-    var contentRoot = '/content' + folderPath + '';
-    var query = '_path LIKE "' + contentRoot + '/*" OR _path = "' + contentRoot + '"';
-
-    // Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
-    var result = libs.content.query({
-        query: query,
-        sort: 'modifiedTime DESC',
-        contentTypes: arrContentTypes,
-        count: maxItems,
-        filters: {
-            boolean: {
-                mustNot: {
-                    hasValue: {
-                        field: "x.com-enonic-app-metafields.meta-data.blockRobots",
-                        values: "true"
-                    }
-                }
-            }
-        }
-    });
-
-    // Go through the results and add the corresponding settings for each match.
-    var items = [];
-    for (var i = 0; i < result.hits.length; i++) {
-        var item = {};
-        if (result.hits[i].type) {
-            item.changeFreq = changefreq[result.hits[i].type];
-            item.priority = priority[result.hits[i].type];
-            item.url = libs.portal.pageUrl({
-                path: result.hits[i]._path,
-                type: 'absolute'
-            });
-            item.modifiedTime = result.hits[i].modifiedTime;
-            items.push(item);
-        } else {
-            result.hits = null;
-        }
-    }
-
-    var model = {
-        result: items
-    };
-
-    if (req.headers['Content-Type'] === 'application/json') {
-        return {
-            contentType: 'application/json',
-            body: model.result,
-        }
+    let body;
+    if (app.config.xsltRender === 'true') {
+      body = renderXslt(model);
     } else {
-        return {
-            contentType: 'text/xml',
-            body: libs.xslt.render(globals.view, model)
-        };
+      body = renderString(model);
     }
+
+    sitemapLib.debugLog(`Sitemap - Complete in ${Date.now() - start}ms`);
+    return {
+      contentType: 'text/xml',
+      body,
+    };
+  }
 }
 exports.get = handleGet;
+
+const renderXslt = (model) => {
+  const startXslt = Date.now();
+  const body = xsltLib.render(resolve('sitemap.xsl'), model)
+  sitemapLib.debugLog(`Sitemap - XML generated in ${Date.now() - startXslt}ms for ${model.result.length} items`);
+  return body;
+};
+
+const renderString = (model) => {
+  const startString = Date.now();
+  let body = `<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`
+    
+  model.result.forEach((item) => {
+    body += `<url>
+      <loc>${item.url}</loc>
+      <lastmod>${item.modifiedTime.split('T')[0]}</lastmod>
+      <changefreq>${item.changeFreq}</changefreq>
+      <priority>${item.priority}</priority>
+    </url>`
+  });
+
+  body += '</urlset>'
+  
+  sitemapLib.debugLog(`Sitemap - string generated in ${Date.now() - startString}ms for ${model.result.length} items`);
+  return body;
+};
