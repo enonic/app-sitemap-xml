@@ -49,7 +49,6 @@ try {
       eventLib.listener({
         type: 'node.pushed',
         callback: (event) => {
-          sitemapLib.debugLog(`Sitemap - Received event ${event.type}`);
           const nodes = event.data.nodes.filter((n) => n.repo.indexOf('com.enonic.cms') !== -1 && n.branch == 'master' && n.path.startsWith('/content/'))
       
           // Assume all nodes are in the same repo
@@ -65,7 +64,6 @@ try {
       eventLib.listener({
         type: 'node.deleted',
         callback: (event) => {
-          sitemapLib.debugLog(`Sitemap - Received event ${event.type}`);
           const nodes = event.data.nodes.filter((n) => n.repo.indexOf('com.enonic.cms') !== -1 && n.branch == 'master' && n.path.startsWith('/content/'))
       
           // Assume all nodes are in the same repo
