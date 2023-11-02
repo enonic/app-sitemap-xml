@@ -8,9 +8,39 @@ Be aware that only content from the current site will be added to a site's sitem
 
 ## Defaults
 
+### Priority
+
 The `<priority>` tag has the default value of 0.5.
 
 The site content itself will be added automatically with a `priority` set to `1.0` and `changeFrequency` set to `hourly`. If you want to overwrite these defaults, please add `portal:site` as a mapping manually and customize the settings.
+
+### Number of included items
+
+By default, the app will include 10.000 items in the sitemap.xml file. This is to avoid the file getting too big. This setting can be modified in the app config dialog. If you want to include all items, set the value to `-1`.
+
+NB! The number of included items will affect the time it takes to generate the sitemap.xml file.
+
+## Configuration
+
+The app has a configuration dialog where you can add content types and their `change frequency` and `priority` to the sitemap.xml file. The app will automatically add the site content to the sitemap.xml file, if not added already in app settings.
+
+### Max included items
+
+Limit the number of items in the file. Default: 10.000. Set to `-1` to include all items.
+
+### Override the generated domain name
+
+By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
+
+### Mappings
+
+Here you can specify which content types you want to include in the file and their `change frequency` and `priority` per content type.
+
+### Ignore list
+
+Here you can add exclusion patterns for specific content paths.
+For example, to exclude all paths ending with `/foo`, you can add the following pattern: `*/foo`
+
 
 ## Specification
 
@@ -22,18 +52,19 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 
 ## Releases and Compatibility
 | Version | XP version |
-| ------------- | ------------- |
-| 1.4.0 | 7.1.0 |
-| 1.3.0 | 7.1.0 |
-| 1.2.0 | 7.0.0 |
-| 1.1.1 | 6.10.2 |
-| 1.1.0 | 6.10.2 |
-| 1.0.1 | 6.8.0 |
-| 1.0.0 | 6.8.0 |
+|---------| ------------- |
+| 1.5.0   | 7.1.0 |
+| 1.4.0   | 7.1.0 |
+| 1.3.0   | 7.1.0 |
+| 1.2.0   | 7.0.0 |
+| 1.1.1   | 6.10.2 |
+| 1.1.0   | 6.10.2 |
+| 1.0.1   | 6.8.0 |
+| 1.0.0   | 6.8.0 |
 
 ## Changelog
 
-**Version 1.3 and newer see releases**
+**Version 1.3 and newer: see releases on the [Market page](https://market.enonic.com/vendors/enonic/com.enonic.app.sitemapxml)**
 
 ### Version 1.1.0
 

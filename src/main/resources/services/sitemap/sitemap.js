@@ -21,7 +21,7 @@ function handleGet(req) {
     var siteAdded = false;
     var siteMapSettings = siteConfig.siteMap ? libs.util.data.forceArray(siteConfig.siteMap) : null;
     const maxItems = siteConfig.maxItems || 10000;
-    const ignoreList = libs.util.data.forceArray(siteConfig.ignoreList);
+    const ignoreList = siteConfig.ignoreList ? libs.util.data.forceArray(siteConfig.ignoreList) : []
     const overrideDomain = siteConfig.overrideDomain || ''
 
     if (siteMapSettings) {
@@ -45,6 +45,7 @@ function handleGet(req) {
     // Only allow content from current Site to populate the sitemap.
     var folderPath = site._path;
     var contentRoot = '/content' + folderPath + '';
+    log.info(ignoreList);
     var query = `(_path LIKE "${contentRoot}/*" OR _path = "${contentRoot}") ${
         ignoreList.map(item => `AND _path NOT LIKE "${item.path}"`).join(" ")
     }`;
