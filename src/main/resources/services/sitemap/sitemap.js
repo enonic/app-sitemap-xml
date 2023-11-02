@@ -45,7 +45,6 @@ function handleGet(req) {
     // Only allow content from current Site to populate the sitemap.
     var folderPath = site._path;
     var contentRoot = '/content' + folderPath + '';
-    log.info(ignoreList);
     var query = `(_path LIKE "${contentRoot}/*" OR _path = "${contentRoot}") ${
         ignoreList.map(item => `AND _path NOT LIKE "${item.path}"`).join(" ")
     }`;
