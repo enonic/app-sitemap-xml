@@ -12,6 +12,20 @@ var globals = {
     alwaysAdd: "portal:site"
 };
 
+function getServerPageUrl(path, overrideDomain) {
+    return overrideDomain + libs.portal.pageUrl({
+        path,
+        type: 'server'
+    })
+}
+
+function getAbsolutePageUrl(path) {
+    return libs.portal.pageUrl({
+        path,
+        type: 'absolute'
+    })
+}
+
 function handleGet(req) {
     var site = libs.portal.getSite();
     var siteConfig = libs.portal.getSiteConfig();
@@ -21,8 +35,8 @@ function handleGet(req) {
     var siteAdded = false;
     var siteMapSettings = siteConfig.siteMap ? libs.util.data.forceArray(siteConfig.siteMap) : null;
     const maxItems = siteConfig.maxItems || 10000;
-    const ignoreList = siteConfig.ignoreList ? libs.util.data.forceArray(siteConfig.ignoreList) : []
-    const overrideDomain = siteConfig.overrideDomain || ''
+    const ignoreList = siteConfig.ignoreList ? libs.util.data.forceArray(siteConfig.ignoreList) : [];
+    const overrideDomain = siteConfig.overrideDomain || '';
 
     if (siteMapSettings) {
         for (var j = 0; j < siteMapSettings.length; j++) {
@@ -74,10 +88,7 @@ function handleGet(req) {
         if (result.hits[i].type) {
             item.changeFreq = changefreq[result.hits[i].type];
             item.priority = priority[result.hits[i].type];
-            item.url = overrideDomain + libs.portal.pageUrl({
-                path: result.hits[i]._path,
-                type: overrideDomain ? 'server' : 'absolute'
-            });
+            item.url = overrideDomain ? getServerPageUrl(result.hits[i]._path, overrideDomain) : getAbsolutePageUrl(result.hits[i]._path);
             item.modifiedTime = result.hits[i].modifiedTime;
             items.push(item);
         } else {
