@@ -2,6 +2,7 @@ plugins {
     id 'maven-publish'
     id 'com.enonic.defaults' version '2.1.5'
     id 'com.enonic.xp.app' version '3.4.0'
+	id 'com.github.node-gradle.node' version '7.0.1'
 }
 
 app {
@@ -26,3 +27,69 @@ repositories {
     mavenCentral()
     xp.enonicRepo()
 }
+
+node {
+	// Whether to download and install a specific Node.js version or not
+	// If false, it will use the globally installed Node.js
+	// If true, it will download node using above parameters
+	// Note that npm is bundled with Node.js
+	download = true
+
+	// Version of node to download and install (only used if download is true)
+	// It will be unpacked in the workDir
+	version = '20.11.0'
+}
+
+processResources {
+	exclude '**/*.js'
+	exclude '**/*.ts'
+}
+
+tasks.withType(Copy).configureEach {
+	includeEmptyDirs = false
+}
+
+tasks.register('npmBuild', NpmTask) {
+	args = [
+		'run',
+		'build'
+	]
+	dependsOn npmInstall
+	environment = [
+		'FORCE_COLOR': 'true',
+		'LOG_LEVEL_FROM_GRADLE': gradle.startParameter.logLevel.toString(),
+		'NODE_ENV': project.hasProperty('dev') || project.hasProperty('development') ? 'development' : 'production'
+	]
+	inputs.dir 'src/main/resources'
+	outputs.dir 'build/resources/main'
+}
+
+jar.dependsOn npmBuild
+
+tasks.register('npmCheck', NpmTask) {
+	dependsOn npmInstall
+	args = [
+		'run',
+		'check'
+	]
+	environment = [
+		'FORCE_COLOR': 'true',
+	]
+}
+
+tasks.register('npmTest', NpmTask) {
+	args = [
+		'run',
+		'test'
+	]
+	dependsOn npmInstall
+	environment = [
+		'FORCE_COLOR': 'true',
+	]
+}
+
+// If you ALWAYS want to SKIP `test` and `check` tasks on development build, wrap this inside an 'if...'
+// if (!(project.hasProperty('dev') || project.hasProperty('development'))) {
+check.dependsOn npmCheck
+// test.dependsOn npmTest
+// }
