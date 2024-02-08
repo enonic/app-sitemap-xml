@@ -1,6 +1,10 @@
 import type {Site} from '@enonic-types/lib-content';
 import type {Branded} from '/guillotine/Branded';
 import type {SitemapXmlSiteConfig} from '/guillotine/SitemapXmlSiteConfig';
+import type {
+	tChangeFreq,
+	tPriority,
+} from '/guillotine/Sitemap.d';
 
 
 import {forceArray} from '@enonic/js-utils/array/forceArray';
@@ -8,23 +12,44 @@ import {
 	get as getContentByKey,
 	query as contentQuery
 } from '/lib/xp/content';
-// @ts-expect-error No types yet
-import {render} from '/lib/xslt';
+import {
+	get as getContext,
+	run as runInContext
+} from '/lib/xp/context';
 import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 
 
 const enum GraphQLTypeName {
 	HEADLESS_CMS = 'HeadlessCms',
-	SITEMAP_XML = 'SitemapXml',
+	SITEMAP = 'Sitemap',
+	SITEMAP_URL = 'SitemapUrl',
 }
 
-const enum GraphQLFieldName {
-	SITEMAP_XML = 'SitemapXml',
+enum HeadlessCms { // Can't prefix with const nor declare
+	SITEMAP_FIELD = 'Sitemap',
+}
+
+// enum Sitemap { // Can't prefix with const nor declare
+// 	URLSET_FIELD = 'urlset'
+// }
+
+const GRAPH_QL_TYPE_FIELDS = {
+	[GraphQLTypeName.HEADLESS_CMS]: HeadlessCms
+}
+
+declare interface Resolvers {
+	[GraphQLTypeName.HEADLESS_CMS]: {
+		[HeadlessCms.SITEMAP_FIELD]: Resolver
+	}
+	// [GraphQLTypeName.SITEMAP]: {
+	// 	[Sitemap.URLSET_FIELD]: Resolver
+	// }
 }
 
 declare interface CreationCallback {
 	(params: {
 		addFields: (fields: Record<string, {
+			args: Record<string, GraphQLType>
 			type: GraphQLType
 		}>) => void
 	}): void
@@ -51,8 +76,7 @@ declare interface Extensions {
 	unions?: Record<string, any>
 	types?: Record<string, ExtensionType>
 	creationCallbacks?: Record<string, CreationCallback>
-	resolvers?: PartialRecord<GraphQLTypeName, PartialRecord<GraphQLFieldName, Resolver>>
-	// resolvers?: PartialRecord<GraphQLTypeName, Resolver>
+	resolvers?: Resolvers
 	typeResolvers?: Record<string, any>
 }
 
@@ -111,9 +135,9 @@ declare interface LocalContext {
 	siteKey?: string
 }
 
-declare type PartialRecord<K extends keyof any, T> = {
-	[P in K]?: T;
-}
+// declare type PartialRecord<K extends keyof any, T> = {
+// 	[P in K]?: T;
+// }
 
 declare interface Resolver<
 	ARGS extends Record<string, any> = Record<string, any>,
@@ -125,55 +149,103 @@ declare interface Resolver<
 
 
 const APP_NAME = 'com.enonic.app.sitemapxml';
-const VIEW = resolve('sitemap.xsl');
 
-const GLOBALS = {
-    updatePeriod: "monthly",
-    priority: "0.5",
-    alwaysAdd: "portal:site"
+const GLOBALS: {
+	updatePeriod: tChangeFreq
+	priority: tPriority
+	alwaysAdd: string
+} = {
+	updatePeriod: 'monthly',
+	priority: '0.5',
+	alwaysAdd: 'portal:site',
 };
 
-export const extensions = (graphQL: GraphQL): Extensions => {
-	return {
-		types: {
-			[GraphQLTypeName.SITEMAP_XML]: {
-				description: 'Sitemap',
-				fields: {
-					xml: {
-						type: graphQL.GraphQLString,
-					}
+
+export const extensions = (graphQL: GraphQL): Extensions => ({
+	// Enums are only useful in inputTypes, not in types
+	// enums: {
+	// },
+	types: {
+		[GraphQLTypeName.SITEMAP]: {
+			description: 'Sitemap',
+			fields: {
+				urlset: {
+					type: graphQL.list(graphQL.reference(GraphQLTypeName.SITEMAP_URL)),
 				}
-			},
+			}
 		},
-		creationCallbacks: {
-			[GraphQLTypeName.HEADLESS_CMS]: function (params) {
-				params.addFields({
-					[GraphQLFieldName.SITEMAP_XML]: {
-						type: graphQL.reference(GraphQLTypeName.SITEMAP_XML),
+		[GraphQLTypeName.SITEMAP_URL]: {
+			description: 'Sitemap URL item',
+			fields: {
+				path: {
+					type: graphQL.nonNull(graphQL.GraphQLString),
+				},
+				url: {
+					type: graphQL.nonNull(graphQL.GraphQLString),
+				},
+				changefreq: {
+					type: graphQL.GraphQLString
+				},
+				lastmod: {
+					type: graphQL.DateTime,
+				},
+				priority: {
+					type: graphQL.GraphQLString
+				},
+			}
+		}
+	},
+	creationCallbacks: {
+		[GraphQLTypeName.HEADLESS_CMS]: function (params) {
+			params.addFields({
+				[GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD]: {
+					args: {
+						count: graphQL.GraphQLInt
 					},
-				});
-			},
+					type: graphQL.reference(GraphQLTypeName.SITEMAP),
+				},
+			});
 		},
-		resolvers: {
-			[GraphQLTypeName.HEADLESS_CMS]: {
-				[GraphQLFieldName.SITEMAP_XML]: (env) => {
-					log.info(`resolvers ${GraphQLFieldName.SITEMAP_XML} env: ${JSON.stringify(env, null, 4)}`);
-					const {
-						// args,
-						localContext,
-						// source
-					} = env;
-					const {
-						branch,
-						project,
-						siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
-					} = localContext;
-					log.info(`resolvers ${GraphQLFieldName.SITEMAP_XML} siteKey: ${siteKey}`);
-					if (!siteKey) {
-						return null;
-					}
+	},
+	resolvers: {
+		[GraphQLTypeName.HEADLESS_CMS]: {
+			[GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD]: (env) => {
+				// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} env: ${JSON.stringify(env, null, 4)}`);
+				const {
+					args,
+					localContext,
+					// source
+				} = env;
+				const {
+					branch,
+					project,
+					siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
+				} = localContext;
+				// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} siteKey: ${siteKey}`);
+				if (!siteKey) {
+					return null;
+				}
+				const context = getContext();
+				const {
+					authInfo: {
+						// user: { // NOTE: Can be undefined when not logged in
+						// 	login: userLogin,
+						// 	idProvider: userIdProvider
+						// },
+						principals = [] // Handle undefined
+					} = {}
+				} = context;
+				return runInContext({
+					branch,
+					repository: `com.enonic.cms.${project}`,
+					// user: {
+					// 	idProvider: userIdProvider,
+					// 	login: userLogin,
+					// },
+					principals: principals || [] // Handle null
+				}, () => {
 					const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey});
-					log.info(`resolvers ${GraphQLFieldName.SITEMAP_XML} site: ${JSON.stringify(site, null, 4)}`);
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} site: ${JSON.stringify(site, null, 4)}`);
 					if (!site) {
 						return null;
 					}
@@ -185,23 +257,30 @@ export const extensions = (graphQL: GraphQL): Extensions => {
 						ignoreList = [],
 						maxItems = 10000,
 						overrideDomain = '',
-						siteMap = []
-						// contentType
-						// updatePeriod
-						// priority
+						siteMap = [],
 					} = siteConfig || {};
-					log.info(`resolvers ${GraphQLFieldName.SITEMAP_XML} siteConfig: ${JSON.stringify(siteConfig, null, 4)}`);
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} siteConfig: ${JSON.stringify(siteConfig, null, 4)}`);
+
+					const {
+						count = maxItems
+					} = args;
 
 					const siteMapArray = siteMap ? forceArray(siteMap) : [];
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} siteMapArray: ${JSON.stringify(siteMapArray, null, 4)}`);
+
 					const ignoreListArray = ignoreList ? forceArray(ignoreList) : [];
 					let siteAdded = false;
 					const arrContentTypes: string[] = [];
-					const changefreq: Record<string, string> = {};
-					const priority: Record<string, string> = {};
+					const changefreq: Record<string, tChangeFreq> = {};
+					const priority: Record<string, tPriority> = {};
 
 					for (let j = 0; j < siteMapArray.length; j++) {
 						const cty = siteMapArray[j].contentType || "";
-						if (cty === GLOBALS.alwaysAdd) { siteAdded = true; } // To be able to automatically add site content type if not already added by user.
+						// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} cty: ${cty}`);
+
+						// To be able to automatically add site content type if not already added by user.
+						if (cty === GLOBALS.alwaysAdd) { siteAdded = true; }
+
 						arrContentTypes.push(cty);
 						changefreq[cty] = siteMapArray[j].updatePeriod || GLOBALS.updatePeriod;
 						priority[cty] = siteMapArray[j].priority || GLOBALS.priority;
@@ -211,15 +290,18 @@ export const extensions = (graphQL: GraphQL): Extensions => {
 					if (!siteAdded) {
 						const cty = GLOBALS.alwaysAdd;
 						arrContentTypes.push(cty);
-						changefreq[cty] = "Hourly";
-						priority[cty] = "1.0";
+						changefreq[cty] = 'hourly';
+						priority[cty] = '1.0';
 					}
+
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} changefreq: ${JSON.stringify(changefreq, null, 4)}`);
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} priority: ${JSON.stringify(priority, null, 4)}`);
 
 					// Only allow content from current Site to populate the sitemap.
 					const folderPath = site._path;
 					const contentRoot = '/content' + folderPath + '';
 					const query = `(_path LIKE "${contentRoot}/*" OR _path = "${contentRoot}") ${
-						ignoreList.map(item => `AND _path NOT LIKE "${item.path}"`).join(" ")
+						ignoreListArray.map(item => `AND _path NOT LIKE "${item.path}"`).join(" ")
 					}`;
 
 					// Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
@@ -227,7 +309,7 @@ export const extensions = (graphQL: GraphQL): Extensions => {
 						query: query,
 						sort: 'modifiedTime DESC',
 						contentTypes: arrContentTypes,
-						count: maxItems,
+						count,
 						// @ts-ignore TODO
 						filters: {
 							boolean: {
@@ -244,35 +326,33 @@ export const extensions = (graphQL: GraphQL): Extensions => {
 					// Go through the results and add the corresponding settings for each match.
 					const items = [];
 					for (let i = 0; i < result.hits.length; i++) {
-						const item: {
-							changeFreq?: string
-							priority?: string
+						const item: Partial<{
+							changefreq?: tChangeFreq
+							priority?: tPriority
+							path: string
+							lastmod?: string
 							url?: string
-							modifiedTime?: string
-						} = {};
+						}> = {};
 						if (result.hits[i].type) {
-							item.changeFreq = changefreq[result.hits[i].type];
+							// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} result.hits[${i}].type: ${result.hits[i].type}`);
+							item.changefreq = changefreq[result.hits[i].type];
 							item.priority = priority[result.hits[i].type];
-							// item.url = overrideDomain ? getServerPageUrl(result.hits[i]._path, overrideDomain) : getAbsolutePageUrl(result.hits[i]._path);
-							item.modifiedTime = result.hits[i].modifiedTime;
+							item.path = result.hits[i]._path.replace(site._path, '') || '/';
+							item.url = overrideDomain ? `${overrideDomain}${item.path}`.replace(/\/\//g, '/') : item.path;
+							item.lastmod = result.hits[i].modifiedTime;
 							items.push(item);
-						} else {
-							result.hits = [];
+						// } else { // This makes no sense, overwriting the hits array within the loop
+						// 	result.hits = [];
 						}
 					}
 
-					const model = {
-						result: items
-					};
-
-					const xml = render(VIEW, model);
-					// log.info('xml: %s', xml);
+					// log.info(`resolvers ${GRAPH_QL_TYPE_FIELDS[GraphQLTypeName.HEADLESS_CMS].SITEMAP_FIELD} first item: ${JSON.stringify(items[0], null, 4)}`);
 
 					return {
-						xml
+						urlset: items
 					};
-				},
-			},
-		} // resolvers
-	}; // return
-} // extensions
+				}); // runInContext
+			}, // SITEMAP_XML
+		}, // HEADLESS_CMS
+	} // resolvers
+});
