@@ -4,13 +4,13 @@ import type { Options } from '.';
 import { globSync } from 'glob';
 // import { polyfillNode } from 'esbuild-plugin-polyfill-node';
 // import { print } from 'q-i';
-import {DIR_SRC} from './constants';
+import {DIR_SRC_GUILLOTINE} from './constants';
 
 
 export default function buildServerConfig(): Options {
 	const GLOB_EXTENSIONS_SERVER = '{ts,js}';
 	const FILES_SERVER = globSync(
-		`${DIR_SRC}/**/*.${GLOB_EXTENSIONS_SERVER}`,
+		`${DIR_SRC_GUILLOTINE}/**/*.${GLOB_EXTENSIONS_SERVER}`,
 		{
 			absolute: false,
 		}
@@ -99,9 +99,6 @@ export default function buildServerConfig(): Options {
 			// }) // ReferenceError: "navigator" is not defined
 		],
 		external: [
-			/^\/lib\/common/,
-			/^\/lib\/metadata/,
-
 			'/lib/cache',
 			'/lib/enonic/static',
 			/^\/lib\/guillotine/,
