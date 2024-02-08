@@ -2,6 +2,7 @@
 	"compilerOptions": {
 		"allowSyntheticDefaultImports": true,
 		"baseUrl": ".",
+		"declaration": false,
 		"esModuleInterop": true,
 		"noImplicitAny": true,
 		"paths": {
@@ -17,5 +18,7 @@
 	"include": [
 		"./src/main/resources/**/*.ts"
 	],
-	"exclude": []
+	"exclude": [
+		"./src/main/resources/**/*.d.ts"
+	]
 }
