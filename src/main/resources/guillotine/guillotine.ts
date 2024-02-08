@@ -19,14 +19,16 @@ import {
 import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 
 
+// In type names first letter should be uppercase
 const enum GraphQLTypeName {
 	HEADLESS_CMS = 'HeadlessCms',
 	SITEMAP = 'Sitemap',
 	SITEMAP_URL = 'SitemapUrl',
 }
 
+// In fields names first letter should be lowercase
 enum HeadlessCms { // Can't prefix with const nor declare
-	SITEMAP_FIELD = 'Sitemap',
+	SITEMAP_FIELD = 'sitemap',
 }
 
 // enum Sitemap { // Can't prefix with const nor declare
