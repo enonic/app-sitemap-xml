@@ -1,0 +1,27 @@
+{
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"baseUrl": "../",
+		"declaration": false,
+		"esModuleInterop": true,
+		"moduleResolution": "node",
+		"noImplicitAny": true,
+		"paths": {
+			"/lib/xp/*": ["./node_modules/@enonic-types/lib-*"],
+			"/*": ["./src/main/resources/*"],
+		},
+		"skipLibCheck": true,
+		"sourceMap": true, // Needed to get correct Uncovered Line numbers in coverage report
+		"strict": false,
+		"types": [
+			"@enonic-types/global",
+			"jest"
+		]
+	},
+	"exclude": [
+		"../src/main/resources/**/*.ts"
+	],
+	"include": [
+		"./**/*.ts"
+	],
+}

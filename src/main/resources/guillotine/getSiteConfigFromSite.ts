@@ -1,5 +1,5 @@
 import type {Site} from '@enonic-types/lib-content';
-import type {SitemapXmlSiteConfig} from './SitemapXmlSiteConfig';
+import type {SitemapXmlSiteConfig} from '/types';
 
 
 import {forceArray} from '@enonic/js-utils/array/forceArray';

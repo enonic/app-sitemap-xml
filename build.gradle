@@ -1,27 +1,31 @@
 plugins {
-    id 'maven-publish'
-    id 'com.enonic.defaults' version '2.1.5'
-    id 'com.enonic.xp.app' version '3.4.0'
+	id 'maven-publish'
+	id 'com.enonic.defaults' version '2.1.5'
+	id 'com.enonic.xp.app' version '3.4.0'
 	id 'com.github.node-gradle.node' version '7.0.1'
 }
 
 app {
-    name = project.appName
-    displayName = 'Sitemap XML'
-    vendorName = 'Enonic AS'
-    vendorUrl = 'https://enonic.com'
-    systemVersion = "${xpVersion}"
+	name = project.appName
+	displayName = 'Sitemap XML'
+	vendorName = 'Enonic AS'
+	vendorUrl = 'https://enonic.com'
+	systemVersion = "${xpVersion}"
 }
 
 dependencies {
-    include "com.enonic.xp:lib-context:${xpVersion}"
-    include "com.enonic.xp:lib-content:${xpVersion}"
+	include "com.enonic.xp:lib-context:${xpVersion}"
+	include "com.enonic.xp:lib-content:${xpVersion}"
+	include "com.enonic.xp:lib-portal:${xpVersion}"
+
+	include 'com.enonic.lib:lib-cache:2.2.0'
+	include "com.enonic.lib:lib-xslt:2.1.1"
 }
 
 repositories {
-    mavenLocal()
-    mavenCentral()
-    xp.enonicRepo()
+	mavenLocal()
+	mavenCentral()
+	xp.enonicRepo()
 }
 
 node {
@@ -87,5 +91,5 @@ tasks.register('npmTest', NpmTask) {
 // If you ALWAYS want to SKIP `test` and `check` tasks on development build, wrap this inside an 'if...'
 // if (!(project.hasProperty('dev') || project.hasProperty('development'))) {
 check.dependsOn npmCheck
-// test.dependsOn npmTest
+test.dependsOn npmTest
 // }
