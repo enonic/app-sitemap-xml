@@ -4,15 +4,16 @@ import type { Options } from '.';
 import { globSync } from 'glob';
 // import { polyfillNode } from 'esbuild-plugin-polyfill-node';
 // import { print } from 'q-i';
-import {DIR_SRC_GUILLOTINE} from './constants';
+import {DIR_SRC} from './constants';
 
 
 export default function buildServerConfig(): Options {
 	const GLOB_EXTENSIONS_SERVER = '{ts,js}';
 	const FILES_SERVER = globSync(
-		`${DIR_SRC_GUILLOTINE}/**/*.${GLOB_EXTENSIONS_SERVER}`,
+		`${DIR_SRC}/**/*.${GLOB_EXTENSIONS_SERVER}`,
 		{
 			absolute: false,
+			ignore: globSync(`${DIR_SRC}/**/*.d.ts`)
 		}
 	).map(s => s.replaceAll('\\', '/'));
 	// print(FILES_SERVER, { maxItems: Infinity });
@@ -99,6 +100,7 @@ export default function buildServerConfig(): Options {
 			// }) // ReferenceError: "navigator" is not defined
 		],
 		external: [
+			/^\/lib\/app-sitemapxml/,
 			'/lib/cache',
 			'/lib/enonic/static',
 			/^\/lib\/guillotine/,
@@ -143,6 +145,7 @@ export default function buildServerConfig(): Options {
 		// grep -r 'require("' build/resources/main | grep -v 'require("/'|grep -v chunk
 		noExternal: [
 			/^@enonic\/js-utils.*$/,
+			'ms',
 		],
 
 		platform: 'neutral',

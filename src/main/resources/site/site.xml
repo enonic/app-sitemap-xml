@@ -75,7 +75,7 @@
     </item-set>
   </form>
   <mappings>
-    <mapping controller="/services/sitemap/sitemap.js" order="10">
+    <mapping controller="/site/controllers/sitemap/sitemap.js" order="50">
       <pattern>/sitemap\.xml</pattern>
     </mapping>
   </mappings>
