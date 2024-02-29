@@ -15,18 +15,14 @@ export const getSiteConfigFromSite = ({
 }
 ) => {
 	// Code courtesy of PVMerlo at Enonic Discuss - https://discuss.enonic.com/u/PVMerlo
-	if (site) {
-		if (site.data) {
-			if (site.data.siteConfig) {
-				const siteConfigs = forceArray(site.data.siteConfig);
-				let siteConfig: Partial<typeof siteConfigs[0]> = {};
-				siteConfigs.forEach((cfg) => {
-					if (cfg.applicationKey == applicationKey) {
-						siteConfig = cfg;
-					}
-				});
-				return siteConfig.config;
+	if (site?.data?.siteConfig) {
+		const siteConfigs = forceArray(site.data.siteConfig);
+		let siteConfig: Partial<typeof siteConfigs[0]> = {};
+		siteConfigs.forEach((cfg) => {
+			if (cfg.applicationKey == applicationKey) {
+				siteConfig = cfg;
 			}
-		}
+		});
+		return siteConfig.config;
 	}
 };
