@@ -15,6 +15,7 @@ import {
 } from '/lib/xp/portal';
 // @ts-expect-error No types yet.
 import {render} from '/lib/xslt';
+import {MAX_ITEMS_LIMIT} from '/lib/app-sitemapxml/constants';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
 
 
@@ -52,14 +53,21 @@ export function get(request: Request<{
 	DEBUG && log.debug('siteConfig:%s', toStr(siteConfig));
 
 	const {
+		maxItems = 10000,
 		overrideDomain = '',
 	} = siteConfig || {}; // Handle null (aka no config)
+
+	const maxItemsInt = Math.min(
+		MAX_ITEMS_LIMIT,
+		parseInt(maxItems as string, 10)
+	);
 
 	const {
 		changefreq,
 		priority,
 		result
 	} = queryForSitemapContent({
+		count: maxItemsInt,
 		site,
 		siteConfig,
 	});

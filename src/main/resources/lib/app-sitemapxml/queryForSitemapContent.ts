@@ -7,13 +7,12 @@ import type {
 
 
 import {forceArray} from '@enonic/js-utils/array/forceArray';
-import {isSet} from '@enonic/js-utils/value/isSet';
 import {
 	query as contentQuery
 } from '/lib/xp/content';
 import {
 	DEFAULT_PRIORITY,
-	DEFAULT_UPDATE_PERIOD
+	DEFAULT_UPDATE_PERIOD,
 } from '/lib/app-sitemapxml/constants';
 
 
@@ -35,7 +34,6 @@ export function queryForSitemapContent({
 }) {
 	const {
 		ignoreList = [],
-		maxItems = 10000,
 		siteMap = [],
 	} = siteConfig || {}; // Handle null (aka no config)
 
@@ -81,7 +79,7 @@ export function queryForSitemapContent({
 			query: query,
 			sort: 'modifiedTime DESC',
 			contentTypes: arrContentTypes,
-			count: isSet(count) ? count : maxItems,
+			count,
 			// @ts-ignore TODO
 			filters: {
 				boolean: {

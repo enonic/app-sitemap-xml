@@ -21,7 +21,8 @@ import {
 } from '/lib/xp/context';
 import {
 	DEFAULT_PRIORITY,
-	DEFAULT_UPDATE_PERIOD
+	DEFAULT_UPDATE_PERIOD,
+	MAX_ITEMS_LIMIT,
 } from '/lib/app-sitemapxml/constants';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
 import {
@@ -67,6 +68,15 @@ export const urlset = (graphQL: GraphQL): Resolver<
 	TRACE && log.debug('%s resolver siteConfig: %s', URLSET_FIELD_NAME, toStr(siteConfig));
 
 	const {
+		maxItems = 10000,
+	} = siteConfig || {}; // Handle null (aka no config)
+
+	const maxItemsInt = Math.min(
+		MAX_ITEMS_LIMIT,
+		parseInt(maxItems as string, 10)
+	);
+
+	const {
 		branch,
 		project,
 	} = localContext;
@@ -84,7 +94,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		principals: principals || [] // Handle null
 	}, () => {
 		const {
-			count
+			count = maxItemsInt
 		} = args;
 
 		const {
