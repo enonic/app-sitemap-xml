@@ -1,82 +1,87 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <site>
-  <form>
-    <input name="maxItems" type="TextLine">
-      <label>Max included items</label>
-      <occurrences maximum="1" minimum="0"/>
-      <default>10000</default>
-      <help-text>Default value of 10000 will be used if nothing is specified</help-text>
-      <config>
-        <regexp>^-?1$|^[1-9]\d*$</regexp>
-      </config>
-    </input>
-    <input name="overrideDomain" type="TextLine">
-      <label>Override the generated domain</label>
-      <help-text>For instance "https://enonic.com"</help-text>
-      <occurrences minimum="0" maximum="1"/>
-      <config>
-        <regexp>^https:\/\/[^\/]+$</regexp>
-      </config>
-    </input>
-    <item-set name="siteMap">
-      <label>Mappings</label>
-      <occurrences maximum="0" minimum="0"/>
-      <items>
-        <input name="contentType" type="ContentTypeFilter">
-          <label>Content Type</label>
-          <occurrences maximum="1" minimum="0"/>
-          <help-text>Adds the selected content type to the sitemap.xml</help-text>
-        </input>
-        <input name="updatePeriod" type="ComboBox">
-          <label>Update period</label>
-          <occurrences maximum="1" minimum="0"/>
-          <config>
-            <option value="always">Always</option>
-            <option value="hourly">Hourly</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-            <option value="never">Never</option>
-          </config>
-          <help-text>For the selected content type, set this update frequency in xml file (default is "monthly")</help-text>
-        </input>
-        <input name="priority" type="ComboBox">
-          <label>Priority</label>
-          <occurrences maximum="1" minimum="0"/>
-          <config>
-            <option value="0.0">0.0</option>
-            <option value="0.1">0.1</option>
-            <option value="0.2">0.2</option>
-            <option value="0.3">0.3</option>
-            <option value="0.4">0.4</option>
-            <option value="0.5">0.5</option>
-            <option value="0.6">0.6</option>
-            <option value="0.7">0.7</option>
-            <option value="0.8">0.8</option>
-            <option value="0.9">0.9</option>
-            <option value="1.0">1.0</option>
-          </config>
-          <help-text>This does not increase possibilities for SEO, it's only information for the search engines that they might or might not use when crawling your site. Default is 0.5.</help-text>
-          <default>0.5</default>
-        </input>
-      </items>
-    </item-set>
-    <item-set name="ignoreList">
-      <label>Ignore list</label>
-      <help-text>For instance "exclude_folder/*" or "*/folder/exclude_content"</help-text>
-      <occurrences maximum="0" minimum="0"/>
-      <items>
-        <input name="path" type="TextLine">
-          <label>Path to ignore</label>
-          <occurrences maximum="1" minimum="0"/>
-        </input>
-      </items>
-    </item-set>
-  </form>
-  <mappings>
-    <mapping controller="/site/controllers/sitemap/sitemap.js" order="50">
-      <pattern>/sitemap\.xml</pattern>
-    </mapping>
-  </mappings>
+	<form>
+		<input name="maxItems" type="TextLine">
+			<!-- ContentStudio was not happy when trying to convert this TextLine to Long -->
+			<label>Max included items</label>
+			<occurrences maximum="1" minimum="0"/>
+			<default>10000</default>
+			<help-text>Default value of 10000 will be used if nothing is specified</help-text>
+			<config>
+				<!--
+					<min>1</min>
+					<max>50000</max>
+				-->
+				<regexp>^(50000|[1-4]\d{4}|\d{2,4}|[1-9])$</regexp>
+			</config>
+		</input>
+		<input name="overrideDomain" type="TextLine">
+			<label>Override the generated domain</label>
+			<help-text>For instance "https://enonic.com"</help-text>
+			<occurrences minimum="0" maximum="1"/>
+			<config>
+				<regexp>^https:\/\/[^\/]+$</regexp>
+			</config>
+		</input>
+		<item-set name="siteMap">
+			<label>Mappings</label>
+			<occurrences maximum="0" minimum="0"/>
+			<items>
+				<input name="contentType" type="ContentTypeFilter">
+				<label>Content Type</label>
+				<occurrences maximum="1" minimum="0"/>
+				<help-text>Adds the selected content type to the sitemap.xml</help-text>
+				</input>
+				<input name="updatePeriod" type="ComboBox">
+				<label>Update period</label>
+				<occurrences maximum="1" minimum="0"/>
+				<config>
+					<option value="always">Always</option>
+					<option value="hourly">Hourly</option>
+					<option value="daily">Daily</option>
+					<option value="weekly">Weekly</option>
+					<option value="monthly">Monthly</option>
+					<option value="yearly">Yearly</option>
+					<option value="never">Never</option>
+				</config>
+				<help-text>For the selected content type, set this update frequency in xml file (default is "monthly")</help-text>
+				</input>
+				<input name="priority" type="ComboBox">
+				<label>Priority</label>
+				<occurrences maximum="1" minimum="0"/>
+				<config>
+					<option value="0.0">0.0</option>
+					<option value="0.1">0.1</option>
+					<option value="0.2">0.2</option>
+					<option value="0.3">0.3</option>
+					<option value="0.4">0.4</option>
+					<option value="0.5">0.5</option>
+					<option value="0.6">0.6</option>
+					<option value="0.7">0.7</option>
+					<option value="0.8">0.8</option>
+					<option value="0.9">0.9</option>
+					<option value="1.0">1.0</option>
+				</config>
+				<help-text>This does not increase possibilities for SEO, it's only information for the search engines that they might or might not use when crawling your site. Default is 0.5.</help-text>
+				<default>0.5</default>
+				</input>
+			</items>
+		</item-set>
+		<item-set name="ignoreList">
+			<label>Ignore list</label>
+			<help-text>For instance "exclude_folder/*" or "*/folder/exclude_content"</help-text>
+			<occurrences maximum="0" minimum="0"/>
+			<items>
+				<input name="path" type="TextLine">
+					<label>Path to ignore</label>
+					<occurrences maximum="1" minimum="0"/>
+				</input>
+			</items>
+		</item-set>
+	</form>
+	<mappings>
+		<mapping controller="/site/controllers/sitemap/sitemap.js" order="50">
+			<pattern>/sitemap\.xml</pattern>
+		</mapping>
+	</mappings>
 </site>

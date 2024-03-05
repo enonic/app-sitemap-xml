@@ -8,7 +8,7 @@ export declare interface SitemapXmlSiteConfig {
 	ignoreList?: {
 		path?: string
 	}[]
-	maxItems?: number
+	maxItems?: string
 	overrideDomain?: string
 	siteMap: {
 		contentType?: string

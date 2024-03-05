@@ -85,7 +85,7 @@ const graphQL: GraphQL = {
 
 const siteConfig: SitemapXmlSiteConfig = {
 	ignoreList: [],
-	maxItems: 1000,
+	maxItems: '1000',
 	overrideDomain: 'https://enonic.com',
 	siteMap: []
 }
