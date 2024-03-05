@@ -11,15 +11,15 @@ import {isSet} from '@enonic/js-utils/value/isSet';
 import {
 	query as contentQuery
 } from '/lib/xp/content';
+import {
+	DEFAULT_PRIORITY,
+	DEFAULT_UPDATE_PERIOD
+} from '/lib/app-sitemapxml/constants';
 
 
 const GLOBALS: {
-	updatePeriod: tChangeFreq
-	priority: tPriority
 	alwaysAdd: string
 } = {
-	updatePeriod: 'monthly',
-	priority: '0.5',
 	alwaysAdd: 'portal:site',
 };
 
@@ -54,8 +54,8 @@ export function queryForSitemapContent({
 		if (cty === GLOBALS.alwaysAdd) { siteAdded = true; }
 
 		arrContentTypes.push(cty);
-		changefreq[cty] = siteMapArray[j].updatePeriod || GLOBALS.updatePeriod;
-		priority[cty] = siteMapArray[j].priority || GLOBALS.priority;
+		changefreq[cty] = siteMapArray[j].updatePeriod || DEFAULT_UPDATE_PERIOD;
+		priority[cty] = siteMapArray[j].priority || DEFAULT_PRIORITY;
 	}
 
 	// Default settings for site (frontpage) set to be changed and prioritized often.

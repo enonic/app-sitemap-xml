@@ -42,13 +42,12 @@ globalThis.log = {
 	debug: console.debug,
 }
 
+// @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
+globalThis.__ = {
+	toScriptValue: (value: unknown) => value
+}
 
 const graphQL: GraphQL = {
-	createDataFetcherResult: () => ({
-		data: null as unknown as ScriptValue,
-		// localContext: {}// as LocalContext,
-		// parentLocalContext: {}// as LocalContext
-	}),
 	Date: '2021-01-01' as GraphQLDate,
 	DateTime: '2021-01-01T00:00:00Z' as GraphQLDateTime,
 	GraphQLBoolean: true as GraphQLBoolean,
@@ -59,15 +58,24 @@ const graphQL: GraphQL = {
 	Json: '{"json": "value"}' as GraphQLJson,
 	LocalTime: '00:00:00' as GraphQLLocalTime,
 	LocalDateTime: '2021-01-01T00:00:00' as GraphQLLocalDateTime,
+	createDataFetcherResult: ({data, localContext, parentLocalContext}) => ({
+		source: data as any,
+		localContext: {...parentLocalContext, ...localContext}
+	}),
+	// createDataFetcherResult: () => ({
+	// 	data: null as unknown as ScriptValue,
+	// 	// localContext: {}// as LocalContext,
+	// 	// parentLocalContext: {}// as LocalContext
+	// }),
 	list: (type) => [type],
 	nonNull: (type) => type,
 	reference: (typeName) => {
-		if (typeName === 'SitemapUrl') {
+		if (typeName === 'Sitemap_Url') {
 			return {
 				changefreq: null,
 				lastmod: '2021-01-01T00:00:00Z',
+				path: null,
 				priority: null,
-				url: null
 			};
 		}
 		console.debug('reference typeName', typeName);
@@ -142,7 +150,7 @@ describe('guillotine extensions', () => {
 				creationCallbacks: {
 				},
 				resolvers: {
-					HeadlessCms: {
+					portal_Site: {
 					},
 					Sitemap: {
 					}
@@ -151,17 +159,20 @@ describe('guillotine extensions', () => {
 					Sitemap: {
 						description: 'Sitemap',
 						fields: {
+							baseUrl: {
+								type: 'string'
+							},
 							urlset: {
 								type: [{
 									changefreq: null,
 									lastmod: '2021-01-01T00:00:00Z',
+									path: null,
 									priority: null,
-									url: null
 								}]
 							}
 						}
 					},
-					SitemapUrl: {
+					Sitemap_Url: {
 						description: 'Sitemap URL item',
 						fields: {
 							changefreq: {
@@ -170,12 +181,12 @@ describe('guillotine extensions', () => {
 							lastmod: {
 								type: '2021-01-01T00:00:00Z'
 							},
+							path: {
+								type: 'string'
+							},
 							priority: {
 								type: 'string'
 							},
-							url: {
-								type: 'string'
-							}
 						}
 					}
 				}
@@ -188,7 +199,7 @@ describe('guillotine extensions', () => {
 				// 	Sitemap: SitemapFunction
 				// },
 				resolvers: {
-					HeadlessCms: {
+					portal_Site: {
 						sitemap: sitemapResolver
 					},
 					Sitemap: {
@@ -202,39 +213,41 @@ describe('guillotine extensions', () => {
 				localContext: {
 					branch: 'master',
 					project: 'project',
-					siteKey: siteContent._path
 				},
-				source: {}
+				source: siteContent
 			});
 			// print(sitemapResolverResult);
 			expect(sitemapResolverResult).toEqual({
-				_site: siteContent,
-				_siteConfig: siteConfig
+				localContext: {
+					branch: 'master',
+					project: 'project',
+					siteJson: JSON.stringify(siteContent),
+					siteConfigJson: JSON.stringify(siteConfig)
+				},
+				source: {
+					baseUrl: 'https://enonic.com'
+				},
 			});
 
 			const urlsetResolverResult = urlsetResolver({
 				args: {
 					count: 10
 				},
-				localContext: {
-					branch: 'master',
-					project: 'project',
-					siteKey: siteContent._path
-				},
-				source: sitemapResolverResult,
+				localContext: sitemapResolverResult.localContext,
+				source: sitemapResolverResult.source,
 			});
 			// print(urlsetResolverResult);
 			expect(urlsetResolverResult).toEqual([
 				{
 					changefreq: 'hourly',
 					lastmod: undefined,
+					path: '/',
 					priority: '1.0',
-					url: 'https:/enonic.com/'
 				},{
 					changefreq: undefined,
 					lastmod: undefined,
+					path: '/folderContentPath',
 					priority: undefined,
-					url: 'https:/enonic.com/folderContentPath'
 				}
 			]);
 		}); // import
