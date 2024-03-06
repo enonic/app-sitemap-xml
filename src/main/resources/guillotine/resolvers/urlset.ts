@@ -54,6 +54,8 @@ export const urlset = (graphQL: GraphQL): Resolver<
 	SiteMapResolverData,
 	{}
 > => (env) => {
+	// const startMs = PROFILING ? currentTimeMillis() : 0;
+
 	TRACE && log.debug('%s resolver env: %s', URLSET_FIELD_NAME, toStr(env));
 	const {
 		args,
@@ -71,41 +73,41 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		maxItems = 10000,
 	} = siteConfig || {}; // Handle null (aka no config)
 
-	const maxItemsInt = Math.min(
-		MAX_ITEMS_LIMIT,
-		parseInt(maxItems as string, 10)
-	);
+	const maxItemsInt = parseInt(maxItems as string, 10);
+
+	const {
+		count = maxItemsInt
+	} = args;
+	const limitedCount = count < 0
+		? MAX_ITEMS_LIMIT
+		: Math.min(count, MAX_ITEMS_LIMIT);
 
 	const {
 		branch,
 		project,
 	} = localContext;
 
-		// const startMs = PROFILING ? currentTimeMillis() : 0;
 	const context = getContext();
 	const {
 		authInfo: {
 			principals = [] // Handle undefined
 		} = {}
 	} = context;
+
 	return runInContext({
 		branch,
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
 		const {
-			count = maxItemsInt
-		} = args;
-
-		const {
 			changefreq,
 			priority,
 			result
 		} = queryForSitemapContent({
-			count,
+			count: limitedCount,
 			site,
 			siteConfig
-		})
+		});
 
 		// Go through the results and add the corresponding settings for each match.
 		const items: SitemapUrl[] = [];
@@ -132,5 +134,5 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		// }
 
 		return items;
-	});
-}
+	}); // runInContext
+} // urlset

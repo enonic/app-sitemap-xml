@@ -31,7 +31,7 @@ import {
 import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 
 
-export const buildSitemapResolver = (graphQL: GraphQL): Resolver<
+export const sitemap = (graphQL: GraphQL): Resolver<
 	{}, // args
 	{}, // localContext
 	Site<SitemapXmlSiteConfig>,
