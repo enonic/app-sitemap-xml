@@ -1,7 +1,7 @@
 import type {GraphQL} from '@enonic-types/guillotine';
 
 
-export const buildObjectTypeSiteMapUrl = (graphQL: GraphQL) => ({
+export const SitemapUrl = (graphQL: GraphQL) => ({
 	description: 'Sitemap URL item',
 			fields: {
 				changefreq: {

@@ -24,13 +24,15 @@ const GLOBALS: {
 
 
 export function queryForSitemapContent({
-	count,
+	count = 10,
 	site,
 	siteConfig,
+	start = 0,
 }: {
 	count?: number
 	site: Site<SitemapXmlSiteConfig>
 	siteConfig: SitemapXmlSiteConfig|null
+	start?: number
 }) {
 	const {
 		ignoreList = [],
@@ -76,8 +78,6 @@ export function queryForSitemapContent({
 		changefreq,
 		priority,
 		result: contentQuery({
-			query: query,
-			sort: 'modifiedTime DESC',
 			contentTypes: arrContentTypes,
 			count,
 			// @ts-ignore TODO
@@ -90,7 +90,10 @@ export function queryForSitemapContent({
 						}
 					}
 				}
-			}
+			},
+			query: query,
+			sort: 'modifiedTime DESC',
+			start
 		})
 	};
 }
