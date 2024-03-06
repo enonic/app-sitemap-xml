@@ -28,7 +28,7 @@ Be aware that only content from the current site will be added to a site's sitem
 
 When doing external rendering, via for example Next.XP, you can fetch the data needed to generate a sitemap.xml file via a Guillotine Extension.
 
-Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `HeadlessCms` object type.
+Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `portal_Site` object type.
 
 You may also study how we did it in our own [site-enonic-next](https://github.com/enonic/site-enonic-next).
 
@@ -42,7 +42,7 @@ The app will automatically add the site content, if not already added in the sit
 
 ### Max included items
 
-Limit the number of items in the file. Default: 10.000. Set to `-1` to include all items.
+Limit the number of items in the file. Default: 10000. Max: 50000.
 
 > **_WARNING:_** The number of included items will affect the time it takes to generate the sitemap.xml file.
 
