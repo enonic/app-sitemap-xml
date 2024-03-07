@@ -69,7 +69,7 @@ To exclude a specific content use: `/full/path`
 
 To exclude just the children of a specific folder use: `/some/folder/*`
 
-The exclude a specific folder AND it's children use two patterns:
+To exclude a specific folder AND it's children use two patterns:
 * `/some/folder`
 * `/some/folder/*`
 
