@@ -65,6 +65,20 @@ The site content itself will be added automatically with a `priority` set to `1.
 Here you can add exclusion patterns for specific content paths.
 For example, to exclude all paths ending with `/foo`, you can add the following pattern: `*/foo`
 
+To exclude a specific content use: `/full/path`
+
+To exclude just the children of a specific folder use: `/some/folder/*`
+
+The exclude a specific folder AND it's children use two patterns:
+* `/some/folder`
+* `/some/folder/*`
+
+> **CAUTION:** Using a single pattern "/some/folder*", could be problematic as it also matches "/some/folderOrContentWithLongerName*"
+
+To exclude all content that has a string anywhere in the path use: `*hasInTheMiddle*`
+
+To exlude all content that ends with a string use: `*endsWith`
+
 ## Specification
 
 Check out [Sitemaps XML format](https://www.sitemaps.org/protocol.html) to learn more about how it all works.
