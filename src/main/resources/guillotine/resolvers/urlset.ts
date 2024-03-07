@@ -27,7 +27,6 @@ import {
 import {
 	DEFAULT_PRIORITY,
 	DEFAULT_UPDATE_PERIOD,
-	MAX_ITEMS_LIMIT,
 } from '/lib/app-sitemapxml/constants';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
 import {URLSET_FIELD_NAME} from '/guillotine/constants';
@@ -78,9 +77,6 @@ export const urlset = (graphQL: GraphQL): Resolver<
 	const {
 		count = maxItemsInt
 	} = args;
-	const limitedCount = count < 0
-		? MAX_ITEMS_LIMIT
-		: Math.min(count, MAX_ITEMS_LIMIT);
 
 	const {
 		branch,
@@ -104,7 +100,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 			priority,
 			result
 		} = queryForSitemapContent({
-			count: limitedCount,
+			count,
 			site,
 			siteConfig
 		});

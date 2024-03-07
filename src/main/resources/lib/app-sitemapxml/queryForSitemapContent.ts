@@ -18,6 +18,7 @@ import {
 import {
 	DEFAULT_PRIORITY,
 	DEFAULT_UPDATE_PERIOD,
+	ES_MAX_ITEMS_LIMIT,
 	MAX_ITEMS_LIMIT
 } from '/lib/app-sitemapxml/constants';
 
@@ -134,8 +135,18 @@ export function queryForSitemapContent({
 
 	const mustNot: QueryDsl[] = blockRobotsDslArray.concat(ignoreDslArray);
 
+	const countBetweenZeroAndMaxItemsLimit = (count >= 0 && count <= MAX_ITEMS_LIMIT)
+		? count
+		: MAX_ITEMS_LIMIT;
+	DEBUG && log.debug('countBetweenZeroAndMaxItemsLimit: %s', toStr(countBetweenZeroAndMaxItemsLimit));
+
+	const countWithinElasticSearchMaxItemsLimitOrMinusOne = (countBetweenZeroAndMaxItemsLimit <= ES_MAX_ITEMS_LIMIT)
+		? countBetweenZeroAndMaxItemsLimit
+		: -1;
+	DEBUG && log.debug('countWithinElasticSearchMaxItemsLimitOrMinusOne: %s', toStr(countWithinElasticSearchMaxItemsLimitOrMinusOne));
+
 	const nodeQueryParams = {
-		count: -1,
+		count: countWithinElasticSearchMaxItemsLimitOrMinusOne,
 		query: {
 			boolean: {
 				must,
@@ -154,7 +165,7 @@ export function queryForSitemapContent({
 	}
 	DEBUG && log.debug('nodeQueryRes.total: %s', nodeQueryRes.total);
 
-	const stopBefore = Math.min(nodeQueryRes.hits.length, count, MAX_ITEMS_LIMIT);
+	const stopBefore = Math.min(nodeQueryRes.hits.length, countBetweenZeroAndMaxItemsLimit);
 	DEBUG && log.debug('stopBefore: %s', stopBefore);
 
 	const contents: {
