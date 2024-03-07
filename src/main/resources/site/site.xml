@@ -69,7 +69,7 @@
 		</item-set>
 		<item-set name="ignoreList">
 			<label>Ignore list</label>
-			<help-text>For instance "exclude_folder/*" or "*/folder/exclude_content"</help-text>
+			<help-text>For instance "/full/path", "/startsWith*", "*hasInTheMiddle*" or "*endsWith"</help-text>
 			<occurrences maximum="0" minimum="0"/>
 			<items>
 				<input name="path" type="TextLine">
