@@ -16,6 +16,7 @@ app {
 dependencies {
 	include "com.enonic.xp:lib-context:${xpVersion}"
 	include "com.enonic.xp:lib-content:${xpVersion}"
+	include "com.enonic.xp:lib-node:${xpVersion}"
 	include "com.enonic.xp:lib-portal:${xpVersion}"
 
 	include 'com.enonic.lib:lib-cache:2.2.0'

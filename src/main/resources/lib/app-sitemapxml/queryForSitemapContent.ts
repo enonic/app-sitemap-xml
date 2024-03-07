@@ -1,3 +1,4 @@
+import type {QueryDsl} from '@enonic-types/core';
 import type {Site} from '@enonic-types/lib-content';
 import type {
 	SitemapXmlSiteConfig,
@@ -7,12 +8,17 @@ import type {
 
 
 import {forceArray} from '@enonic/js-utils/array/forceArray';
+import {toStr} from '@enonic/js-utils/value/toStr';
+import {get as getContext} from '/lib/xp/context';
+import {connect} from '/lib/xp/node';
 import {
-	query as contentQuery
-} from '/lib/xp/content';
+	DEBUG,
+	TRACE,
+} from '/constants';
 import {
 	DEFAULT_PRIORITY,
 	DEFAULT_UPDATE_PERIOD,
+	MAX_ITEMS_LIMIT
 } from '/lib/app-sitemapxml/constants';
 
 
@@ -69,31 +75,124 @@ export function queryForSitemapContent({
 	// Only allow content from current Site to populate the sitemap.
 	const folderPath = site._path;
 	const contentRoot = '/content' + folderPath + '';
-	const query = `(_path LIKE "${contentRoot}/*" OR _path = "${contentRoot}") ${
-		ignoreListArray.map(item => `AND _path NOT LIKE "${item.path}"`).join(" ")
-	}`;
 
-	// Query that respects the settings from SEO Metafield plugin, if present, using 6.10 query filters - @nerdegutt.
+	const {
+		branch,
+		repository: repoId,
+	} = getContext();
+	const projectRepoConnection = connect({
+		branch,
+		repoId
+	});
+
+	const must: QueryDsl[] = [{
+		in: {
+			field: 'type',
+			values: arrContentTypes
+		},
+	},{
+		boolean: {
+			should: [{
+				like: {
+					field: '_path',
+					value: contentRoot + '/*'
+				}
+			},{
+				term: {
+					field: '_path',
+					value: contentRoot
+				}
+			}],
+		}
+	}];
+
+	const blockRobotsDslArray: QueryDsl[] = [{
+		term: {
+			field: "x.com-enonic-app-metafields.meta-data.blockRobots",
+			value: true
+		}
+	}];
+
+	const ignoreDslArray = ignoreListArray.map(item => {
+		if (!item.path) {
+			return undefined;
+		}
+		const trimmedPath = item.path[item.path.length - 1] === '/'
+			? item.path.slice(0, -1)
+			: item.path;
+		return {
+			like: {
+				field: '_path',
+				value: trimmedPath[0] === '*'
+					? trimmedPath
+					: `${contentRoot}${
+						trimmedPath[0] === '/' ? '' : '/'
+					}${trimmedPath}`
+			}
+		};
+	}).filter(x=>x) as QueryDsl[]; // Remove empty items.
+
+	const mustNot: QueryDsl[] = blockRobotsDslArray.concat(ignoreDslArray);
+
+	const nodeQueryParams = {
+		count: -1,
+		query: {
+			boolean: {
+				must,
+				mustNot,
+			}
+		},
+		sort: 'modifiedTime DESC',
+		start
+	};
+	DEBUG && log.debug('nodeQueryParams: %s', toStr(nodeQueryParams));
+
+	const nodeQueryRes = projectRepoConnection.query(nodeQueryParams);
+	TRACE && log.debug('nodeQueryRes: %s', toStr(nodeQueryRes));
+	if (nodeQueryRes.hits.length) {
+		DEBUG && log.debug('nodeQueryRes.hits[0]: %s', toStr(nodeQueryRes.hits[0]));
+	}
+	DEBUG && log.debug('nodeQueryRes.total: %s', nodeQueryRes.total);
+
+	const stopBefore = Math.min(nodeQueryRes.hits.length, count, MAX_ITEMS_LIMIT);
+	DEBUG && log.debug('stopBefore: %s', stopBefore);
+
+	const contents: {
+		_path: string
+		modifiedTime?: string
+		type: string
+	}[] = [];
+
+	for (let i = 0; i < stopBefore; i++) {
+		const {id} = nodeQueryRes.hits[i];
+		const node = projectRepoConnection.get<{
+			_path: string
+			modifiedTime?: string
+			type: string
+		}>(id);
+		if (node) {
+			const {
+				_path,
+				modifiedTime,
+				type,
+			} = node;
+			contents.push({
+				_path: _path.replace(/^\/content/, ''),
+				modifiedTime,
+				type,
+			});
+		}
+	} // for
+	if (contents.length) {
+		DEBUG && log.debug('contents[0]: %s', toStr(contents[0]));
+	}
+
 	return {
 		changefreq,
 		priority,
-		result: contentQuery({
-			contentTypes: arrContentTypes,
-			count,
-			// @ts-ignore TODO
-			filters: {
-				boolean: {
-					mustNot: {
-						hasValue: {
-							field: "x.com-enonic-app-metafields.meta-data.blockRobots",
-							values: "true"
-						}
-					}
-				}
-			},
-			query: query,
-			sort: 'modifiedTime DESC',
-			start
-		})
+		result: {
+			hits: contents,
+			total: nodeQueryRes.total
+		}
 	};
 }

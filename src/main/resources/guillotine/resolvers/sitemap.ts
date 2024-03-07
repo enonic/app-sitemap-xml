@@ -8,26 +8,19 @@ import type {
 	SiteMapResolverData,
 	SiteMapResolverLocaleContext
 } from '/guillotine/guillotine.d';
-import type {
-	SitemapXmlSiteConfig,
-	// tChangeFreq,
-	// tPriority,
-} from '/types';
+import type {SitemapXmlSiteConfig} from '/types';
+
 
 import {get as getContentByKey} from '/lib/xp/content';
 import {
 	get as getContext,
 	run as runInContext
 } from '/lib/xp/context';
-// import {
-// 	DEFAULT_PRIORITY,
-// 	DEFAULT_UPDATE_PERIOD
-// } from '/lib/app-sitemapxml/constants';
 import {
 	// DEBUG,
-	SITEMAP_FIELD_NAME,
 	TRACE,
-} from '/guillotine/constants';
+} from '/constants';
+import {SITEMAP_FIELD_NAME} from '/guillotine/constants';
 import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 
 

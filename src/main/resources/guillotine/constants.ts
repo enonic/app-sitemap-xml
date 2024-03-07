@@ -1,7 +1,3 @@
-export const DEBUG = false;
-export const TRACE = false;
-// const PROFILING = false;
-
 // In type names first letter should be uppercase
 export const enum GraphQLTypeName {
 	SITEMAP = 'Sitemap',

@@ -32,6 +32,7 @@ import {
 import {print} from 'q-i';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
 import {mockLibXpContext} from '../mocks/mockLibXpContext';
+import {mockLibXpNode} from '../mocks/mockLibXpNode';
 
 
 // @ts-ignore TS2339: Property 'log' does not exist on type 'typeof globalThis'.
@@ -131,14 +132,18 @@ const folderContent: BaseFolderContent = {
 
 mockLibXpContent({
 	contents: {
-		// [siteContent._id]: siteContent,
 		[siteContent._path]: siteContent,
-		// [folderContent._id]: folderContent,
 		[folderContent._path]: folderContent,
 	},
 	siteContent
 });
 mockLibXpContext();
+mockLibXpNode({
+	nodes: {
+		[siteContent._path]: siteContent,
+		[folderContent._path]: folderContent,
+	}
+});
 
 
 describe('guillotine extensions', () => {
@@ -163,6 +168,9 @@ describe('guillotine extensions', () => {
 								type: 'string'
 							},
 							urlset: {
+								args: {
+									count: 1
+								},
 								type: [{
 									changefreq: null,
 									lastmod: '2021-01-01T00:00:00Z',

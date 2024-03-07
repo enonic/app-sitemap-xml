@@ -1,7 +1,7 @@
 import type {
 	get as getContext,
 	run
-} from '/lib/xp/context';
+} from '@enonic-types/lib-context';
 
 
 import {jest} from '@jest/globals';
