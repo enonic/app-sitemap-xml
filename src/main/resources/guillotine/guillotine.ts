@@ -28,7 +28,7 @@ export const extensions = (graphQL: GraphQL): Extensions => ({
 		// [GraphQLTypeName.SITEMAP_URLSET_EDGE]: UrlsetEdge(graphQL),
 	},
 	creationCallbacks: {
-		[ObjectTypeName.portal_Site]: (params) => {
+		[ObjectTypeName.HeadlessCms]: (params) => {
 			params.addFields({
 				[SITEMAP_FIELD_NAME]: {
 					type: graphQL.reference(GraphQLTypeName.SITEMAP),
@@ -37,7 +37,7 @@ export const extensions = (graphQL: GraphQL): Extensions => ({
 		},
 	},
 	resolvers: {
-		[ObjectTypeName.portal_Site]: {
+		[ObjectTypeName.HeadlessCms]: {
 			[SITEMAP_FIELD_NAME]: sitemap(graphQL),
 		},
 		[GraphQLTypeName.SITEMAP]: {

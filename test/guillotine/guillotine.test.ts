@@ -155,7 +155,7 @@ describe('guillotine extensions', () => {
 				creationCallbacks: {
 				},
 				resolvers: {
-					portal_Site: {
+					HeadlessCms: {
 					},
 					Sitemap: {
 					}
@@ -207,7 +207,7 @@ describe('guillotine extensions', () => {
 				// 	Sitemap: SitemapFunction
 				// },
 				resolvers: {
-					portal_Site: {
+					HeadlessCms: {
 						sitemap: sitemapResolver
 					},
 					Sitemap: {
@@ -221,8 +221,9 @@ describe('guillotine extensions', () => {
 				localContext: {
 					branch: 'master',
 					project: 'project',
+					siteKey: siteContent._path
 				},
-				source: siteContent
+				source: null
 			});
 			// print(sitemapResolverResult);
 			expect(sitemapResolverResult).toEqual({
@@ -230,6 +231,7 @@ describe('guillotine extensions', () => {
 					branch: 'master',
 					project: 'project',
 					siteJson: JSON.stringify(siteContent),
+					siteKey: siteContent._path,
 					siteConfigJson: JSON.stringify(siteConfig)
 				},
 				source: {

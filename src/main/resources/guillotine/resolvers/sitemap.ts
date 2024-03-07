@@ -27,26 +27,25 @@ import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 export const sitemap = (graphQL: GraphQL): Resolver<
 	{}, // args
 	{}, // localContext
-	Site<SitemapXmlSiteConfig>,
+	{},
 	DataFetcherResult<SiteMapResolverData,SiteMapResolverLocaleContext>|null
 > => (env) => {
 	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} env: ${JSON.stringify(env, null, 4)}`);
 	const {
 		// args,
 		localContext,
-		source: siteWithoutSiteConfig
+		// source
 	} = env;
-	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteWithoutSiteConfig: ${JSON.stringify(siteWithoutSiteConfig, null, 4)}`);
 
 	const {
 		branch,
 		project,
-		// siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
+		siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
 	} = localContext;
-	// TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteKey: ${siteKey}`);
-	// if (!siteKey) {
-	// 	return null;
-	// }
+	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteKey: ${siteKey}`);
+	if (!siteKey) {
+		return null;
+	}
 	const context = getContext();
 	const {
 		authInfo: {
@@ -58,7 +57,7 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
-		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteWithoutSiteConfig._path});
+		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey});
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
 		const siteConfig = getSiteConfigFromSite({
 			applicationKey: app.name,
