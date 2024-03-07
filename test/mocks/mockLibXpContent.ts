@@ -3,7 +3,7 @@ import type {
 	Site,
 	get,
 	getSite
-} from '/lib/xp/content';
+} from '@enonic-types/lib-content';
 import type {SitemapXmlSiteConfig} from '/types';
 
 
@@ -38,9 +38,9 @@ export function mockLibXpContent({
 			getSite: jest.fn<typeof getSite>().mockReturnValue(siteContent),
 			getOutboundDependencies: jest.fn().mockReturnValue([]),
 			query: jest.fn().mockReturnValue({
-				count: contents.length,
+				count: Object.values(contents).length,
 				hits: Object.values(contents),
-				total: contents.length,
+				total: Object.values(contents).length,
 			})
 		}),
 		{virtual: true}

@@ -1,15 +1,39 @@
 {
 	"compilerOptions": {
 		"allowSyntheticDefaultImports": true,
-		"baseUrl": "../",
+
+		// Sets a base directory from which to resolve bare specifier module names.
+		// "baseUrl": "../src/main/resources", // This breaks the paths below
+		"baseUrl": "..",
+
 		"declaration": false,
 		"esModuleInterop": true,
 		"moduleResolution": "node",
 		"noImplicitAny": true,
+
+		// A series of entries which re-map imports to lookup locations relative
+		// to the baseUrl if set, or to the tsconfig file itself otherwise.
 		"paths": {
-			"/lib/xp/*": ["./node_modules/@enonic-types/lib-*"],
-			"/*": ["./src/main/resources/*"],
+			"/lib/xp/*": ["node_modules/@enonic-types/lib-*"],
+			// "/types": ["../src/main/resources/types"],
+			"/*": ["src/main/resources/*"],
 		},
+
+		// Default: The longest common path of all non-declaration input files.
+		// If composite is set, the default is instead the directory containing
+		// the tsconfig.json file.
+		// When TypeScript compiles files, it keeps the same directory structure
+		// in the output directory as exists in the input directory.
+		"rootDir": "..",
+
+		// Using rootDirs, you can inform the compiler that there are many
+		// “virtual” directories acting as a single root. This allows the
+		// compiler to resolve relative module imports within these “virtual”
+		// directories, as if they were merged in to one directory.
+		"rootDirs": [
+			"src/main/resources",
+		],
+
 		"skipLibCheck": true,
 		"sourceMap": true, // Needed to get correct Uncovered Line numbers in coverage report
 		"strict": false,
@@ -18,10 +42,16 @@
 			"jest"
 		]
 	},
-	"exclude": [
-		"../src/main/resources/**/*.ts"
-	],
+
+	// Specifies an array of filenames or patterns to include in the program.
+	// These filenames are resolved relative to the directory containing the
+	// tsconfig.json file.
 	"include": [
-		"./**/*.ts"
+		"../**/*.ts"
+	],
+
+	// Specifies an array of filenames or patterns that should be skipped when resolving include.
+	"exclude": [
+		"../**/*.d.ts"
 	],
 }

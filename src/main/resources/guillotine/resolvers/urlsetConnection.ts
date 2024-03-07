@@ -23,8 +23,8 @@ import {
 import {
 	// DEBUG,
 	TRACE,
-	URLSET_CONNECTION_FIELD_NAME
-} from '/guillotine/constants';
+} from '/constants';
+import {URLSET_CONNECTION_FIELD_NAME} from '/guillotine/constants';
 import {
 	DEFAULT_PRIORITY,
 	DEFAULT_UPDATE_PERIOD,

@@ -20,17 +20,17 @@ import {
 	run as runInContext
 } from '/lib/xp/context';
 import {
+	DEBUG,
+	// PROFILING,
+	TRACE,
+} from '/constants';
+import {
 	DEFAULT_PRIORITY,
 	DEFAULT_UPDATE_PERIOD,
 	MAX_ITEMS_LIMIT,
 } from '/lib/app-sitemapxml/constants';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
-import {
-	DEBUG,
-	// PROFILING,
-	TRACE,
-	URLSET_FIELD_NAME
-} from '/guillotine/constants';
+import {URLSET_FIELD_NAME} from '/guillotine/constants';
 // import {safeMs} from '/guillotine/safeMs';
 
 
