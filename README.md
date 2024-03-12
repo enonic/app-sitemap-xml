@@ -14,7 +14,7 @@ Check Enonic Market for further details on installing apps in XP. You have multi
 
 This app comes with a controller mapping to the path of `sitemap.xml` on the root of the site - `[yoursite.something]/sitemap.xml`.
 
-This means that any request that matches, for example https://www.example.com/sitemap.xml, will be sent to this app's sitemap controller.
+This means that any request that matches, for example `https://www.example.com/sitemap.xml`, will be sent to this app's sitemap controller.
 
 The sitemap controller will respond with a sitemap.xml file.
 
@@ -24,7 +24,7 @@ Be aware that only content from the current site will be added to a site's sitem
 
 > **_NOTE:_** The order of the controller mapping is set to 50.
 
-## Headless intergration
+## Headless integration
 
 When doing external rendering, via for example Next.XP, you can fetch the data needed to generate a sitemap.xml file via a Guillotine Extension.
 
@@ -38,7 +38,7 @@ You may also study how we did it in our own [site-enonic-next](https://github.co
 
 The app has a site configuration where you can add content types and configure their `change frequency` and `priority`.
 
-The app will automatically add the site content, if not already added in the site configuration [mappings](mappings).
+The app will automatically add the site content, if not already added in the site configuration [mappings](#mappings).
 
 ### Max included items
 
@@ -93,7 +93,7 @@ In version 2.0.0 the sitemap service has been removed in favour of a Guillotine 
 
 If you are using the controller mapping, this doesn't affect you.
 
-If however you are doing external rendering, see [Headless integration](headless-integration).
+If however you are doing external rendering, see [Headless integration](#headless-integration).
 
 ## Changelog
 
