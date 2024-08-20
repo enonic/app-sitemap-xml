@@ -78,7 +78,7 @@
 					<help-text>Force a specific base-url to be used in the sitemap, this will override the contextual domain</help-text>
 					<occurrences minimum="0" maximum="1"/>
 					<config>
-						<regexp>^https:\/\/[^\/]+$</regexp>
+						<regexp>^(https?:\/\/)?[a-z0-9\.\-]+(:\d{1,5})?(\/[^\/]+)*$</regexp>
 					</config>
 				</input>
 			</items>
