@@ -1,0 +1,18 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: app-sitemap-xml
+  description: This app creates the sitemap.xml file for your site
+  links:
+    - title: ssb.no sitemap
+      url: https://www.ssb.no/sitemap.xml
+  tags:
+    - xml
+    - enonic app
+  annotations:
+    github.com/project-slug: statisticsnorway/app-sitemap-xml
+spec:
+  type: enonic app
+  system: SSBNO
+  owner: ssbno-developers
+  lifecycle: production
