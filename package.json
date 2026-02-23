@@ -4,7 +4,7 @@
     "@enonic-types/guillotine": "^7.3.1",
     "@enonic-types/lib-content": "^7.16.2",
     "@enonic-types/lib-context": "^7.16.2",
-    "@enonic-types/lib-node": "^7.16.1",
+    "@enonic-types/lib-node": "^7.16.2",
     "@enonic-types/lib-portal": "^7.16.2",
     "@enonic/js-utils": "^1.9.0",
     "@swc/core": "^1.15.13",
