@@ -3,6 +3,7 @@
 
 
 import type {
+	Content,
 	Site,
 } from '@enonic-types/lib-content';
 import type {
@@ -33,6 +34,7 @@ import {print} from 'q-i';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
 import {mockLibXpContext} from '../mocks/mockLibXpContext';
 import {mockLibXpNode} from '../mocks/mockLibXpNode';
+import {mockLibXpPortal} from '../mocks/mockLibXpPortal';
 
 
 // @ts-ignore TS2339: Property 'log' does not exist on type 'typeof globalThis'.
@@ -129,19 +131,44 @@ const folderContent: BaseFolderContent = {
 	x: {},
 }
 
+const mediaPdfContent = {
+	_id: 'mediaPdfId',
+	_name: 'mediaPdfName',
+	_path: '/sitePath/overvaking/doc',
+	attachments: {
+		'report.pdf': {
+			name: 'report.pdf',
+			size: 100,
+			mimeType: 'application/pdf',
+		},
+	},
+	creator: 'user:system:creator',
+	createdTime: '2021-01-01T00:00:00Z',
+	data: {},
+	displayName: 'mediaPdfDisplayName',
+	owner: 'user:system:owner',
+	type: 'media:document',
+	hasChildren: false,
+	valid: true,
+	x: {},
+}
+
 
 mockLibXpContent({
 	contents: {
 		[siteContent._path]: siteContent,
 		[folderContent._path]: folderContent,
+		[mediaPdfContent._path]: mediaPdfContent as unknown as Content<unknown>,
 	},
 	siteContent
 });
 mockLibXpContext();
+mockLibXpPortal();
 mockLibXpNode({
 	nodes: {
 		[siteContent._path]: siteContent,
 		[folderContent._path]: folderContent,
+		[mediaPdfContent._path]: mediaPdfContent,
 	}
 });
 
@@ -257,6 +284,11 @@ describe('guillotine extensions', () => {
 					changefreq: undefined,
 					lastmod: undefined,
 					path: '/folderContentPath',
+					priority: undefined,
+				},{
+					changefreq: undefined,
+					lastmod: undefined,
+					path: '/_/attachment/sitePath/overvaking/doc/report.pdf',
 					priority: undefined,
 				}
 			]);

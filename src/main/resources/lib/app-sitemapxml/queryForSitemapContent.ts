@@ -21,6 +21,7 @@ import {
 	ES_MAX_ITEMS_LIMIT,
 	MAX_ITEMS_LIMIT
 } from '/lib/app-sitemapxml/constants';
+import type {SitemapContentHit} from '/lib/app-sitemapxml/resolveSitemapUrl';
 
 
 const GLOBALS: {
@@ -28,6 +29,20 @@ const GLOBALS: {
 } = {
 	alwaysAdd: 'portal:site',
 };
+
+
+function getPrimaryAttachmentName(
+	attachments: Record<string, unknown> | undefined
+): string | undefined {
+	if (!attachments) {
+		return undefined;
+	}
+	const keys = Object.keys(attachments);
+	if (!keys.length) {
+		return undefined;
+	}
+	return keys[0];
+}
 
 
 export function queryForSitemapContent({
@@ -168,11 +183,7 @@ export function queryForSitemapContent({
 	const stopBefore = Math.min(nodeQueryRes.hits.length, countBetweenZeroAndMaxItemsLimit);
 	DEBUG && log.debug('stopBefore: %s', stopBefore);
 
-	const contents: {
-		_path: string
-		modifiedTime?: string
-		type: string
-	}[] = [];
+	const contents: SitemapContentHit[] = [];
 
 	for (let i = 0; i < stopBefore; i++) {
 		const {id} = nodeQueryRes.hits[i];
@@ -180,18 +191,25 @@ export function queryForSitemapContent({
 			_path: string
 			modifiedTime?: string
 			type: string
+			attachments?: Record<string, unknown>
 		}>(id);
 		if (node) {
 			const {
 				_path,
 				modifiedTime,
 				type,
+				attachments,
 			} = node;
-			contents.push({
+			const attachmentName = getPrimaryAttachmentName(attachments);
+			const hit: SitemapContentHit = {
 				_path: _path.replace(/^\/content/, ''),
 				modifiedTime,
 				type,
-			});
+			};
+			if (attachmentName) {
+				hit.attachmentName = attachmentName;
+			}
+			contents.push(hit);
 		}
 	} // for
 	if (contents.length) {
