@@ -18,6 +18,11 @@ export function isMediaContentType(contentType: string): boolean {
 }
 
 
+function removeSitemapPathFromAttachmentUrl(url: string): string {
+	return url.replace('/sitemap.xml/_/attachment/', '/_/attachment/');
+}
+
+
 function buildAttachmentUrlParams(
 	hit: SitemapContentHit,
 	urlType: 'absolute' | 'server'
@@ -51,14 +56,14 @@ export function resolveSitemapLoc(
 	const useAttachment = isMediaContentType(hit.type);
 	if (overrideDomain) {
 		return useAttachment
-			? overrideDomain + attachmentUrl(buildAttachmentUrlParams(hit, 'server'))
+			? overrideDomain + removeSitemapPathFromAttachmentUrl(attachmentUrl(buildAttachmentUrlParams(hit, 'server')))
 			: overrideDomain + pageUrl({
 				path: hit._path,
 				type: 'server',
 			});
 	}
 	return useAttachment
-		? attachmentUrl(buildAttachmentUrlParams(hit, 'absolute'))
+		? removeSitemapPathFromAttachmentUrl(attachmentUrl(buildAttachmentUrlParams(hit, 'absolute')))
 		: pageUrl({
 			path: hit._path,
 			type: 'absolute',
@@ -75,7 +80,7 @@ export function resolveSitemapGuillotinePath(
 ): string {
 	const useAttachment = isMediaContentType(hit.type);
 	const serverUrl = useAttachment
-		? attachmentUrl(buildAttachmentUrlParams(hit, 'server'))
+		? removeSitemapPathFromAttachmentUrl(attachmentUrl(buildAttachmentUrlParams(hit, 'server')))
 		: pageUrl({
 			path: hit._path,
 			type: 'server',
