@@ -29,6 +29,7 @@ import {
 	DEFAULT_UPDATE_PERIOD,
 } from '/lib/app-sitemapxml/constants';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
+import {resolveSitemapGuillotinePath} from '/lib/app-sitemapxml/resolveSitemapUrl';
 import {URLSET_FIELD_NAME} from '/guillotine/constants';
 // import {safeMs} from '/guillotine/safeMs';
 
@@ -110,7 +111,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		for (let i = 0; i < result.hits.length; i++) {
 			if (result.hits[i].type) {
 				TRACE && log.debug('%s resolver result.hits[%s].type: %s', URLSET_FIELD_NAME, i, result.hits[i].type);
-				const path = result.hits[i]._path.replace(site._path, '') || '/';
+				const path = resolveSitemapGuillotinePath(result.hits[i], site._path);
 				items.push({
 					changefreq: changefreq[result.hits[i].type] === DEFAULT_UPDATE_PERIOD ? undefined : changefreq[result.hits[i].type],
 					lastmod: result.hits[i].modifiedTime,

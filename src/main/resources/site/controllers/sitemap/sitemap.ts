@@ -11,31 +11,16 @@ import {toStr} from '@enonic/js-utils/value/toStr';
 import {
 	getSite,
 	getSiteConfig,
-	pageUrl
 } from '/lib/xp/portal';
 // @ts-expect-error No types yet.
 import {render} from '/lib/xslt';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
+import {resolveSitemapLoc} from '/lib/app-sitemapxml/resolveSitemapUrl';
 
 
 const DEBUG = false;
 const TRACE = false;
 const VIEW = resolve('sitemap.xsl');
-
-
-function getServerPageUrl(path: string, overrideDomain: string) {
-	return overrideDomain + pageUrl({
-		path,
-		type: 'server'
-	})
-}
-
-function getAbsolutePageUrl(path: string) {
-	return pageUrl({
-		path,
-		type: 'absolute'
-	})
-}
 
 export function get(request: Request<{
 	headers: {
@@ -74,9 +59,7 @@ export function get(request: Request<{
 				changefreq: changefreq[result.hits[i].type],
 				lastmod: result.hits[i].modifiedTime,
 				priority: priority[result.hits[i].type],
-				loc: overrideDomain
-					? getServerPageUrl(result.hits[i]._path, overrideDomain)
-					: getAbsolutePageUrl(result.hits[i]._path)
+				loc: resolveSitemapLoc(result.hits[i], overrideDomain)
 			});
 		}
 	}
