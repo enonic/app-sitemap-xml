@@ -6,11 +6,8 @@
 	xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
 	xmlns:portal="urn:enonic:xp:portal:1.0"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xmlns:xs="http://www.w3.org/2001/XMLSchema"
 	xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
 	xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9  http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd"
-	xmlns:video="http://www.google.com/schemas/sitemap-video/1.1"
-	xmlns:stk="http://www.enonic.com/cms/xslt/stk"
 >
 
 	<!-- Apparently this line is ignored? XML declaration must be added manually in template match="/" -->
@@ -18,7 +15,7 @@
 
 	<xsl:template match="/">
 		<xsl:text disable-output-escaping="yes">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</xsl:text>
-		<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
+		<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 			<xsl:apply-templates select="/root/result/item"/>
 		</urlset>
 	</xsl:template>

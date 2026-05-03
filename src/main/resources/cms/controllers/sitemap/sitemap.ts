@@ -1,18 +1,9 @@
 import type {Site} from '@enonic-types/lib-content';
-import type {
-	Request,
-	Response,
-	SitemapXmlSiteConfig,
-	tUrl,
-} from '/types';
+import type {Request, Response, SitemapXmlSiteConfig, tUrl,} from '/types';
 
 
 import {toStr} from '@enonic/js-utils/value/toStr';
-import {
-	getSite,
-	getSiteConfig,
-	pageUrl
-} from '/lib/xp/portal';
+import {getSite, getSiteConfig, pageUrl} from '/lib/xp/portal';
 // @ts-expect-error No types yet.
 import {render} from '/lib/xslt';
 import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
@@ -75,8 +66,8 @@ export function get(request: Request<{
 				lastmod: result.hits[i].modifiedTime,
 				priority: priority[result.hits[i].type],
 				loc: overrideDomain
-					? getServerPageUrl(result.hits[i]._path, overrideDomain)
-					: getAbsolutePageUrl(result.hits[i]._path)
+					 ? getServerPageUrl(result.hits[i]._path, overrideDomain)
+					 : getAbsolutePageUrl(result.hits[i]._path)
 			});
 		}
 	}
