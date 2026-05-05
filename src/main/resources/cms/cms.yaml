@@ -1,0 +1,109 @@
+kind: "CMS"
+form:
+  - type: "ItemSet"
+    name: "siteMap"
+    label: "Include by type"
+    helpText: "Select which content types to include in the sitemap"
+    occurrences:
+      min: 0
+      max: 0
+    items:
+      - type: "ContentTypeFilter"
+        name: "contentType"
+        label: "Content Type"
+        helpText: "Adds the selected content type to the sitemap.xml"
+        occurrences:
+          min: 0
+          max: 1
+      - type: "ComboBox"
+        name: "updatePeriod"
+        label: "Update period"
+        helpText: "For the selected content type, set this update frequency in xml\
+          \ file (default is \"monthly\")"
+        occurrences:
+          min: 0
+          max: 1
+        options:
+          - value: "always"
+            label: "Always"
+          - value: "hourly"
+            label: "Hourly"
+          - value: "daily"
+            label: "Daily"
+          - value: "weekly"
+            label: "Weekly"
+          - value: "monthly"
+            label: "Monthly"
+          - value: "yearly"
+            label: "Yearly"
+          - value: "never"
+            label: "Never"
+      - type: "ComboBox"
+        name: "priority"
+        label: "Priority"
+        helpText: "This does not increase possibilities for SEO, it's only information\
+          \ for the search engines that they might or might not use when crawling\
+          \ your site. Default is 0.5."
+        occurrences:
+          min: 0
+          max: 1
+        options:
+          - value: "0.0"
+            label: "0.0"
+          - value: "0.1"
+            label: "0.1"
+          - value: "0.2"
+            label: "0.2"
+          - value: "0.3"
+            label: "0.3"
+          - value: "0.4"
+            label: "0.4"
+          - value: "0.5"
+            label: "0.5"
+          - value: "0.6"
+            label: "0.6"
+          - value: "0.7"
+            label: "0.7"
+          - value: "0.8"
+            label: "0.8"
+          - value: "0.9"
+            label: "0.9"
+          - value: "1.0"
+            label: "1.0"
+        default: "0.5"
+  - type: "ItemSet"
+    name: "ignoreList"
+    label: "Exclude by path"
+    helpText: "For instance \"/full/path\", \"/startsWith*\", \"*hasInTheMiddle*\"\
+      \ or \"*endsWith\""
+    occurrences:
+      min: 0
+      max: 0
+    items:
+      - type: "TextLine"
+        name: "path"
+        label: "Path to ignore"
+        occurrences:
+          min: 0
+          max: 1
+  - type: "FieldSet"
+    label: "Advanced"
+    items:
+      - type: "TextLine"
+        name: "maxItems"
+        label: "Max included items"
+        helpText: "Default value is 10000, maximum is 50000 - aligned with sitemap.xml\
+          \ specification"
+        occurrences:
+          min: 0
+          max: 1
+        regexp: "^(50000|[1-4]\\d{4}|\\d{2,4}|[1-9])$"
+      - type: "TextLine"
+        name: "overrideDomain"
+        label: "Base URL"
+        helpText: "Force a specific base-url to be used in the sitemap, this will\
+          \ override the contextual domain"
+        occurrences:
+          min: 0
+          max: 1
+        regexp: "^(https?:\\/\\/)?[a-z0-9\\.\\-]+(:\\d{1,5})?(\\/[^\\/]+)*$"
