@@ -1,0 +1,7 @@
+[versions]
+cache = "2.2.1"
+xslt  = "2.1.1"
+
+[libraries]
+lib-cache = { module = "com.enonic.lib:lib-cache", version.ref = "cache" }
+lib-xslt  = { module = "com.enonic.lib:lib-xslt",  version.ref = "xslt"  }
