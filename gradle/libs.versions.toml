@@ -1,6 +1,6 @@
 [versions]
-cache = "2.2.1"
-xslt  = "2.1.1"
+cache = "3.0.0-SNAPSHOT"
+xslt  = "3.0.0-SNAPSHOT"
 
 [libraries]
 lib-cache = { module = "com.enonic.lib:lib-cache", version.ref = "cache" }
