@@ -28,8 +28,6 @@ import {
 	expect,
 	test as it,
 } from '@jest/globals';
-// @ts-expect-error No types
-import {print} from 'q-i';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
 import {mockLibXpContext} from '../mocks/mockLibXpContext';
 import {mockLibXpNode} from '../mocks/mockLibXpNode';
