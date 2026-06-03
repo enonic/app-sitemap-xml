@@ -1,5 +1,5 @@
 kind: "Site"
 mappings:
   - controller: "/cms/controllers/sitemap/sitemap.js"
-    order: 50
+    order: 12
     pattern: "/sitemap\\.xml"
