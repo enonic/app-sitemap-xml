@@ -81,6 +81,9 @@ export function queryForSitemapContent({
 		branch,
 		repository: repoId,
 	} = getContext();
+	if (!branch || !repoId) {
+		throw new Error('queryForSitemapContent: Unable to get branch and repository from context!');
+	}
 	const projectRepoConnection = connect({
 		branch,
 		repoId
