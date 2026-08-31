@@ -6,7 +6,7 @@
     "@enonic-types/lib-context": "^8",
     "@enonic-types/lib-node": "^8",
     "@enonic-types/lib-portal": "^8",
-    "@enonic/js-utils": "^2.0.0",
+    "@enonic/js-utils": "^2.1.0",
     "@swc/core": "^1.16.1",
     "@types/ms": "^2.1.0",
     "jest": "^30.4.2",
