@@ -12,6 +12,7 @@ form:
         name: "contentType"
         label: "Content Type"
         helpText: "Adds the selected content type to the sitemap.xml"
+        context: true
         occurrences:
           min: 0
           max: 1
