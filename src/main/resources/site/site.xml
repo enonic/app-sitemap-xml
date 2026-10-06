@@ -10,6 +10,9 @@
 					<label>Content Type</label>
 					<occurrences maximum="1" minimum="0"/>
 					<help-text>Adds the selected content type to the sitemap.xml</help-text>
+					<config>
+						<context>true</context>
+					</config>
 				</input>
 				<input name="updatePeriod" type="ComboBox">
 					<label>Update period</label>
@@ -85,7 +88,7 @@
 		</field-set>
 	</form>
 	<mappings>
-		<mapping controller="/site/controllers/sitemap/sitemap.js" order="50">
+		<mapping controller="/site/controllers/sitemap/sitemap.js" order="12">
 			<pattern>/sitemap\.xml</pattern>
 		</mapping>
 	</mappings>
