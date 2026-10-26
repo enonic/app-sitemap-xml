@@ -1,7 +1,7 @@
 {
   "devDependencies": {
     "@enonic-types/global": "^8",
-    "@enonic-types/guillotine": "^8",
+    "@enonic-types/guillotine": "^9",
     "@enonic-types/lib-content": "^8",
     "@enonic-types/lib-context": "^8",
     "@enonic-types/lib-node": "^8",
