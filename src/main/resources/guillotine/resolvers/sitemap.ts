@@ -1,6 +1,5 @@
 import type {Site} from '@enonic-types/lib-content';
 import type {
-	DataFetcherResult,
 	GraphQL,
 	Resolver,
 } from '@enonic-types/guillotine';
@@ -26,9 +25,8 @@ import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
 
 export const sitemap = (graphQL: GraphQL): Resolver<
 	{}, // args
-	{}, // localContext
-	{},
-	DataFetcherResult<SiteMapResolverData,SiteMapResolverLocaleContext>|null
+	{}, // source
+	ReturnType<GraphQL['createDataFetcherResult']>|null
 > => (env) => {
 	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} env: ${JSON.stringify(env, null, 4)}`);
 	const {
@@ -40,10 +38,10 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 	const {
 		branch,
 		project,
-		siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
+		scopeKey // Can be undefined when no scope is selected
 	} = localContext;
-	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteKey: ${siteKey}`);
-	if (!siteKey) {
+	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} scopeKey: ${scopeKey}`);
+	if (!scopeKey) {
 		return null;
 	}
 	const context = getContext();
@@ -57,7 +55,7 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
-		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey});
+		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: scopeKey});
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
 		const siteConfig = getSiteConfigFromSite({
 			applicationKey: app.name,
@@ -69,17 +67,14 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		const {
 			overrideDomain: baseUrl = null
 		} = siteConfig || {};
-		return graphQL.createDataFetcherResult<
-			SiteMapResolverData,
-			SiteMapResolverLocaleContext
-		>({
+		return graphQL.createDataFetcherResult({
 			data: __.toScriptValue<SiteMapResolverData>({
 				baseUrl,
 			}),
 			localContext: {
 				siteJson: JSON.stringify(site),
 				siteConfigJson: JSON.stringify(siteConfig),
-			},
+			} satisfies SiteMapResolverLocaleContext,
 			parentLocalContext: localContext,
 		});
 	}); // runInContext

@@ -60,7 +60,7 @@ const graphQL: GraphQL = {
 	createDataFetcherResult: ({data, localContext, parentLocalContext}) => ({
 		source: data as any,
 		localContext: {...parentLocalContext, ...localContext}
-	}),
+	} as unknown as ReturnType<GraphQL['createDataFetcherResult']>),
 	// createDataFetcherResult: () => ({
 	// 	data: null as unknown as ScriptValue,
 	// 	// localContext: {}// as LocalContext,
@@ -214,12 +214,21 @@ describe('guillotine extensions', () => {
 				}
 			} = res;
 
+			expect(sitemapResolver({
+				args: {},
+				localContext: {
+					branch: 'master',
+					project: 'project'
+				},
+				source: null
+			})).toBeNull();
+
 			const sitemapResolverResult = sitemapResolver({
 				args: {},
 				localContext: {
 					branch: 'master',
 					project: 'project',
-					siteKey: siteContent._path
+					scopeKey: siteContent._path
 				},
 				source: null
 			});
@@ -229,7 +238,7 @@ describe('guillotine extensions', () => {
 					branch: 'master',
 					project: 'project',
 					siteJson: JSON.stringify(siteContent),
-					siteKey: siteContent._path,
+					scopeKey: siteContent._path,
 					siteConfigJson: JSON.stringify(siteConfig)
 				},
 				source: {
