@@ -62,7 +62,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 	} = env;
 	const localContext = env.localContext as LocalContext<SiteMapResolverLocaleContext>;
 
-	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig>;
+	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig>|null;
 	TRACE && log.debug('%s resolver site: %s', URLSET_FIELD_NAME, toStr(site));
 
 	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig;
@@ -110,7 +110,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		for (let i = 0; i < result.hits.length; i++) {
 			if (result.hits[i].type) {
 				TRACE && log.debug('%s resolver result.hits[%s].type: %s', URLSET_FIELD_NAME, i, result.hits[i].type);
-				const path = result.hits[i]._path.replace(site._path, '') || '/';
+				const path = result.hits[i]._path.replace(site?._path || '', '') || '/';
 				items.push({
 					changefreq: changefreq[result.hits[i].type] === DEFAULT_UPDATE_PERIOD ? undefined : changefreq[result.hits[i].type],
 					lastmod: result.hits[i].modifiedTime,

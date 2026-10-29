@@ -10,6 +10,7 @@ dependencies {
 	include xplibs.content
 	include xplibs.node
 	include xplibs.portal
+	include xplibs.project
 
 	include libs.lib.cache
 	include libs.lib.xslt

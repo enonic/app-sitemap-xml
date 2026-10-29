@@ -1,4 +1,4 @@
-import type {Site} from '@enonic-types/lib-content';
+import type {SiteConfig} from '@enonic-types/lib-content';
 import type {
 	GraphQL,
 	Resolver,
@@ -10,7 +10,8 @@ import type {
 import type {SitemapXmlSiteConfig} from '/types';
 
 
-import {get as getContentByKey} from '/lib/xp/content';
+import {getSite} from '/lib/xp/content';
+import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {
 	get as getContext,
 	run as runInContext
@@ -20,7 +21,7 @@ import {
 	TRACE,
 } from '/constants';
 import {SITEMAP_FIELD_NAME} from '/guillotine/constants';
-import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
+import {resolveSourceConfig} from '/lib/app-sitemapxml/resolveSourceConfig';
 
 
 export const sitemap = (graphQL: GraphQL): Resolver<
@@ -38,12 +39,10 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 	const {
 		branch,
 		project,
-		scopeKey // Can be undefined when no scope is selected
 	} = localContext;
+	const scopeKey = localContext.scopeKey ?? (localContext.siteKey as string | undefined);
 	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} scopeKey: ${scopeKey}`);
-	if (!scopeKey) {
-		return null;
-	}
+
 	const context = getContext();
 	const {
 		authInfo: {
@@ -55,12 +54,12 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
-		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: scopeKey});
+		const site = scopeKey && scopeKey !== '/'
+			? getSite<SitemapXmlSiteConfig>({key: scopeKey})
+			: null;
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
-		const siteConfig = getSiteConfigFromSite({
-			applicationKey: app.name,
-			site: site as Site<SitemapXmlSiteConfig>,
-		});
+		const sourceConfig = resolveSourceConfig(project, branch, scopeKey);
+		const siteConfig = getAppConfig(sourceConfig);
 		if (!siteConfig) {
 			return null;
 		}
@@ -79,3 +78,8 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		});
 	}); // runInContext
 };
+
+function getAppConfig(sourceConfig: ReturnType<typeof resolveSourceConfig>) {
+	return forceArray(sourceConfig as SiteConfig<SitemapXmlSiteConfig> | SiteConfig<SitemapXmlSiteConfig>[])
+		.filter(config => config && config.applicationKey === app.name)[0]?.config;
+}
