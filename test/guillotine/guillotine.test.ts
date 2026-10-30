@@ -26,6 +26,7 @@ import type {SitemapXmlSiteConfig} from '/types';
 import {
 	describe,
 	expect,
+	jest,
 	test as it,
 } from '@jest/globals';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
@@ -60,7 +61,7 @@ const graphQL: GraphQL = {
 	createDataFetcherResult: ({data, localContext, parentLocalContext}) => ({
 		source: data as any,
 		localContext: {...parentLocalContext, ...localContext}
-	}),
+	} as unknown as ReturnType<GraphQL['createDataFetcherResult']>),
 	// createDataFetcherResult: () => ({
 	// 	data: null as unknown as ScriptValue,
 	// 	// localContext: {}// as LocalContext,
@@ -88,6 +89,17 @@ const siteConfig: SitemapXmlSiteConfig = {
 	overrideDomain: 'https://enonic.com',
 	siteMap: []
 }
+
+const projectConfig: SitemapXmlSiteConfig = {
+	...siteConfig,
+	overrideDomain: 'https://project.example.com'
+};
+
+jest.mock('/lib/xp/project', () => ({
+	get: jest.fn().mockReturnValue({
+		siteConfig: [{applicationKey: 'com.enonic.app.sitemapxml', config: projectConfig}]
+	})
+}), {virtual: true});
 
 const siteContent: Site<SitemapXmlSiteConfig> = {
 	_id: 'siteId',
@@ -146,7 +158,7 @@ mockLibXpNode({
 
 describe('guillotine extensions', () => {
 	it("does it's thing", () => {
-		import('/guillotine/guillotine').then(({extensions}) => {
+		return import('/guillotine/guillotine').then(async ({extensions}) => {
 			const res = extensions(graphQL);
 			// print(JSON.parse(JSON.stringify(res)));
 			expect(JSON.parse(JSON.stringify(res))).toEqual({
@@ -214,12 +226,13 @@ describe('guillotine extensions', () => {
 				}
 			} = res;
 
+
 			const sitemapResolverResult = sitemapResolver({
 				args: {},
 				localContext: {
 					branch: 'master',
 					project: 'project',
-					siteKey: siteContent._path
+					scopeKey: siteContent._path
 				},
 				source: null
 			});
@@ -229,13 +242,64 @@ describe('guillotine extensions', () => {
 					branch: 'master',
 					project: 'project',
 					siteJson: JSON.stringify(siteContent),
-					siteKey: siteContent._path,
+					scopeKey: siteContent._path,
 					siteConfigJson: JSON.stringify(siteConfig)
 				},
 				source: {
 					baseUrl: 'https://enonic.com'
 				},
 			});
+
+			for (const keys of [
+				{siteKey: siteContent._path},
+				{scopeKey: siteContent._path, siteKey: '/other-site'},
+				{scopeKey: folderContent._path},
+				{scopeKey: null, siteKey: siteContent._path},
+			]) {
+				const result = sitemapResolver({
+					args: {},
+					localContext: {
+						branch: 'master',
+						project: 'project',
+						...keys,
+					},
+					source: null
+				});
+				expect(result.source).toEqual(sitemapResolverResult.source);
+				expect(result.localContext.siteJson).toBe(JSON.stringify(siteContent));
+			}
+
+			for (const keys of [
+				{},
+				{scopeKey: '/'},
+				{scopeKey: '/', siteKey: siteContent._path},
+				{scopeKey: '/outside-site'},
+			]) {
+				const result = sitemapResolver({
+					args: {},
+					localContext: {branch: 'master', project: 'project', ...keys},
+					source: null
+				});
+				expect(result.source).toEqual({baseUrl: projectConfig.overrideDomain});
+				expect(result.localContext.siteJson).toBe('null');
+				expect(result.localContext.siteConfigJson).toBe(JSON.stringify(projectConfig));
+				const urls = urlsetResolver({
+					args: {},
+					localContext: result.localContext,
+					source: result.source
+				});
+				expect(urls.map((url: {path: string}) => url.path)).toEqual([siteContent._path, folderContent._path]);
+				const {connect} = await import('/lib/xp/node');
+				const connection = jest.mocked(connect).mock.results.at(-1)!.value as import('@enonic-types/lib-node').RepoConnection;
+				expect(connection.query).toHaveBeenLastCalledWith(
+					expect.objectContaining({query: expect.objectContaining({boolean: expect.objectContaining({must: expect.arrayContaining([
+						{boolean: {should: [
+							{like: {field: '_path', value: '/content/*'}},
+							{term: {field: '_path', value: '/content'}}
+						]}}
+					])})})})
+				);
+			}
 
 			const urlsetResolverResult = urlsetResolver({
 				args: {

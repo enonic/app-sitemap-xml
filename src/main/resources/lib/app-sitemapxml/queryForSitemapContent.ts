@@ -37,7 +37,7 @@ export function queryForSitemapContent({
 	start = 0,
 }: {
 	count?: number
-	site: Site<SitemapXmlSiteConfig>
+	site: Site<SitemapXmlSiteConfig>|null
 	siteConfig: SitemapXmlSiteConfig|null
 	start?: number
 }) {
@@ -73,8 +73,8 @@ export function queryForSitemapContent({
 		priority[cty] = '1.0';
 	}
 
-	// Only allow content from current Site to populate the sitemap.
-	const folderPath = site._path;
+	// Restrict to the containing site, or query the project root when there is no site.
+	const folderPath = site?._path || '';
 	const contentRoot = '/content' + folderPath + '';
 
 	const {

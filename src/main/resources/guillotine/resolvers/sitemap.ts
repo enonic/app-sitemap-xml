@@ -1,6 +1,5 @@
-import type {Site} from '@enonic-types/lib-content';
+import type {SiteConfig} from '@enonic-types/lib-content';
 import type {
-	DataFetcherResult,
 	GraphQL,
 	Resolver,
 } from '@enonic-types/guillotine';
@@ -11,7 +10,8 @@ import type {
 import type {SitemapXmlSiteConfig} from '/types';
 
 
-import {get as getContentByKey} from '/lib/xp/content';
+import {getSite} from '/lib/xp/content';
+import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {
 	get as getContext,
 	run as runInContext
@@ -21,14 +21,13 @@ import {
 	TRACE,
 } from '/constants';
 import {SITEMAP_FIELD_NAME} from '/guillotine/constants';
-import {getSiteConfigFromSite} from '/guillotine/getSiteConfigFromSite';
+import {resolveSourceConfig} from '/lib/app-sitemapxml/resolveSourceConfig';
 
 
 export const sitemap = (graphQL: GraphQL): Resolver<
 	{}, // args
-	{}, // localContext
-	{},
-	DataFetcherResult<SiteMapResolverData,SiteMapResolverLocaleContext>|null
+	{}, // source
+	ReturnType<GraphQL['createDataFetcherResult']>|null
 > => (env) => {
 	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} env: ${JSON.stringify(env, null, 4)}`);
 	const {
@@ -40,12 +39,10 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 	const {
 		branch,
 		project,
-		siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
 	} = localContext;
-	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteKey: ${siteKey}`);
-	if (!siteKey) {
-		return null;
-	}
+	const scopeKey = localContext.scopeKey ?? (localContext.siteKey as string | undefined);
+	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} scopeKey: ${scopeKey}`);
+
 	const context = getContext();
 	const {
 		authInfo: {
@@ -57,30 +54,32 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
-		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey});
+		const site = scopeKey && scopeKey !== '/'
+			? getSite<SitemapXmlSiteConfig>({key: scopeKey})
+			: null;
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
-		const siteConfig = getSiteConfigFromSite({
-			applicationKey: app.name,
-			site: site as Site<SitemapXmlSiteConfig>,
-		});
+		const sourceConfig = resolveSourceConfig(project, branch, scopeKey);
+		const siteConfig = getAppConfig(sourceConfig);
 		if (!siteConfig) {
 			return null;
 		}
 		const {
 			overrideDomain: baseUrl = null
 		} = siteConfig || {};
-		return graphQL.createDataFetcherResult<
-			SiteMapResolverData,
-			SiteMapResolverLocaleContext
-		>({
+		return graphQL.createDataFetcherResult({
 			data: __.toScriptValue<SiteMapResolverData>({
 				baseUrl,
 			}),
 			localContext: {
 				siteJson: JSON.stringify(site),
 				siteConfigJson: JSON.stringify(siteConfig),
-			},
+			} satisfies SiteMapResolverLocaleContext,
 			parentLocalContext: localContext,
 		});
 	}); // runInContext
 };
+
+function getAppConfig(sourceConfig: ReturnType<typeof resolveSourceConfig>) {
+	return forceArray(sourceConfig as SiteConfig<SitemapXmlSiteConfig> | SiteConfig<SitemapXmlSiteConfig>[])
+		.filter(config => config && config.applicationKey === app.name)[0]?.config;
+}

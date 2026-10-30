@@ -1,5 +1,6 @@
 import type {
 	GraphQL,
+	LocalContext,
 	Resolver,
 } from '@enonic-types/guillotine';
 import type {Site} from '@enonic-types/lib-content';
@@ -49,23 +50,22 @@ export const urlset = (graphQL: GraphQL): Resolver<
 	{
 		count?: number
 	},
-	SiteMapResolverLocaleContext,
 	SiteMapResolverData,
-	{}
+	SitemapUrl[]
 > => (env) => {
 	// const startMs = PROFILING ? currentTimeMillis() : 0;
 
 	TRACE && log.debug('%s resolver env: %s', URLSET_FIELD_NAME, toStr(env));
 	const {
 		args,
-		localContext,
 		// source
 	} = env;
+	const localContext = env.localContext as LocalContext<SiteMapResolverLocaleContext>;
 
-	const site = JSON.parse(localContext.siteJson as string) as Site<SitemapXmlSiteConfig>;
+	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig>|null;
 	TRACE && log.debug('%s resolver site: %s', URLSET_FIELD_NAME, toStr(site));
 
-	const siteConfig = JSON.parse(localContext.siteConfigJson as string) as SitemapXmlSiteConfig;
+	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig;
 	TRACE && log.debug('%s resolver siteConfig: %s', URLSET_FIELD_NAME, toStr(siteConfig));
 
 	const {
@@ -110,7 +110,7 @@ export const urlset = (graphQL: GraphQL): Resolver<
 		for (let i = 0; i < result.hits.length; i++) {
 			if (result.hits[i].type) {
 				TRACE && log.debug('%s resolver result.hits[%s].type: %s', URLSET_FIELD_NAME, i, result.hits[i].type);
-				const path = result.hits[i]._path.replace(site._path, '') || '/';
+				const path = result.hits[i]._path.replace(site?._path || '', '') || '/';
 				items.push({
 					changefreq: changefreq[result.hits[i].type] === DEFAULT_UPDATE_PERIOD ? undefined : changefreq[result.hits[i].type],
 					lastmod: result.hits[i].modifiedTime,
