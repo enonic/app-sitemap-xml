@@ -66,7 +66,7 @@ When content in the project changes (any node event in the project repository an
 
 Sitemaps are generated one at a time, never in parallel. When more than 10 sitemap requests are in progress at once (for example many cold sitemaps requested at the same time), further requests get `429 Too Many Requests` with a `Retry-After` header.
 
-Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap), and streamed from there. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
+Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
 
 ### URLs in the sitemap
 

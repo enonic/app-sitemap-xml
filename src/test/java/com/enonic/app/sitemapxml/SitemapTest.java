@@ -205,6 +205,30 @@ class SitemapTest
     }
 
     @Test
+    void storesOnlyGzipFilesAndKnowsPlainSizes()
+        throws IOException
+    {
+        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
+            .mapToObj( i -> new SitemapEntry( "/æøå-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
+            .toList();
+        final Sitemap sitemap = write( params( "https://example.com", 2 ), entries );
+
+        try (var files = Files.list( sitemap.directory() ))
+        {
+            assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
+                                                                                                       "sitemap-index.xml.gz",
+                                                                                                       "sitemap-1.xml.gz",
+                                                                                                       "sitemap-2.xml.gz",
+                                                                                                       "sitemap.json.gz" );
+        }
+        for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow(),
+                                                sitemap.json() ) )
+        {
+            assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
+        }
+    }
+
+    @Test
     void utf8Length()
     {
         assertThat( SitemapRenderer.utf8Length( "aæ€😀" ) ).isEqualTo( "aæ€😀".getBytes( StandardCharsets.UTF_8 ).length );
