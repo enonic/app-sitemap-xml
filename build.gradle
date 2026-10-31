@@ -1,19 +1,41 @@
 plugins {
 	id 'maven-publish'
+	id 'jacoco'
 	id 'com.enonic.defaults' version '2.1.7'
 	id 'com.enonic.xp.app'
 	id 'com.github.node-gradle.node' version '7.1.0'
 }
 
 dependencies {
+	implementation xplibs.api.core
+	implementation xplibs.api.script
+	implementation xplibs.api.portal
+
 	include xplibs.context
 	include xplibs.content
-	include xplibs.node
 	include xplibs.portal
 	include xplibs.project
 
 	include libs.lib.cache
-	include libs.lib.xslt
+
+	testImplementation platform(libs.junit.bom)
+	testImplementation platform(libs.mockito.bom)
+	testImplementation libs.junit.jupiter
+	testRuntimeOnly libs.junit.platform.launcher
+	testImplementation libs.mockito.core
+	testImplementation libs.mockito.junit.jupiter
+	testImplementation libs.assertj.core
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+	finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+	reports {
+		xml.required = true
+	}
 }
 
 repositories {
@@ -59,6 +81,7 @@ tasks.register('npmBuild', NpmTask) {
 }
 
 jar.dependsOn npmBuild
+classes.dependsOn npmBuild
 
 tasks.register('npmCheck', NpmTask) {
 	dependsOn npmInstall

@@ -22,13 +22,33 @@ It includes the required tags of a sitemap.xml (`<loc>`, `<lastmod>`, `<changefr
 
 Be aware that only content from the current site will be added to a site's sitemap.
 
-> **_NOTE:_** The order of the controller mapping is set to 50.
+When the sitemap is split into several files, the controller also responds to `[yoursite.something]/sitemap-1.xml`, `[yoursite.something]/sitemap-2.xml`, etc.
+
+> **_NOTE:_** The order of the controller mapping is set to 12.
 
 ## Headless integration
 
 When doing external rendering, via for example Next.XP, you can fetch the data needed to generate a sitemap.xml file via a Guillotine Extension.
 
 Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `HeadlessCms` object type.
+
+The `sitemap` field is served from the same cached, published-only sitemap as `sitemap.xml`, split into the same files (at most 50 000 URLs and 50MB each):
+
+* `files { number lastmod }` lists the files, for example for Next.js `generateSitemaps()` and a sitemap index.
+* `file(number: N) { urlset { path lastmod changefreq priority } }` returns the URLs of one file.
+* `urlset(count: N)` returns the first `N` URLs (up to "Max included items"), as before.
+
+```graphql
+{
+  guillotine {
+    sitemap {
+      baseUrl
+      files { number lastmod }
+      file(number: 1) { urlset { path lastmod changefreq priority } }
+    }
+  }
+}
+```
 
 You may also study how we did it in our own [site-enonic-next](https://github.com/enonic/site-enonic-next).
 
@@ -42,13 +62,39 @@ The app will automatically add the site content, if not already added in the sit
 
 ### Max included items
 
-Limit the number of items in the file. Default: 10000. Max: 50000.
+Limit the total number of items in the sitemap. Default: 10000. Max: 1000000.
 
-> **_WARNING:_** The number of included items will affect the time it takes to generate the sitemap.xml file.
+### URLs per file
 
-### Override the generated domain name
+Maximum number of URLs in a single sitemap file. Default and max: 50000.
 
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
+The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are always obeyed: a sitemap file holds at most 50,000 URLs and 50MB (uncompressed), a sitemap index lists at most 50,000 sitemaps, and URLs longer than 2,048 characters are left out.
+
+When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
+
+### Gzip
+
+Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
+
+Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console submission), so the plain `.xml` URLs are compressed too: when a request accepts gzip (`Accept-Encoding: gzip`, which crawlers send), the stored file is sent as it is with `Content-Encoding: gzip`, so the response is the same XML, compressed for transfer only. Plain `.xml` responses carry `Vary: Accept-Encoding`. To have crawlers fetch the `.xml.gz` files instead, list `sitemap.xml.gz` in `robots.txt` (`Sitemap: https://example.com/sitemap.xml.gz`).
+
+## Caching and background generation
+
+The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and kept in memory. The first request for a sitemap waits for it to be generated; after that, requests are answered from memory.
+
+When content in the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete), the sitemap is regenerated in the background a few seconds later. Until the new sitemap is ready, the previous one is served. On the `master` branch, the sitemap is also regenerated when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are dropped instead of regenerated.
+
+Sitemaps are generated one at a time, never in parallel. When more than 10 sitemap requests are in progress at once (for example many cold sitemaps requested at the same time), further requests get `429 Too Many Requests` with a `Retry-After` header.
+
+Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
+
+### URLs in the sitemap
+
+URLs are resolved in this order:
+
+1. `Base URL` in this app's site configuration, see [Override the generated domain name](#override-the-generated-domain-name).
+2. The `Base URL` configured for the site in XP (the `portal` site configuration). The sitemap is then the same whichever host it is requested from.
+3. The URL of the site as seen by the request.
 
 ### Mappings
 

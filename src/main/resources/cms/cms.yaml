@@ -93,12 +93,22 @@ form:
       - type: "TextLine"
         name: "maxItems"
         label: "Max included items"
-        helpText: "Default value is 10000, maximum is 50000 - aligned with sitemap.xml\
-          \ specification"
+        helpText: "Default value is 10000, maximum is 1000000. When there are more\
+          \ items than 'URLs per file', sitemap.xml becomes a sitemap index pointing\
+          \ to sitemap-1.xml, sitemap-2.xml, etc."
         occurrences:
           min: 0
           max: 1
-        regexp: "^(50000|[1-4]\\d{4}|\\d{2,4}|[1-9])$"
+        regexp: "^(1000000|[1-9]\\d{0,5})$"
+      - type: "TextLine"
+        name: "urlsPerFile"
+        label: "URLs per file"
+        helpText: "Maximum number of URLs in each sitemap file. Default and maximum\
+          \ is 50000 - aligned with sitemap.xml specification"
+        occurrences:
+          min: 0
+          max: 1
+        regexp: "^(50000|[1-4]\\d{4}|[1-9]\\d{0,3})$"
       - type: "TextLine"
         name: "overrideDomain"
         label: "Base URL"
