@@ -8,22 +8,17 @@ public final class SitemapResponse
 
     private final int status;
 
-    private final Object body;
+    private final ByteSource body;
 
-    private SitemapResponse( final int status, final Object body )
+    private SitemapResponse( final int status, final ByteSource body )
     {
         this.status = status;
         this.body = body;
     }
 
-    static SitemapResponse ok( final String body )
+    static SitemapResponse ok( final ByteSource body )
     {
         return new SitemapResponse( 200, body );
-    }
-
-    static SitemapResponse ok( final byte[] body )
-    {
-        return new SitemapResponse( 200, ByteSource.wrap( body ) );
     }
 
     static SitemapResponse notFound()
@@ -41,7 +36,7 @@ public final class SitemapResponse
         return status;
     }
 
-    public Object getBody()
+    public ByteSource getBody()
     {
         return body;
     }

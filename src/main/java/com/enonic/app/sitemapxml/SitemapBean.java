@@ -8,6 +8,8 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.google.common.io.ByteSource;
+
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -42,30 +44,20 @@ public final class SitemapBean
 
     public SitemapResponse rootGzip( final ScriptValue params )
     {
-        return respondBytes( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
     }
 
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
-        return respondBytes( params, sitemap -> sitemap.fileGzip( number ) );
+        return respond( params, sitemap -> sitemap.fileGzip( number ) );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
-    {
-        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
-    }
-
-    private SitemapResponse respondBytes( final ScriptValue params, final Function<Sitemap, Optional<byte[]>> body )
-    {
-        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
-    }
-
-    private SitemapResponse respondWith( final ScriptValue params, final Function<Sitemap, Optional<SitemapResponse>> response )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         try
         {
             final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) );
-            return response.apply( sitemap ).orElseGet( SitemapResponse::notFound );
+            return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
         }
         catch ( SitemapBusyException e )
         {

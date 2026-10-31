@@ -1,20 +1,24 @@
 package com.enonic.app.sitemapxml;
 
+import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import org.osgi.service.component.annotations.Component;
@@ -35,35 +39,45 @@ public final class SitemapCache
 
     static final int MAX_IN_FLIGHT = 10;
 
+    static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
+
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
 
     private final Semaphore inFlight = new Semaphore( MAX_IN_FLIGHT );
 
-    private final ExecutorService generator;
+    private final ScheduledExecutorService generator;
 
     private final Clock clock;
 
+    private final Duration fileRetention;
+
+    private final Path storage;
+
     public SitemapCache()
     {
-        this( Executors.newSingleThreadExecutor( runnable -> {
+        this( Executors.newSingleThreadScheduledExecutor( runnable -> {
             final Thread thread = new Thread( runnable, "sitemapxml-generator" );
             thread.setDaemon( true );
             return thread;
-        } ), Clock.systemUTC() );
+        } ), Clock.systemUTC(), FILE_RETENTION, defaultStorage() );
     }
 
-    SitemapCache( final ExecutorService generator, final Clock clock )
+    SitemapCache( final ScheduledExecutorService generator, final Clock clock, final Duration fileRetention, final Path storage )
     {
         this.generator = generator;
         this.clock = clock;
+        this.fileRetention = fileRetention;
+        this.storage = storage;
+        Sitemap.delete( storage );
     }
 
     @Deactivate
     public void deactivate()
     {
         generator.shutdownNow();
+        Sitemap.delete( storage );
     }
 
     public Sitemap get( final Key key, final AuthenticationInfo authInfo, final Supplier<SitemapContents> query )
@@ -88,6 +102,10 @@ public final class SitemapCache
                 final boolean won = existing == null ? entries.putIfAbsent( key, created ) == null : entries.replace( key, existing, created );
                 if ( won )
                 {
+                    if ( existing != null )
+                    {
+                        discard( existing );
+                    }
                     evictOverflow();
                     submit( key, created, authInfo, query );
                     return await( created.sitemap );
@@ -102,18 +120,22 @@ public final class SitemapCache
 
     public void invalidate( final String repositoryId, final String branch )
     {
-        if ( entries.keySet().removeIf( key -> key.repositoryId().equals( repositoryId ) && key.branch().equals( branch ) ) )
-        {
-            LOG.debug( "Invalidated sitemaps for repository {} branch {}", repositoryId, branch );
-        }
+        entries.forEach( ( key, entry ) -> {
+            if ( key.repositoryId().equals( repositoryId ) && key.branch().equals( branch ) && remove( key, entry ) )
+            {
+                LOG.debug( "Invalidated sitemap {}", key );
+            }
+        } );
     }
 
     public void invalidate( final String repositoryId )
     {
-        if ( entries.keySet().removeIf( key -> key.repositoryId().equals( repositoryId ) ) )
-        {
-            LOG.debug( "Invalidated sitemaps for repository {}", repositoryId );
-        }
+        entries.forEach( ( key, entry ) -> {
+            if ( key.repositoryId().equals( repositoryId ) && remove( key, entry ) )
+            {
+                LOG.debug( "Invalidated sitemap {}", key );
+            }
+        } );
     }
 
     int size()
@@ -189,7 +211,8 @@ public final class SitemapCache
                 .build()
                 .callWith( query::get );
             entry.validUntil = contents.validUntil();
-            entry.sitemap.complete( new Sitemap( key.params(), contents.entries() ) );
+            entry.sitemap.complete(
+                Sitemap.write( storage.resolve( UUID.randomUUID().toString() ), key.params(), contents.entries() ) );
         }
         catch ( RuntimeException e )
         {
@@ -205,8 +228,43 @@ public final class SitemapCache
             entries.entrySet()
                 .stream()
                 .min( Comparator.comparing( e -> e.getValue().lastAccess ) )
-                .ifPresent( oldest -> entries.remove( oldest.getKey(), oldest.getValue() ) );
+                .ifPresent( oldest -> remove( oldest.getKey(), oldest.getValue() ) );
         }
+    }
+
+    private boolean remove( final Key key, final Entry entry )
+    {
+        if ( entries.remove( key, entry ) )
+        {
+            discard( entry );
+            return true;
+        }
+        return false;
+    }
+
+    private void discard( final Entry entry )
+    {
+        entry.sitemap.thenAccept( this::deleteLater );
+    }
+
+    private void deleteLater( final Sitemap sitemap )
+    {
+        try
+        {
+            final Runnable delete = sitemap::delete;
+            generator.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
+        }
+        catch ( RejectedExecutionException e )
+        {
+            sitemap.delete();
+        }
+    }
+
+    static Path defaultStorage()
+    {
+        final String xpHome = System.getProperty( "xp.home" );
+        final Path work = xpHome != null ? Path.of( xpHome, "work" ) : Path.of( System.getProperty( "java.io.tmpdir" ) );
+        return work.resolve( "com.enonic.app.sitemapxml" );
     }
 
     private static Sitemap await( final CompletableFuture<Sitemap> future )
