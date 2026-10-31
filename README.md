@@ -54,13 +54,11 @@ When the site has more items than this, `sitemap.xml` becomes a [sitemap index](
 
 ## Caching
 
-The sitemap is generated once and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+The sitemap is generated in Java and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+
+Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `503 Service Unavailable` with a `Retry-After` header.
 
 The cache is per cluster node and is emptied when the app is restarted.
-
-### Override the generated domain name
-
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
 
 ### Mappings
 

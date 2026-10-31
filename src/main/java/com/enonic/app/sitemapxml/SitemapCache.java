@@ -11,14 +11,21 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.event.EventListener;
+import com.enonic.xp.security.auth.AuthenticationInfo;
 
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
 public final class SitemapCache
@@ -26,52 +33,70 @@ public final class SitemapCache
 {
     static final int MAX_ENTRIES = 100;
 
+    static final int MAX_IN_FLIGHT = 10;
+
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
+
+    private final Semaphore inFlight = new Semaphore( MAX_IN_FLIGHT );
+
+    private final ExecutorService generator;
 
     private final Clock clock;
 
     public SitemapCache()
     {
-        this( Clock.systemUTC() );
+        this( Executors.newSingleThreadExecutor( runnable -> {
+            final Thread thread = new Thread( runnable, "sitemapxml-generator" );
+            thread.setDaemon( true );
+            return thread;
+        } ), Clock.systemUTC() );
     }
 
-    SitemapCache( final Clock clock )
+    SitemapCache( final ExecutorService generator, final Clock clock )
     {
+        this.generator = generator;
         this.clock = clock;
     }
 
-    public Sitemap get( final Key key, final Supplier<SitemapContents> generator )
+    @Deactivate
+    public void deactivate()
     {
-        while ( true )
+        generator.shutdownNow();
+    }
+
+    public Sitemap get( final Key key, final AuthenticationInfo authInfo, final Supplier<SitemapContents> query )
+    {
+        if ( !inFlight.tryAcquire() )
         {
-            final Entry existing = entries.get( key );
-            if ( existing != null && !existing.isExpired( clock.instant() ) )
+            throw new SitemapBusyException();
+        }
+        try
+        {
+            while ( true )
             {
-                return existing.await();
-            }
+                final Instant now = clock.instant();
+                final Entry existing = entries.get( key );
+                if ( existing != null && !existing.isExpired( now ) )
+                {
+                    existing.lastAccess = now;
+                    return await( existing.sitemap );
+                }
 
-            final Entry created = new Entry( clock.instant() );
-            final boolean won = existing == null ? entries.putIfAbsent( key, created ) == null : entries.replace( key, existing, created );
-            if ( !won )
-            {
-                continue;
+                final Entry created = new Entry( now );
+                final boolean won = existing == null ? entries.putIfAbsent( key, created ) == null : entries.replace( key, existing, created );
+                if ( won )
+                {
+                    evictOverflow();
+                    submit( key, created, authInfo, query );
+                    return await( created.sitemap );
+                }
             }
-
-            evictOverflow();
-            try
-            {
-                final SitemapContents contents = generator.get();
-                created.complete( new Sitemap( key.params(), contents.entries() ), contents.validUntil() );
-            }
-            catch ( RuntimeException e )
-            {
-                entries.remove( key, created );
-                created.fail( e );
-                throw e;
-            }
-            return created.await();
+        }
+        finally
+        {
+            inFlight.release();
         }
     }
 
@@ -91,14 +116,14 @@ public final class SitemapCache
         }
     }
 
-    public void invalidateAll()
-    {
-        entries.clear();
-    }
-
     int size()
     {
         return entries.size();
+    }
+
+    int inFlight()
+    {
+        return MAX_IN_FLIGHT - inFlight.availablePermits();
     }
 
     @Override
@@ -140,14 +165,63 @@ public final class SitemapCache
         }
     }
 
+    private void submit( final Key key, final Entry entry, final AuthenticationInfo authInfo, final Supplier<SitemapContents> query )
+    {
+        try
+        {
+            generator.execute( () -> generate( key, entry, authInfo, query ) );
+        }
+        catch ( RejectedExecutionException e )
+        {
+            entries.remove( key, entry );
+            entry.sitemap.completeExceptionally( e );
+        }
+    }
+
+    private void generate( final Key key, final Entry entry, final AuthenticationInfo authInfo, final Supplier<SitemapContents> query )
+    {
+        try
+        {
+            final SitemapContents contents = ContextBuilder.create()
+                .repositoryId( key.repositoryId() )
+                .branch( key.branch() )
+                .authInfo( authInfo )
+                .build()
+                .callWith( query::get );
+            entry.validUntil = contents.validUntil();
+            entry.sitemap.complete( new Sitemap( key.params(), contents.entries() ) );
+        }
+        catch ( RuntimeException e )
+        {
+            entries.remove( key, entry );
+            entry.sitemap.completeExceptionally( e );
+        }
+    }
+
     private void evictOverflow()
     {
         while ( entries.size() > MAX_ENTRIES )
         {
             entries.entrySet()
                 .stream()
-                .min( Comparator.comparing( e -> e.getValue().createdAt() ) )
+                .min( Comparator.comparing( e -> e.getValue().lastAccess ) )
                 .ifPresent( oldest -> entries.remove( oldest.getKey(), oldest.getValue() ) );
+        }
+    }
+
+    private static Sitemap await( final CompletableFuture<Sitemap> future )
+    {
+        try
+        {
+            return future.join();
+        }
+        catch ( CompletionException e )
+        {
+            if ( e.getCause() instanceof RuntimeException )
+            {
+                throw (RuntimeException) e.getCause();
+            }
+            throw e;
         }
     }
 
@@ -205,57 +279,31 @@ public final class SitemapCache
         {
             return Objects.hash( repositoryId, branch, principals, params );
         }
+
+        @Override
+        public String toString()
+        {
+            return repositoryId + " " + branch + " " + params.sitePath();
+        }
     }
 
     private static final class Entry
     {
-        private final CompletableFuture<Sitemap> sitemap = new CompletableFuture<>();
+        final CompletableFuture<Sitemap> sitemap = new CompletableFuture<>();
 
-        private final Instant createdAt;
+        volatile Instant validUntil;
 
-        private volatile Instant validUntil;
+        volatile Instant lastAccess;
 
-        Entry( final Instant createdAt )
+        Entry( final Instant now )
         {
-            this.createdAt = createdAt;
-        }
-
-        Instant createdAt()
-        {
-            return createdAt;
+            this.lastAccess = now;
         }
 
         boolean isExpired( final Instant now )
         {
             final Instant until = validUntil;
             return until != null && !now.isBefore( until );
-        }
-
-        void complete( final Sitemap value, final Instant until )
-        {
-            this.validUntil = until;
-            sitemap.complete( value );
-        }
-
-        void fail( final RuntimeException e )
-        {
-            sitemap.completeExceptionally( e );
-        }
-
-        Sitemap await()
-        {
-            try
-            {
-                return sitemap.join();
-            }
-            catch ( CompletionException e )
-            {
-                if ( e.getCause() instanceof RuntimeException )
-                {
-                    throw (RuntimeException) e.getCause();
-                }
-                throw e;
-            }
         }
     }
 }

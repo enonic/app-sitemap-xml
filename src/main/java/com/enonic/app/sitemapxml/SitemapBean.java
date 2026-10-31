@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import com.enonic.xp.node.NodeService;
@@ -23,24 +25,32 @@ public final class SitemapBean
                                            Clock.systemUTC() );
     }
 
-    public String root( final ScriptValue params )
+    public SitemapResponse root( final ScriptValue params )
     {
-        return sitemap( params ).root();
+        return respond( params, sitemap -> Optional.of( sitemap.root() ) );
     }
 
-    public String file( final ScriptValue params, final int number )
+    public SitemapResponse file( final ScriptValue params, final int number )
     {
-        return sitemap( params ).file( number ).orElse( null );
+        return respond( params, sitemap -> sitemap.file( number ) );
     }
 
-    public String json( final ScriptValue params )
+    public SitemapResponse json( final ScriptValue params )
     {
-        return sitemap( params ).json();
+        return respond( params, sitemap -> Optional.of( sitemap.json() ) );
     }
 
-    private Sitemap sitemap( final ScriptValue params )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
     {
-        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) );
+        try
+        {
+            final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) );
+            return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
+        }
+        catch ( SitemapBusyException e )
+        {
+            return SitemapResponse.busy();
+        }
     }
 
     static SitemapParams toParams( final Map<String, Object> map )

@@ -33,7 +33,7 @@ public final class SitemapService
         final Set<String> principals =
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
-        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ),
+        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ), context.getAuthInfo(),
                           () -> new SitemapQuery( nodeService, params, clock.instant() ).execute() );
     }
 }
