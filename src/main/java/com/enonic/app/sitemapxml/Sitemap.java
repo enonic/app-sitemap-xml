@@ -3,20 +3,24 @@ package com.enonic.app.sitemapxml;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.UncheckedIOException;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 import org.slf4j.Logger;
@@ -40,11 +44,13 @@ public final class Sitemap
 
     static final int MAX_LOC_LENGTH = 2_048;
 
+    static final String GZIP_EXTENSION = ".gz";
+
     static final String ROOT_FILE = "sitemap.xml";
 
     static final String JSON_FILE = "sitemap.json";
 
-    static final String GZIP_EXTENSION = ".gz";
+    static final String PLAIN_INDEX_FILE = "sitemap-index.xml";
 
     private static final Logger LOG = LoggerFactory.getLogger( Sitemap.class );
 
@@ -54,11 +60,14 @@ public final class Sitemap
 
     private final int size;
 
-    private Sitemap( final Path directory, final int fileCount, final int size )
+    private final Map<String, Long> plainSizes;
+
+    private Sitemap( final Path directory, final int fileCount, final int size, final Map<String, Long> plainSizes )
     {
         this.directory = directory;
         this.fileCount = fileCount;
         this.size = size;
+        this.plainSizes = Map.copyOf( plainSizes );
     }
 
     public static Sitemap write( final Path directory, final SitemapParams params, final List<SitemapEntry> entries )
@@ -72,7 +81,7 @@ public final class Sitemap
         try
         {
             Files.createDirectories( directory );
-            try (Writer writer = new Writer( directory, params, maxFileBytes, maxFiles ))
+            try (FileWriter writer = new FileWriter( directory, params, maxFileBytes, maxFiles ))
             {
                 return writer.write( entries );
             }
@@ -106,35 +115,27 @@ public final class Sitemap
 
     public ByteSource root()
     {
-        return source( ROOT_FILE );
-    }
-
-    public Optional<ByteSource> file( final int number )
-    {
-        if ( !isIndex() || number < 1 || number > fileCount )
-        {
-            return Optional.empty();
-        }
-        return Optional.of( source( fileName( number ) ) );
+        return plain( isIndex() ? PLAIN_INDEX_FILE : ROOT_FILE );
     }
 
     public ByteSource rootGzip()
     {
-        return source( ROOT_FILE + GZIP_EXTENSION );
+        return gzip( ROOT_FILE );
+    }
+
+    public Optional<ByteSource> file( final int number )
+    {
+        return validFile( number ).map( this::plain );
     }
 
     public Optional<ByteSource> fileGzip( final int number )
     {
-        if ( !isIndex() || number < 1 || number > fileCount )
-        {
-            return Optional.empty();
-        }
-        return Optional.of( source( fileName( number ) + GZIP_EXTENSION ) );
+        return validFile( number ).map( this::gzip );
     }
 
     public ByteSource json()
     {
-        return source( JSON_FILE );
+        return plain( JSON_FILE );
     }
 
     public void delete()
@@ -152,9 +153,23 @@ public final class Sitemap
         return "sitemap-" + number + ".xml";
     }
 
-    private ByteSource source( final String fileName )
+    private Optional<String> validFile( final int number )
     {
-        return MoreFiles.asByteSource( directory.resolve( fileName ) );
+        if ( !isIndex() || number < 1 || number > fileCount )
+        {
+            return Optional.empty();
+        }
+        return Optional.of( fileName( number ) );
+    }
+
+    private ByteSource gzip( final String fileName )
+    {
+        return MoreFiles.asByteSource( directory.resolve( fileName + GZIP_EXTENSION ) );
+    }
+
+    private ByteSource plain( final String fileName )
+    {
+        return new GunzippedSource( gzip( fileName ), plainSizes.get( fileName ) );
     }
 
     static void delete( final Path directory )
@@ -176,7 +191,81 @@ public final class Sitemap
         }
     }
 
-    private static final class Writer
+    private static final class GunzippedSource
+        extends ByteSource
+    {
+        private final ByteSource gzipped;
+
+        private final Long size;
+
+        GunzippedSource( final ByteSource gzipped, final Long size )
+        {
+            this.gzipped = gzipped;
+            this.size = size;
+        }
+
+        @Override
+        public InputStream openStream()
+            throws IOException
+        {
+            return new GZIPInputStream( gzipped.openStream() );
+        }
+
+        @Override
+        public com.google.common.base.Optional<Long> sizeIfKnown()
+        {
+            return com.google.common.base.Optional.fromNullable( size );
+        }
+    }
+
+    private static final class CountingWriter
+        extends Writer
+    {
+        private final Writer delegate;
+
+        private long bytes;
+
+        CountingWriter( final Writer delegate )
+        {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void write( final String value )
+            throws IOException
+        {
+            bytes += utf8Length( value );
+            delegate.write( value );
+        }
+
+        @Override
+        public void write( final char[] chars, final int offset, final int length )
+            throws IOException
+        {
+            write( new String( chars, offset, length ) );
+        }
+
+        @Override
+        public void flush()
+            throws IOException
+        {
+            delegate.flush();
+        }
+
+        @Override
+        public void close()
+            throws IOException
+        {
+            delegate.close();
+        }
+
+        long bytes()
+        {
+            return bytes;
+        }
+    }
+
+    private static final class FileWriter
         implements Closeable
     {
         private final Path directory;
@@ -191,7 +280,9 @@ public final class Sitemap
 
         private final List<Instant> lastModified = new ArrayList<>();
 
-        private BufferedWriter file;
+        private final Map<String, Long> plainSizes = new HashMap<>();
+
+        private CountingWriter file;
 
         private int fileUrls;
 
@@ -199,13 +290,13 @@ public final class Sitemap
 
         private long indexBytes;
 
-        Writer( final Path directory, final SitemapParams params, final long maxFileBytes, final int maxFiles )
+        FileWriter( final Path directory, final SitemapParams params, final long maxFileBytes, final int maxFiles )
         {
-            this.maxFiles = maxFiles;
             this.directory = directory;
             this.params = params;
             this.renderer = new SitemapRenderer( params );
             this.maxFileBytes = maxFileBytes;
+            this.maxFiles = maxFiles;
             this.indexBytes = utf8Length( INDEX_START ) + utf8Length( INDEX_END );
         }
 
@@ -214,9 +305,9 @@ public final class Sitemap
         {
             int size = 0;
             int tooLong = 0;
-            try (BufferedWriter json = Files.newBufferedWriter( directory.resolve( JSON_FILE ), StandardCharsets.UTF_8 ))
+            try (CountingWriter json = open( JSON_FILE ))
             {
-                json.write( '[' );
+                json.write( "[" );
                 for ( final SitemapEntry entry : entries )
                 {
                     final String loc = renderer.loc( entry );
@@ -238,12 +329,13 @@ public final class Sitemap
 
                     if ( size > 0 )
                     {
-                        json.write( ',' );
+                        json.write( "," );
                     }
                     json.write( renderer.json( entry, loc ) );
                     size++;
                 }
-                json.write( ']' );
+                json.write( "]" );
+                close( json, JSON_FILE );
             }
             closeFile();
             if ( tooLong > 0 )
@@ -252,54 +344,40 @@ public final class Sitemap
             }
 
             final int fileCount = lastModified.size();
-            if ( fileCount <= 1 )
+            if ( fileCount == 0 )
             {
-                final Path single = directory.resolve( fileName( 1 ) );
-                if ( fileCount == 1 )
+                try (CountingWriter root = open( ROOT_FILE ))
                 {
-                    Files.move( single, directory.resolve( ROOT_FILE ) );
+                    root.write( URLSET_START + URLSET_END );
+                    close( root, ROOT_FILE );
                 }
-                else
-                {
-                    Files.writeString( directory.resolve( ROOT_FILE ), URLSET_START + URLSET_END, StandardCharsets.UTF_8 );
-                }
-                gzip( ROOT_FILE );
-                return new Sitemap( directory, 1, size );
+                return new Sitemap( directory, 1, size, plainSizes );
+            }
+            if ( fileCount == 1 )
+            {
+                Files.move( gzPath( fileName( 1 ) ), gzPath( ROOT_FILE ) );
+                plainSizes.put( ROOT_FILE, plainSizes.remove( fileName( 1 ) ) );
+                return new Sitemap( directory, 1, size, plainSizes );
             }
 
-            for ( int number = 1; number <= fileCount; number++ )
-            {
-                gzip( fileName( number ) );
-            }
-            try (BufferedWriter index = Files.newBufferedWriter( directory.resolve( ROOT_FILE ), StandardCharsets.UTF_8 ))
-            {
-                writeIndex( index, "" );
-            }
-            try (BufferedWriter index = new BufferedWriter( new OutputStreamWriter(
-                new GZIPOutputStream( Files.newOutputStream( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) ), StandardCharsets.UTF_8 ) ))
-            {
-                writeIndex( index, GZIP_EXTENSION );
-            }
-            return new Sitemap( directory, fileCount, size );
+            writeIndex( ROOT_FILE, ".xml" + GZIP_EXTENSION );
+            writeIndex( PLAIN_INDEX_FILE, ".xml" );
+            return new Sitemap( directory, fileCount, size, plainSizes );
         }
 
-        private void writeIndex( final BufferedWriter index, final String extension )
+        private void writeIndex( final String name, final String extension )
             throws IOException
         {
-            index.write( INDEX_START );
-            for ( int number = 1; number <= lastModified.size(); number++ )
+            try (CountingWriter index = open( name ))
             {
-                index.write( renderer.indexEntry( renderer.fileUrl( fileName( number ) + extension ), lastModified.get( number - 1 ) ) );
-            }
-            index.write( INDEX_END );
-        }
-
-        private void gzip( final String fileName )
-            throws IOException
-        {
-            try (OutputStream out = new GZIPOutputStream( Files.newOutputStream( directory.resolve( fileName + GZIP_EXTENSION ) ) ))
-            {
-                Files.copy( directory.resolve( fileName ), out );
+                index.write( INDEX_START );
+                for ( int number = 1; number <= lastModified.size(); number++ )
+                {
+                    index.write(
+                        renderer.indexEntry( renderer.fileUrl( "sitemap-" + number + extension ), lastModified.get( number - 1 ) ) );
+                }
+                index.write( INDEX_END );
+                close( index, name );
             }
         }
 
@@ -315,14 +393,14 @@ public final class Sitemap
 
             final int number = lastModified.size() + 1;
             final long indexEntryBytes =
-                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) ), null ) ) + LASTMOD_BYTES;
+                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + LASTMOD_BYTES;
             if ( number > maxFiles || indexBytes + indexEntryBytes > MAX_FILE_BYTES )
             {
                 return false;
             }
             closeFile();
             indexBytes += indexEntryBytes;
-            file = Files.newBufferedWriter( directory.resolve( fileName( number ) ), StandardCharsets.UTF_8 );
+            file = open( fileName( number ) );
             file.write( URLSET_START );
             lastModified.add( null );
             fileUrls = 0;
@@ -336,9 +414,28 @@ public final class Sitemap
             if ( file != null )
             {
                 file.write( URLSET_END );
-                file.close();
+                close( file, fileName( lastModified.size() ) );
                 file = null;
             }
+        }
+
+        private CountingWriter open( final String name )
+            throws IOException
+        {
+            return new CountingWriter( new BufferedWriter(
+                new OutputStreamWriter( new GZIPOutputStream( Files.newOutputStream( gzPath( name ) ) ), StandardCharsets.UTF_8 ) ) );
+        }
+
+        private void close( final CountingWriter writer, final String name )
+            throws IOException
+        {
+            writer.close();
+            plainSizes.put( name, writer.bytes() );
+        }
+
+        private Path gzPath( final String name )
+        {
+            return directory.resolve( name + GZIP_EXTENSION );
         }
 
         @Override

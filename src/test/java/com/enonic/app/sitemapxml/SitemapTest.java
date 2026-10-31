@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 import org.junit.jupiter.api.Test;
@@ -206,6 +207,30 @@ class SitemapTest
         try (GZIPInputStream in = new GZIPInputStream( source.openStream() ))
         {
             return new String( in.readAllBytes(), StandardCharsets.UTF_8 );
+        }
+    }
+
+    @Test
+    void storesOnlyGzipFilesAndKnowsPlainSizes()
+        throws IOException
+    {
+        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
+            .mapToObj( i -> new SitemapEntry( "/æøå-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
+            .collect( Collectors.toList() );
+        final Sitemap sitemap = write( params( "https://example.com", 2 ), entries );
+
+        try (Stream<Path> files = Files.list( sitemap.directory() ))
+        {
+            assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
+                                                                                                       "sitemap-index.xml.gz",
+                                                                                                       "sitemap-1.xml.gz",
+                                                                                                       "sitemap-2.xml.gz",
+                                                                                                       "sitemap.json.gz" );
+        }
+        for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow(),
+                                                sitemap.json() ) )
+        {
+            assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
         }
     }
 
