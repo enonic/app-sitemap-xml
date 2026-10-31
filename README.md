@@ -56,7 +56,7 @@ When the site has more items than this, `sitemap.xml` becomes a [sitemap index](
 
 ## Caching
 
-The sitemap is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
 
 Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `429 Too Many Requests` with a `Retry-After` header.
 
