@@ -2,6 +2,7 @@ package com.enonic.app.sitemapxml;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -31,6 +32,7 @@ import com.enonic.xp.site.SiteConfigs;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -136,6 +138,28 @@ class SitemapServiceTest
         assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.fileGzip( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
+    }
+
+    @Test
+    void beanAnswersGuillotineQueries()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
+                                                    new SitemapEntry( "/b", "portal:site", null ) );
+        when( cache.get( any(), any(), any() ) ).thenReturn(
+            Sitemap.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), 10, 1 ), entries ) );
+        final SitemapBean bean = bean();
+
+        assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
+            "[{\"number\":1,\"lastmod\":\"2024-01-01T00:00:00Z\"},{\"number\":2}]" );
+        assertThat( inContext( () -> bean.guillotineUrlset( scriptValue(), 1 ) ) ).isEqualTo(
+            "[{\"path\":\"/a\",\"lastmod\":\"2024-01-01T00:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 2 ) ) ).isEqualTo(
+            "[{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 3 ) ) ).isNull();
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache, atLeastOnce() ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
     private SitemapCache.Key sitemap( final boolean preferBaseUrl )

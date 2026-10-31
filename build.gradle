@@ -13,7 +13,6 @@ dependencies {
 
 	include xplibs.context
 	include xplibs.content
-	include xplibs.node
 	include xplibs.portal
 	include xplibs.project
 

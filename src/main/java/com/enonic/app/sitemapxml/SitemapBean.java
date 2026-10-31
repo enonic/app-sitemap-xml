@@ -1,6 +1,7 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -52,6 +53,43 @@ public final class SitemapBean
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
         return respond( params, sitemap -> sitemap.fileGzip( number ) );
+    }
+
+    public String guillotineFiles( final ScriptValue params )
+    {
+        final Sitemap sitemap = guillotineSitemap( params );
+        final StringBuilder json = new StringBuilder( "[" );
+        final List<@Nullable Instant> lastModified = sitemap.lastModified();
+        for ( int i = 0; i < lastModified.size(); i++ )
+        {
+            if ( i > 0 )
+            {
+                json.append( ',' );
+            }
+            json.append( "{\"number\":" ).append( i + 1 );
+            final Instant lastmod = lastModified.get( i );
+            if ( lastmod != null )
+            {
+                json.append( ",\"lastmod\":\"" ).append( lastmod ).append( '"' );
+            }
+            json.append( '}' );
+        }
+        return json.append( ']' ).toString();
+    }
+
+    public String guillotineUrlset( final ScriptValue params, final int count )
+    {
+        return guillotineSitemap( params ).urlsetJson( count );
+    }
+
+    public @Nullable String guillotineFile( final ScriptValue params, final int number )
+    {
+        return guillotineSitemap( params ).fileUrlsetJson( number ).orElse( null );
+    }
+
+    private Sitemap guillotineSitemap( final ScriptValue params )
+    {
+        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ), false );
     }
 
     private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )

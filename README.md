@@ -32,6 +32,24 @@ When doing external rendering, via for example Next.XP, you can fetch the data n
 
 Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `HeadlessCms` object type.
 
+The `sitemap` field is served from the same cached, published-only sitemap as `sitemap.xml`, split into the same files (at most 50 000 URLs and 50MB each):
+
+* `files { number lastmod }` lists the files, for example for Next.js `generateSitemaps()` and a sitemap index.
+* `file(number: N) { urlset { path lastmod changefreq priority } }` returns the URLs of one file.
+* `urlset(count: N)` returns the first `N` URLs (up to "Max included items"), as before.
+
+```graphql
+{
+  guillotine {
+    sitemap {
+      baseUrl
+      files { number lastmod }
+      file(number: 1) { urlset { path lastmod changefreq priority } }
+    }
+  }
+}
+```
+
 You may also study how we did it in our own [site-enonic-next](https://github.com/enonic/site-enonic-next).
 
 > **_TIP:_** In the Next.XP app there is a controller mapping with a order of 11, so that it can provide it's own sitemap.xml
