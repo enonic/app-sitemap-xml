@@ -35,6 +35,7 @@ export interface SitemapBean {
 	file(params: ScriptValue, number: number): SitemapResponse
 	json(params: ScriptValue): SitemapResponse
 	rootGzip(params: ScriptValue): SitemapResponse
+	rootEncoded(params: ScriptValue): SitemapResponse
 	fileGzip(params: ScriptValue, number: number): SitemapResponse
 	guillotineFiles(params: ScriptValue): string
 	guillotineUrlset(params: ScriptValue, count: number): string

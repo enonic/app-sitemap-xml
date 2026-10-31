@@ -122,7 +122,20 @@ public final class Sitemap
 
     public ByteSource root()
     {
-        return plain( isIndex() ? PLAIN_INDEX_FILE : ROOT_FILE );
+        return plain( plainRootFile() );
+    }
+
+    /**
+     * The root sitemap as {@link #root()} returns it, but gzip-compressed, to be sent with {@code Content-Encoding: gzip}.
+     */
+    public ByteSource rootEncoded()
+    {
+        return gzip( plainRootFile() );
+    }
+
+    private String plainRootFile()
+    {
+        return isIndex() ? PLAIN_INDEX_FILE : ROOT_FILE;
     }
 
     public ByteSource rootGzip()

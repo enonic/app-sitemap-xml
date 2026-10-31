@@ -50,6 +50,11 @@ public final class SitemapBean
         return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
     }
 
+    public SitemapResponse rootEncoded( final ScriptValue params )
+    {
+        return respond( params, sitemap -> Optional.of( sitemap.rootEncoded() ) );
+    }
+
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
         return respond( params, sitemap -> sitemap.fileGzip( number ) );
