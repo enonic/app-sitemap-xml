@@ -79,6 +79,23 @@ class SitemapBeanTest
         assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://example.com" );
     }
 
+    @Test
+    void readsPublishedContentWhenRequestedFromDraft()
+    {
+        when( cache.get( any(), any(), any() ) ).thenReturn(
+            new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
+
+        ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "draft" )
+            .build()
+            .callWith( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+    }
+
     private SitemapBean bean()
     {
         final BeanContext context = mock( BeanContext.class );
