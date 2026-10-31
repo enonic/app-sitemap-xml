@@ -1,9 +1,12 @@
 package com.enonic.app.sitemapxml;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.IntStream;
+import java.util.zip.GZIPInputStream;
 
 import org.junit.jupiter.api.Test;
 
@@ -125,6 +128,41 @@ class SitemapTest
         assertThat( sitemap.fileCount() ).isEqualTo( Sitemap.MAX_FILES );
         assertThat( sitemap.size() ).isEqualTo( Sitemap.MAX_FILES );
         assertThat( sitemap.file( Sitemap.MAX_FILES + 1 ) ).isEmpty();
+    }
+
+    @Test
+    void gzipsRootAndFiles()
+        throws Exception
+    {
+        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
+            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
+            .toList();
+        final Sitemap sitemap = new Sitemap( params( "https://example.com", 2 ), entries );
+
+        assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( sitemap.index().replace( ".xml<", ".xml.gz<" ) )
+            .contains( "<loc>https://example.com/sitemap-1.xml.gz</loc>" );
+        assertThat( gunzip( sitemap.fileGzip( 2 ).orElseThrow() ) ).isEqualTo( sitemap.file( 2 ).orElseThrow() );
+        assertThat( sitemap.fileGzip( 3 ) ).isEmpty();
+        assertThat( sitemap.fileGzip( 0 ) ).isEmpty();
+    }
+
+    @Test
+    void gzipsSingleFileSitemap()
+        throws Exception
+    {
+        final Sitemap sitemap = new Sitemap( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+
+        assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( sitemap.root() );
+        assertThat( sitemap.fileGzip( 1 ) ).isEmpty();
+    }
+
+    private static String gunzip( final byte[] bytes )
+        throws IOException
+    {
+        try (GZIPInputStream in = new GZIPInputStream( new ByteArrayInputStream( bytes ) ))
+        {
+            return new String( in.readAllBytes(), StandardCharsets.UTF_8 );
+        }
     }
 
     @Test

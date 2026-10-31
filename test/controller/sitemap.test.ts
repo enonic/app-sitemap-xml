@@ -21,7 +21,7 @@ jest.mock('/lib/xp/portal', () => ({
 	pageUrl,
 }), {virtual: true});
 
-function response(status: number, body: string | null) {
+function response(status: number, body: string | object | null) {
 	return {
 		getStatus: () => status,
 		getBody: () => body,
@@ -33,6 +33,8 @@ const bean = {
 	root: jest.fn((_params: unknown) => response(200, '<urlset/>')),
 	file: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, '<urlset n="2"/>') : response(404, null))),
 	json: jest.fn((_params: unknown) => response(200, '[]')),
+	rootGzip: jest.fn((_params: unknown) => response(200, 'gzipped root')),
+	fileGzip: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, 'gzipped 2') : response(404, null))),
 };
 
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
@@ -110,6 +112,17 @@ describe('sitemap controller', () => {
 		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml'});
 		expect(get(request('/mysite/sitemap-3.xml'))).toEqual({body: null, status: 404});
 		expect(bean.file).toHaveBeenCalledWith(expect.anything(), 3);
+	});
+
+	it('serves gzipped sitemaps', async () => {
+		const {get} = await import('/cms/controllers/sitemap/sitemap');
+
+		expect(get(request('/mysite/sitemap.xml.gz'))).toEqual({body: 'gzipped root', contentType: 'application/gzip'});
+		expect(get(request('/mysite/sitemap-2.xml.gz'))).toEqual({body: 'gzipped 2', contentType: 'application/gzip'});
+		expect(get(request('/mysite/sitemap-3.xml.gz'))).toEqual({body: null, status: 404});
+		expect(get(request('/mysite/sitemap.xml.gz', {'Content-Type': 'application/json'})))
+			.toEqual({body: 'gzipped root', contentType: 'application/gzip'});
+		expect(bean.json).not.toHaveBeenCalled();
 	});
 
 	it('serves json when asked for', async () => {

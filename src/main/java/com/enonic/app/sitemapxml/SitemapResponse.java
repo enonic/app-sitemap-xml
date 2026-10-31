@@ -2,15 +2,17 @@ package com.enonic.app.sitemapxml;
 
 import org.jspecify.annotations.Nullable;
 
+import com.google.common.io.ByteSource;
+
 public final class SitemapResponse
 {
     static final int RETRY_AFTER_SECONDS = 10;
 
     private final int status;
 
-    private final @Nullable String body;
+    private final @Nullable Object body;
 
-    private SitemapResponse( final int status, final @Nullable String body )
+    private SitemapResponse( final int status, final @Nullable Object body )
     {
         this.status = status;
         this.body = body;
@@ -19,6 +21,11 @@ public final class SitemapResponse
     static SitemapResponse ok( final String body )
     {
         return new SitemapResponse( 200, body );
+    }
+
+    static SitemapResponse ok( final byte[] body )
+    {
+        return new SitemapResponse( 200, ByteSource.wrap( body ) );
     }
 
     static SitemapResponse notFound()
@@ -36,7 +43,7 @@ public final class SitemapResponse
         return status;
     }
 
-    public @Nullable String getBody()
+    public @Nullable Object getBody()
     {
         return body;
     }

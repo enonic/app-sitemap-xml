@@ -1,5 +1,8 @@
 package com.enonic.app.sitemapxml;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -10,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.zip.GZIPOutputStream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +34,10 @@ public final class Sitemap
 
     static final int MAX_LOC_LENGTH = 2_048;
 
+    private static final String XML_EXTENSION = ".xml";
+
+    private static final String GZIP_EXTENSION = ".xml.gz";
+
     private static final Logger LOG = LoggerFactory.getLogger( Sitemap.class );
 
     private static final String URLSET_START = XML_DECLARATION + "<urlset xmlns=\"" + NAMESPACE + "\">";
@@ -47,6 +55,8 @@ public final class Sitemap
     private final List<List<SitemapEntry>> files;
 
     private final ConcurrentMap<Integer, String> rendered = new ConcurrentHashMap<>();
+
+    private final ConcurrentMap<Integer, byte[]> compressed = new ConcurrentHashMap<>();
 
     public Sitemap( final SitemapParams params, final List<SitemapEntry> entries )
     {
@@ -100,19 +110,57 @@ public final class Sitemap
         return Optional.of( rendered.computeIfAbsent( number, n -> urlset( files.get( n - 1 ) ) ) );
     }
 
+    public byte[] rootGzip()
+    {
+        return compressed.computeIfAbsent( 0, n -> gzip( isIndex() ? index( GZIP_EXTENSION ) : root() ) );
+    }
+
+    public Optional<byte[]> fileGzip( final int number )
+    {
+        if ( !isIndex() || number < 1 || number > fileCount() )
+        {
+            return Optional.empty();
+        }
+        return Optional.of( compressed.computeIfAbsent( number, n -> gzip( urlset( files.get( n - 1 ) ) ) ) );
+    }
+
     public String fileUrl( final int number )
     {
-        return baseUrl() + "/sitemap-" + number + ".xml";
+        return fileUrl( number, XML_EXTENSION );
+    }
+
+    private String fileUrl( final int number, final String extension )
+    {
+        return baseUrl() + "/sitemap-" + number + extension;
     }
 
     public String index()
     {
+        return index( XML_EXTENSION );
+    }
+
+    private String index( final String extension )
+    {
         final StringBuilder xml = new StringBuilder( INDEX_START );
         for ( int number = 1; number <= fileCount(); number++ )
         {
-            indexEntry( xml, number );
+            indexEntry( xml, number, files.get( number - 1 ), extension );
         }
         return xml.append( INDEX_END ).toString();
+    }
+
+    static byte[] gzip( final String xml )
+    {
+        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (GZIPOutputStream out = new GZIPOutputStream( bytes ))
+        {
+            out.write( xml.getBytes( StandardCharsets.UTF_8 ) );
+        }
+        catch ( IOException e )
+        {
+            throw new UncheckedIOException( e );
+        }
+        return bytes.toByteArray();
     }
 
     public String json()
@@ -199,7 +247,7 @@ public final class Sitemap
                 break;
             }
             final StringBuilder entry = new StringBuilder();
-            indexEntry( entry, result.size() + 1, file );
+            indexEntry( entry, result.size() + 1, file, GZIP_EXTENSION );
             bytes += utf8Length( entry );
             if ( bytes > available )
             {
@@ -210,15 +258,10 @@ public final class Sitemap
         return List.copyOf( result );
     }
 
-    private void indexEntry( final StringBuilder xml, final int number )
-    {
-        indexEntry( xml, number, files.get( number - 1 ) );
-    }
-
-    private void indexEntry( final StringBuilder xml, final int number, final List<SitemapEntry> fileEntries )
+    private void indexEntry( final StringBuilder xml, final int number, final List<SitemapEntry> fileEntries, final String extension )
     {
         xml.append( "<sitemap><loc>" );
-        escapeXml( xml, fileUrl( number ) );
+        escapeXml( xml, fileUrl( number, extension ) );
         xml.append( "</loc>" );
         fileEntries.stream()
             .map( SitemapEntry::lastModified )

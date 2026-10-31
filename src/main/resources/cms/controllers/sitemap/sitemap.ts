@@ -36,7 +36,7 @@ interface SitemapParams {
 
 interface SitemapResponse {
 	getStatus(): number
-	getBody(): string | null
+	getBody(): string | object | null
 	getRetryAfter(): number
 }
 
@@ -44,9 +44,11 @@ interface SitemapBean {
 	root(params: ScriptValue): SitemapResponse
 	file(params: ScriptValue, number: number): SitemapResponse
 	json(params: ScriptValue): SitemapResponse
+	rootGzip(params: ScriptValue): SitemapResponse
+	fileGzip(params: ScriptValue, number: number): SitemapResponse
 }
 
-const FILE_PATH_REGEXP = /\/sitemap-(\d+)\.xml$/;
+const PATH_REGEXP = /\/sitemap(?:-(\d+))?\.xml(\.gz)?$/;
 
 
 function toInt(value: string | undefined, defaultValue: number, max: number): number {
@@ -99,13 +101,15 @@ export function get(request: Request<{
 	const bean = __.newBean<SitemapBean>('com.enonic.app.sitemapxml.SitemapBean');
 	const scriptParams = __.toScriptValue(params);
 
-	const isJson = request.headers['Content-Type'] === 'application/json';
-	const fileMatch = FILE_PATH_REGEXP.exec(request.path);
+	const match = PATH_REGEXP.exec(request.path);
+	const fileNumber = match && match[1] ? parseInt(match[1], 10) : 0;
+	const isGzip = !!(match && match[2]);
+	const isJson = !isGzip && request.headers['Content-Type'] === 'application/json';
 	const result = isJson
 		? bean.json(scriptParams)
-		: fileMatch
-			? bean.file(scriptParams, parseInt(fileMatch[1], 10))
-			: bean.root(scriptParams);
+		: isGzip
+			? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootGzip(scriptParams)
+			: fileNumber ? bean.file(scriptParams, fileNumber) : bean.root(scriptParams);
 
 	const status = result.getStatus();
 	if (status === 429) {
@@ -125,6 +129,6 @@ export function get(request: Request<{
 	}
 	return {
 		body: result.getBody(),
-		contentType: isJson ? 'application/json' : 'text/xml',
+		contentType: isJson ? 'application/json' : isGzip ? 'application/gzip' : 'text/xml',
 	};
 }
