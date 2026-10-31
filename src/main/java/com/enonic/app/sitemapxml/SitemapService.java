@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.enonic.xp.branch.Branch;
+import com.enonic.xp.content.ContentConstants;
 import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
@@ -45,7 +46,7 @@ public final class SitemapService
     {
         final Context context = ContextAccessor.current();
         final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
-        final Branch branch = Objects.requireNonNull( context.getBranch(), "No branch in context" );
+        final Branch branch = ContentConstants.BRANCH_MASTER;
         final Set<String> principals =
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 

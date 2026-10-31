@@ -56,7 +56,7 @@ When the site has more items than this, `sitemap.xml` becomes a [sitemap index](
 
 ## Caching and background generation
 
-The sitemap is generated in Java, through the content API, and kept in memory. The first request for a sitemap waits for it to be generated; after that, requests are answered from memory.
+The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and kept in memory. The first request for a sitemap waits for it to be generated; after that, requests are answered from memory.
 
 When content in the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete), the sitemap is regenerated in the background a few seconds later. Until the new sitemap is ready, the previous one is served. On the `master` branch, the sitemap is also regenerated when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are dropped instead of regenerated.
 

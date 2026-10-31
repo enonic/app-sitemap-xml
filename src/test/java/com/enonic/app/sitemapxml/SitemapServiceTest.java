@@ -66,6 +66,21 @@ class SitemapServiceTest
     }
 
     @Test
+    void readsPublishedContentWhenRequestedFromDraft()
+    {
+        ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "draft" )
+            .build()
+            .callWith( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        assertThat( key.getValue().repositoryId() ).isEqualTo( "com.enonic.cms.project" );
+    }
+
+    @Test
     void usesRequestUrlWithoutBaseUrl()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
