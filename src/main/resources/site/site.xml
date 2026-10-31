@@ -67,13 +67,17 @@
 				<!-- ContentStudio was not happy when trying to convert this TextLine to Long -->
 					<label>Max included items</label>
 					<occurrences maximum="1" minimum="0"/>
-					<help-text>Default value is 10000, maximum is 50000 - aligned with sitemap.xml specification</help-text>
+					<help-text>Default value is 10000, maximum is 1000000. When there are more items than 'URLs per file', sitemap.xml becomes a sitemap index pointing to sitemap-1.xml, sitemap-2.xml, etc.</help-text>
 					<config>
-						<!--
-							<min>1</min>
-							<max>50000</max>
-						-->
-						<regexp>^(50000|[1-4]\d{4}|\d{2,4}|[1-9])$</regexp>
+						<regexp>^(1000000|[1-9]\d{0,5})$</regexp>
+					</config>
+				</input>
+				<input name="urlsPerFile" type="TextLine">
+					<label>URLs per file</label>
+					<occurrences maximum="1" minimum="0"/>
+					<help-text>Maximum number of URLs in each sitemap file. Default and maximum is 50000 - aligned with sitemap.xml specification</help-text>
+					<config>
+						<regexp>^(50000|[1-4]\d{4}|[1-9]\d{0,3})$</regexp>
 					</config>
 				</input>
 				<input name="overrideDomain" type="TextLine">
@@ -89,7 +93,7 @@
 	</form>
 	<mappings>
 		<mapping controller="/site/controllers/sitemap/sitemap.js" order="12">
-			<pattern>/sitemap\.xml</pattern>
+			<pattern>/sitemap(-\d+)?\.xml</pattern>
 		</mapping>
 	</mappings>
 </site>
