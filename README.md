@@ -22,7 +22,9 @@ It includes the required tags of a sitemap.xml (`<loc>`, `<lastmod>`, `<changefr
 
 Be aware that only content from the current site will be added to a site's sitemap.
 
-> **_NOTE:_** The order of the controller mapping is set to 50.
+When the sitemap is split into several files, the controller also responds to `[yoursite.something]/sitemap-1.xml`, `[yoursite.something]/sitemap-2.xml`, etc.
+
+> **_NOTE:_** The order of the controller mapping is set to 12.
 
 ## Headless integration
 
@@ -42,9 +44,19 @@ The app will automatically add the site content, if not already added in the sit
 
 ### Max included items
 
-Limit the number of items in the file. Default: 10000. Max: 50000.
+Limit the total number of items in the sitemap. Default: 10000. Max: 1000000.
 
-> **_WARNING:_** The number of included items will affect the time it takes to generate the sitemap.xml file.
+### URLs per file
+
+Maximum number of URLs in a single sitemap file. Default and max: 50000 (the limit of the [sitemap protocol](https://www.sitemaps.org/protocol.html)).
+
+When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
+
+## Caching
+
+The sitemap is generated once and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+
+The cache is per cluster node and is emptied when the app is restarted.
 
 ### Override the generated domain name
 

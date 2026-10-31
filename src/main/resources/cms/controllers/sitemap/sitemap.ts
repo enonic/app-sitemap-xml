@@ -1,40 +1,59 @@
+import type {ScriptValue} from '@enonic-types/core';
 import type {Site} from '@enonic-types/lib-content';
 import type {
 	Request,
 	Response,
 	SitemapXmlSiteConfig,
-	tUrl,
 } from '/types';
 
 
-import {toStr} from '@enonic/js-utils/value/toStr';
+import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {
 	getSite,
 	getSiteConfig,
 	pageUrl
 } from '/lib/xp/portal';
-// @ts-expect-error No types yet.
-import {render} from '/lib/xslt';
-import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
+import {
+	DEFAULT_MAX_ITEMS,
+	MAX_ITEMS_LIMIT,
+	MAX_URLS_PER_FILE,
+} from '/lib/app-sitemapxml/constants';
 
 
-const DEBUG = false;
-const TRACE = false;
-const VIEW = resolve('sitemap.xsl');
-
-
-function getServerPageUrl(path: string, overrideDomain: string) {
-	return overrideDomain + pageUrl({
-		path,
-		type: 'server'
-	})
+interface SitemapParams {
+	sitePath: string
+	siteUrl: string
+	contentTypes: {
+		contentType: string
+		changefreq: string
+		priority: string
+	}[]
+	ignorePatterns: string[]
+	maxItems: number
+	urlsPerFile: number
 }
 
-function getAbsolutePageUrl(path: string) {
-	return pageUrl({
-		path,
-		type: 'absolute'
-	})
+interface SitemapBean {
+	root(params: ScriptValue): string
+	file(params: ScriptValue, number: number): string | null
+	json(params: ScriptValue): string
+}
+
+const FILE_PATH_REGEXP = /\/sitemap-(\d+)\.xml$/;
+
+
+function toInt(value: string | undefined, defaultValue: number, max: number): number {
+	const parsed = parseInt(value || '', 10);
+	if (isNaN(parsed) || parsed < 1) {
+		return defaultValue;
+	}
+	return Math.min(parsed, max);
+}
+
+function getSiteUrl(sitePath: string, overrideDomain: string): string {
+	return overrideDomain
+		? overrideDomain + pageUrl({path: sitePath, type: 'server'})
+		: pageUrl({path: sitePath, type: 'absolute'});
 }
 
 export function get(request: Request<{
@@ -42,56 +61,58 @@ export function get(request: Request<{
 		'Content-Type'?: string
 	}
 }>): Response {
-	TRACE && log.debug('Sitemap request:%s', toStr(request));
-
 	// This controller runs in site context, so site can't be null.
 	const site = getSite<SitemapXmlSiteConfig>() as Site<SitemapXmlSiteConfig>;
-	TRACE && log.debug('site:%s', toStr(site));
-
-	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>();
-	DEBUG && log.debug('siteConfig:%s', toStr(siteConfig));
+	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>() || {} as Partial<SitemapXmlSiteConfig>;
 
 	const {
-		maxItems = 10000,
+		ignoreList,
+		maxItems,
 		overrideDomain = '',
-	} = siteConfig || {}; // Handle null (aka no config)
+		siteMap,
+		urlsPerFile,
+	} = siteConfig;
 
-	const {
-		changefreq,
-		priority,
-		result
-	} = queryForSitemapContent({
-		count: parseInt(maxItems as string, 10),
-		site,
-		siteConfig,
-	});
+	const params: SitemapParams = {
+		sitePath: site._path,
+		siteUrl: getSiteUrl(site._path, overrideDomain),
+		contentTypes: (siteMap ? forceArray(siteMap) : []).map(({contentType, updatePeriod, priority}) => ({
+			contentType: contentType || '',
+			changefreq: updatePeriod || '',
+			priority: priority || '',
+		})),
+		ignorePatterns: (ignoreList ? forceArray(ignoreList) : []).map(({path}) => path || ''),
+		maxItems: toInt(maxItems, DEFAULT_MAX_ITEMS, MAX_ITEMS_LIMIT),
+		urlsPerFile: toInt(urlsPerFile, MAX_URLS_PER_FILE, MAX_URLS_PER_FILE),
+	};
 
-	// Go through the results and add the corresponding settings for each match.
-	const items: tUrl[] = [];
-	for (let i = 0; i < result.hits.length; i++) {
-		if (result.hits[i].type) {
-			items.push({
-				changefreq: changefreq[result.hits[i].type],
-				lastmod: result.hits[i].modifiedTime,
-				priority: priority[result.hits[i].type],
-				loc: overrideDomain
-					? getServerPageUrl(result.hits[i]._path, overrideDomain)
-					: getAbsolutePageUrl(result.hits[i]._path)
-			});
-		}
-	}
+	const bean = __.newBean<SitemapBean>('com.enonic.app.sitemapxml.SitemapBean');
+	const scriptParams = __.toScriptValue(params);
 
 	if (request.headers['Content-Type'] === 'application/json') {
 		return {
-			body: JSON.stringify(items),
+			body: bean.json(scriptParams),
 			contentType: 'application/json',
+		};
+	}
+
+	const fileMatch = FILE_PATH_REGEXP.exec(request.path);
+	if (fileMatch) {
+		const body = bean.file(scriptParams, parseInt(fileMatch[1], 10));
+		if (body === null) {
+			return {
+				body: null,
+				status: 404,
+			};
 		}
+		return {
+			body,
+			contentType: 'text/xml',
+		};
 	}
 
 	return {
-		body: render(VIEW, {
-			result: items
-		}),
+		body: bean.root(scriptParams),
 		contentType: 'text/xml',
 	};
 }

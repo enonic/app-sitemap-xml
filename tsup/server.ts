@@ -41,7 +41,6 @@ export default function buildServerConfig(): Options {
 			'/lib/text-encoding',
 			'/lib/thymeleaf',
 			/^\/lib\/xp\//,
-			'/lib/xslt',
 		],
 		format: 'cjs',
 		minify: false, // Minifying server files makes debugging harder

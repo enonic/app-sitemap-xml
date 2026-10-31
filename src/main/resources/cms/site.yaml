@@ -2,4 +2,4 @@ kind: "Site"
 mappings:
   - controller: "/cms/controllers/sitemap/sitemap.js"
     order: 12
-    pattern: "/sitemap\\.xml"
+    pattern: "/sitemap(-\\d+)?\\.xml"
