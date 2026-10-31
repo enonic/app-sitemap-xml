@@ -63,8 +63,10 @@ class SitemapCacheTest
 
     @AfterEach
     void shutdown()
+        throws InterruptedException
     {
         executor.shutdownNow();
+        assertThat( executor.awaitTermination( 5, TimeUnit.SECONDS ) ).isTrue();
     }
 
     @Test
