@@ -223,6 +223,8 @@ class SitemapTest
         {
             assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
                                                                                                        "sitemap-index.xml.gz",
+                                                                                                       "urlset-1.jsonl.gz",
+                                                                                                       "urlset-2.jsonl.gz",
                                                                                                        "sitemap-1.xml.gz",
                                                                                                        "sitemap-2.xml.gz",
                                                                                                        "sitemap.json.gz" );
@@ -232,6 +234,42 @@ class SitemapTest
         {
             assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
         }
+    }
+
+    @Test
+    void urlsetForGuillotineFollowsFileSplit()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "", "portal:site", Instant.parse( "2024-01-03T10:00:00Z" ) ),
+                                                    new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-02T10:00:00Z" ) ),
+                                                    new SitemapEntry( "/b c", "other:type", null ) );
+        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
+                                                        List.of( new ContentTypeSetting( "base:folder", "daily", "0.8" ),
+                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 100, 2 );
+        final Sitemap sitemap = write( params, entries );
+
+        assertThat( sitemap.lastModified() ).containsExactly( Instant.parse( "2024-01-03T10:00:00Z" ), null );
+        assertThat( sitemap.urlsetJson( 10 ) ).isEqualTo(
+            "[{\"path\":\"/\",\"lastmod\":\"2024-01-03T10:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}," +
+                "{\"path\":\"/a\",\"lastmod\":\"2024-01-02T10:00:00Z\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}," +
+                "{\"path\":\"/b c\"}]" );
+        assertThat( sitemap.urlsetJson( 2 ) ).doesNotContain( "/b c" ).contains( "\"/a\"" );
+        assertThat( sitemap.urlsetJson( 0 ) ).isEqualTo( "[]" );
+        assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b c\"}]" );
+        assertThat( sitemap.fileUrlsetJson( 3 ) ).isEmpty();
+        assertThat( sitemap.fileUrlsetJson( 0 ) ).isEmpty();
+    }
+
+    @Test
+    void urlsetForGuillotineOfSingleAndEmptySitemap()
+    {
+        final Sitemap single = write( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+        assertThat( single.lastModified() ).hasSize( 1 );
+        assertThat( single.fileUrlsetJson( 1 ) ).contains( "[{\"path\":\"/a\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}]" );
+
+        final Sitemap empty = write( params( "https://example.com", 10 ), List.of() );
+        assertThat( empty.lastModified() ).hasSize( 1 );
+        assertThat( empty.urlsetJson( 10 ) ).isEqualTo( "[]" );
+        assertThat( empty.fileUrlsetJson( 1 ) ).contains( "[]" );
     }
 
     @Test

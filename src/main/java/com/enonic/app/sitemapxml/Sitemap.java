@@ -1,9 +1,11 @@
 package com.enonic.app.sitemapxml;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
@@ -12,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -62,12 +65,16 @@ public final class Sitemap
 
     private final Map<String, Long> plainSizes;
 
-    private Sitemap( final Path directory, final int fileCount, final int size, final Map<String, Long> plainSizes )
+    private final List<Instant> lastModified;
+
+    private Sitemap( final Path directory, final int fileCount, final int size, final Map<String, Long> plainSizes,
+                     final List<Instant> lastModified )
     {
         this.directory = directory;
         this.fileCount = fileCount;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
+        this.lastModified = Collections.unmodifiableList( new ArrayList<>( lastModified ) );
     }
 
     public static Sitemap write( final Path directory, final SitemapParams params, final List<SitemapEntry> entries )
@@ -138,6 +145,57 @@ public final class Sitemap
         return plain( JSON_FILE );
     }
 
+    public List<Instant> lastModified()
+    {
+        return lastModified;
+    }
+
+    public String urlsetJson( final int count )
+    {
+        final StringBuilder json = new StringBuilder( "[" );
+        int remaining = count;
+        for ( int number = 1; number <= lastModified.size() && remaining > 0; number++ )
+        {
+            remaining -= appendUrlset( json, number, remaining );
+        }
+        return json.append( ']' ).toString();
+    }
+
+    public Optional<String> fileUrlsetJson( final int number )
+    {
+        if ( number < 1 || number > lastModified.size() )
+        {
+            return Optional.empty();
+        }
+        final StringBuilder json = new StringBuilder( "[" );
+        appendUrlset( json, number, Integer.MAX_VALUE );
+        return Optional.of( json.append( ']' ).toString() );
+    }
+
+    private int appendUrlset( final StringBuilder json, final int number, final int max )
+    {
+        int appended = 0;
+        try (BufferedReader lines = new BufferedReader(
+            new InputStreamReader( plain( urlsetFileName( number ) ).openStream(), StandardCharsets.UTF_8 ) ))
+        {
+            String line;
+            while ( appended < max && ( line = lines.readLine() ) != null )
+            {
+                if ( json.length() > 1 )
+                {
+                    json.append( ',' );
+                }
+                json.append( line );
+                appended++;
+            }
+        }
+        catch ( IOException e )
+        {
+            throw new UncheckedIOException( e );
+        }
+        return appended;
+    }
+
     public void delete()
     {
         delete( directory );
@@ -151,6 +209,11 @@ public final class Sitemap
     static String fileName( final int number )
     {
         return "sitemap-" + number + ".xml";
+    }
+
+    static String urlsetFileName( final int number )
+    {
+        return "urlset-" + number + ".jsonl";
     }
 
     private Optional<String> validFile( final int number )
@@ -284,6 +347,8 @@ public final class Sitemap
 
         private CountingWriter file;
 
+        private CountingWriter urlset;
+
         private int fileUrls;
 
         private long fileBytes;
@@ -324,6 +389,7 @@ public final class Sitemap
                         break;
                     }
                     Objects.requireNonNull( file ).write( url );
+                    Objects.requireNonNull( urlset ).write( renderer.urlsetEntry( entry ) + "\n" );
                     fileUrls++;
                     lastModified.set( lastModified.size() - 1, latest( lastModified.get( lastModified.size() - 1 ), entry.lastModified() ) );
 
@@ -351,18 +417,23 @@ public final class Sitemap
                     root.write( URLSET_START + URLSET_END );
                     close( root, ROOT_FILE );
                 }
-                return new Sitemap( directory, 1, size, plainSizes );
+                try (CountingWriter empty = open( urlsetFileName( 1 ) ))
+                {
+                    close( empty, urlsetFileName( 1 ) );
+                }
+                lastModified.add( null );
+                return new Sitemap( directory, 1, size, plainSizes, lastModified );
             }
             if ( fileCount == 1 )
             {
                 Files.move( gzPath( fileName( 1 ) ), gzPath( ROOT_FILE ) );
                 plainSizes.put( ROOT_FILE, plainSizes.remove( fileName( 1 ) ) );
-                return new Sitemap( directory, 1, size, plainSizes );
+                return new Sitemap( directory, 1, size, plainSizes, lastModified );
             }
 
             writeIndex( ROOT_FILE, ".xml" + GZIP_EXTENSION );
             writeIndex( PLAIN_INDEX_FILE, ".xml" );
-            return new Sitemap( directory, fileCount, size, plainSizes );
+            return new Sitemap( directory, fileCount, size, plainSizes, lastModified );
         }
 
         private void writeIndex( final String name, final String extension )
@@ -402,6 +473,7 @@ public final class Sitemap
             indexBytes += indexEntryBytes;
             file = open( fileName( number ) );
             file.write( URLSET_START );
+            urlset = open( urlsetFileName( number ) );
             lastModified.add( null );
             fileUrls = 0;
             fileBytes = urlBytes;
@@ -416,6 +488,8 @@ public final class Sitemap
                 file.write( URLSET_END );
                 close( file, fileName( lastModified.size() ) );
                 file = null;
+                close( Objects.requireNonNull( urlset ), urlsetFileName( lastModified.size() ) );
+                urlset = null;
             }
         }
 
@@ -446,6 +520,11 @@ public final class Sitemap
             {
                 file.close();
                 file = null;
+            }
+            if ( urlset != null )
+            {
+                urlset.close();
+                urlset = null;
             }
         }
 

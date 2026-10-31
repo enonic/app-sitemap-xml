@@ -99,6 +99,17 @@ class SitemapBeanTest
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
+    @Test
+    void answersGuillotineUrlset()
+    {
+        when( cache.get( any(), any(), any() ) ).thenReturn(
+            Sitemap.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), 10, 1 ),
+                           List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) ) ) );
+
+        assertThat( inContext( () -> bean().guillotineUrlset( scriptValue(), 10 ) ) ).isEqualTo(
+            "[{\"path\":\"/\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"},{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+    }
+
     private SitemapBean bean()
     {
         final BeanContext context = mock( BeanContext.class );

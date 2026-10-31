@@ -14,23 +14,14 @@ import type {
 } from '/types';
 
 
-import {toStr} from '@enonic/js-utils/value/toStr';
 import {
 	get as getContext,
 	run as runInContext
 } from '/lib/xp/context';
 import {
-	DEBUG,
-	// PROFILING,
-	TRACE,
-} from '/constants';
-import {
-	DEFAULT_PRIORITY,
-	DEFAULT_UPDATE_PERIOD,
-} from '/lib/app-sitemapxml/constants';
-import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
-import {URLSET_FIELD_NAME} from '/guillotine/constants';
-// import {safeMs} from '/guillotine/safeMs';
+	newSitemapBean,
+	toSitemapParams,
+} from '/lib/app-sitemapxml/sitemapBean';
 
 
 interface SitemapUrl {
@@ -40,95 +31,37 @@ interface SitemapUrl {
 	path: string
 }
 
-// @ts-ignore
-// const {currentTimeMillis} = Java.type('java.lang.System') as {
-// 	currentTimeMillis: () => number
-// }
-
-export const urlset = (graphQL: GraphQL): Resolver<
+// Served from the same cached, published-only sitemap as sitemap.xml.
+export const urlset = (_graphQL: GraphQL): Resolver<
 	{
 		count?: number
 	},
 	SiteMapResolverLocaleContext,
 	SiteMapResolverData,
-	{}
+	SitemapUrl[]
 > => (env) => {
-	// const startMs = PROFILING ? currentTimeMillis() : 0;
-
-	TRACE && log.debug('%s resolver env: %s', URLSET_FIELD_NAME, toStr(env));
 	const {
 		args,
 		localContext,
-		// source
 	} = env;
-
 	const site = JSON.parse(localContext.siteJson as string) as Site<SitemapXmlSiteConfig>;
-	TRACE && log.debug('%s resolver site: %s', URLSET_FIELD_NAME, toStr(site));
-
 	const siteConfig = JSON.parse(localContext.siteConfigJson as string) as SitemapXmlSiteConfig;
-	TRACE && log.debug('%s resolver siteConfig: %s', URLSET_FIELD_NAME, toStr(siteConfig));
+	const params = toSitemapParams({
+		sitePath: site._path,
+		siteUrl: siteConfig?.overrideDomain || '',
+		siteConfig: siteConfig || {},
+	});
+	const count = args.count && args.count > 0 ? Math.min(args.count, params.maxItems) : params.maxItems;
 
-	const {
-		maxItems = 10000,
-	} = siteConfig || {}; // Handle null (aka no config)
-
-	const maxItemsInt = parseInt(maxItems as string, 10);
-
-	const {
-		count = maxItemsInt
-	} = args;
-
-	const {
-		branch,
-		project,
-	} = localContext;
-
-	const context = getContext();
+	const {project} = localContext;
 	const {
 		authInfo: {
-			principals = [] // Handle undefined
+			principals = []
 		} = {}
-	} = context;
-
+	} = getContext();
 	return runInContext({
-		branch,
+		branch: 'master',
 		repository: `com.enonic.cms.${project}`,
-		principals: principals || [] // Handle null
-	}, () => {
-		const {
-			changefreq,
-			priority,
-			result
-		} = queryForSitemapContent({
-			count,
-			site,
-			siteConfig
-		});
-
-		// Go through the results and add the corresponding settings for each match.
-		const items: SitemapUrl[] = [];
-		for (let i = 0; i < result.hits.length; i++) {
-			if (result.hits[i].type) {
-				TRACE && log.debug('%s resolver result.hits[%s].type: %s', URLSET_FIELD_NAME, i, result.hits[i].type);
-				const path = result.hits[i]._path.replace(site._path, '') || '/';
-				items.push({
-					changefreq: changefreq[result.hits[i].type] === DEFAULT_UPDATE_PERIOD ? undefined : changefreq[result.hits[i].type],
-					lastmod: result.hits[i].modifiedTime,
-					priority: priority[result.hits[i].type] === DEFAULT_PRIORITY ? undefined : priority[result.hits[i].type],
-					path
-				});
-			}
-		}
-
-		DEBUG && log.debug('%s resolver first item: %s', URLSET_FIELD_NAME, toStr(items[0]));
-		TRACE && log.debug('%s resolver all items: %s', URLSET_FIELD_NAME, toStr(items));
-
-		// if (PROFILING) {
-		// 	const endMs = currentTimeMillis();
-		// 	const durationMs = endMs - startMs;
-		// 	log.debug(`resolvers ${URLSET_FIELD_NAME} durationMs: ${safeMs(durationMs)}`);
-		// }
-
-		return items;
-	}); // runInContext
-} // urlset
+		principals: principals || []
+	}, () => JSON.parse(newSitemapBean().guillotineUrlset(__.toScriptValue(params), count)) as SitemapUrl[]);
+};

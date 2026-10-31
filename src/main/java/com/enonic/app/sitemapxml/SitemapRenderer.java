@@ -84,6 +84,29 @@ final class SitemapRenderer
         return json.append( '}' ).toString();
     }
 
+    String urlsetEntry( final SitemapEntry entry )
+    {
+        final ContentTypeSetting setting = params.setting( entry.contentType() );
+        final StringBuilder json = new StringBuilder( "{\"path\":" );
+        jsonString( json, entry.path().isEmpty() ? "/" : entry.path() );
+        if ( entry.lastModified() != null )
+        {
+            json.append( ",\"lastmod\":" );
+            jsonString( json, entry.lastModified().toString() );
+        }
+        if ( !SitemapParams.DEFAULT_CHANGEFREQ.equals( setting.changefreq() ) )
+        {
+            json.append( ",\"changefreq\":" );
+            jsonString( json, setting.changefreq() );
+        }
+        if ( !SitemapParams.DEFAULT_PRIORITY.equals( setting.priority() ) )
+        {
+            json.append( ",\"priority\":" );
+            jsonString( json, setting.priority() );
+        }
+        return json.append( '}' ).toString();
+    }
+
     String indexEntry( final String fileUrl, final Instant lastModified )
     {
         final StringBuilder xml = new StringBuilder( "<sitemap><loc>" );

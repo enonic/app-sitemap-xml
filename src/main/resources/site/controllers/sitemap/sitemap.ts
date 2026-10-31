@@ -6,56 +6,19 @@ import type {
 } from '/types';
 
 
-import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {
 	getSite,
 	getSiteConfig,
 	pageUrl
 } from '/lib/xp/portal';
 import {
-	DEFAULT_MAX_ITEMS,
-	MAX_ITEMS_LIMIT,
-	MAX_URLS_PER_FILE,
-} from '/lib/app-sitemapxml/constants';
+	newSitemapBean,
+	toSitemapParams,
+} from '/lib/app-sitemapxml/sitemapBean';
 
-
-interface SitemapParams {
-	sitePath: string
-	siteUrl: string
-	contentTypes: {
-		contentType: string
-		changefreq: string
-		priority: string
-	}[]
-	ignorePatterns: string[]
-	maxItems: number
-	urlsPerFile: number
-}
-
-interface SitemapResponse {
-	getStatus(): number
-	getBody(): object | null
-	getRetryAfter(): number
-}
-
-interface SitemapBean {
-	root(params: ScriptValue): SitemapResponse
-	file(params: ScriptValue, number: number): SitemapResponse
-	json(params: ScriptValue): SitemapResponse
-	rootGzip(params: ScriptValue): SitemapResponse
-	fileGzip(params: ScriptValue, number: number): SitemapResponse
-}
 
 const PATH_REGEXP = /\/sitemap(?:-(\d+))?\.xml(\.gz)?$/;
 
-
-function toInt(value: string | undefined, defaultValue: number, max: number): number {
-	const parsed = parseInt(value || '', 10);
-	if (isNaN(parsed) || parsed < 1) {
-		return defaultValue;
-	}
-	return Math.min(parsed, max);
-}
 
 function getSiteUrl(sitePath: string, overrideDomain: string): string {
 	return overrideDomain
@@ -72,28 +35,15 @@ export function get(request: Request<{
 	const site = getSite<SitemapXmlSiteConfig>() as Site<SitemapXmlSiteConfig>;
 	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>() || {} as Partial<SitemapXmlSiteConfig>;
 
-	const {
-		ignoreList,
-		maxItems,
-		overrideDomain = '',
-		siteMap,
-		urlsPerFile,
-	} = siteConfig;
+	const {overrideDomain = ''} = siteConfig;
 
-	const params: SitemapParams = {
+	const params = toSitemapParams({
 		sitePath: site._path,
 		siteUrl: getSiteUrl(site._path, overrideDomain),
-		contentTypes: (siteMap ? forceArray(siteMap) : []).map(({contentType, updatePeriod, priority}) => ({
-			contentType: contentType || '',
-			changefreq: updatePeriod || '',
-			priority: priority || '',
-		})),
-		ignorePatterns: (ignoreList ? forceArray(ignoreList) : []).map(({path}) => path || ''),
-		maxItems: toInt(maxItems, DEFAULT_MAX_ITEMS, MAX_ITEMS_LIMIT),
-		urlsPerFile: toInt(urlsPerFile, MAX_URLS_PER_FILE, MAX_URLS_PER_FILE),
-	};
+		siteConfig,
+	});
 
-	const bean = __.newBean<SitemapBean>('com.enonic.app.sitemapxml.SitemapBean');
+	const bean = newSitemapBean();
 	const scriptParams = __.toScriptValue(params);
 
 	const match = PATH_REGEXP.exec(request.path);

@@ -19,7 +19,3 @@ export const MAX_URLS_PER_FILE = 50000;
 // sitemap.xml controller.
 export const MAX_ITEMS_LIMIT = 1000000;
 
-// Limit used by the Guillotine extension, which returns all urls in one response.
-export const GUILLOTINE_MAX_ITEMS_LIMIT = 50000;
-
-export const ES_MAX_ITEMS_LIMIT = 10000;

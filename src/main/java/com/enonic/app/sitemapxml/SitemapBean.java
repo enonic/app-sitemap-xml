@@ -52,6 +52,11 @@ public final class SitemapBean
         return respond( params, sitemap -> sitemap.fileGzip( number ) );
     }
 
+    public String guillotineUrlset( final ScriptValue params, final int count )
+    {
+        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) ).urlsetJson( count );
+    }
+
     private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         try

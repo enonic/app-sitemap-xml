@@ -27,12 +27,12 @@ import {
 	describe,
 	expect,
 	test as it,
+	jest,
 } from '@jest/globals';
 // @ts-expect-error No types
 import {print} from 'q-i';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
 import {mockLibXpContext} from '../mocks/mockLibXpContext';
-import {mockLibXpNode} from '../mocks/mockLibXpNode';
 
 
 // @ts-ignore TS2339: Property 'log' does not exist on type 'typeof globalThis'.
@@ -43,8 +43,18 @@ globalThis.log = {
 	debug: console.debug,
 }
 
+const URLS = [
+	{changefreq: 'hourly', path: '/', priority: '1.0'},
+	{lastmod: '2021-01-01T00:00:00Z', path: '/folderContentPath'},
+];
+
+const bean = {
+	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
+};
+
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
 globalThis.__ = {
+	newBean: () => bean,
 	toScriptValue: (value: unknown) => value
 }
 
@@ -138,17 +148,11 @@ mockLibXpContent({
 	siteContent
 });
 mockLibXpContext();
-mockLibXpNode({
-	nodes: {
-		[siteContent._path]: siteContent,
-		[folderContent._path]: folderContent,
-	}
-});
 
 
 describe('guillotine extensions', () => {
 	it("does it's thing", () => {
-		import('/guillotine/guillotine').then(({extensions}) => {
+		return import('/guillotine/guillotine').then(async ({extensions}) => {
 			const res = extensions(graphQL);
 			// print(JSON.parse(JSON.stringify(res)));
 			expect(JSON.parse(JSON.stringify(res))).toEqual({
@@ -247,19 +251,23 @@ describe('guillotine extensions', () => {
 				source: sitemapResolverResult.source,
 			});
 			// print(urlsetResolverResult);
-			expect(urlsetResolverResult).toEqual([
-				{
-					changefreq: 'hourly',
-					lastmod: undefined,
-					path: '/',
-					priority: '1.0',
-				},{
-					changefreq: undefined,
-					lastmod: undefined,
-					path: '/folderContentPath',
-					priority: undefined,
-				}
-			]);
+			expect(urlsetResolverResult).toEqual(URLS);
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				sitePath: '/sitePath',
+				siteUrl: 'https://enonic.com',
+				maxItems: 1000,
+			}), 10);
+			const {run} = await import('/lib/xp/context');
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+
+			urlsetResolver({
+				args: {},
+				localContext: sitemapResolverResult.localContext,
+				source: sitemapResolverResult.source,
+			});
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
 		}); // import
 	}); // it
 }); // guillotine extensions
