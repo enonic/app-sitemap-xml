@@ -93,7 +93,7 @@
 	</form>
 	<mappings>
 		<mapping controller="/site/controllers/sitemap/sitemap.js" order="12">
-			<pattern>/sitemap(-\d+)?\.xml</pattern>
+			<pattern>/sitemap(-\d+)?\.xml(\.gz)?</pattern>
 		</mapping>
 	</mappings>
 </site>

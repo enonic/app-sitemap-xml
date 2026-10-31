@@ -54,6 +54,10 @@ The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are
 
 When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
 
+### Gzip
+
+Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
+
 ## Caching
 
 The sitemap is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).

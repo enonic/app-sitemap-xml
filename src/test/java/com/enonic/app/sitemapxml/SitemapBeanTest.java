@@ -10,6 +10,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.google.common.io.ByteSource;
+
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.script.ScriptValue;
@@ -52,11 +54,14 @@ class SitemapBeanTest
             new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
         final SitemapBean bean = bean();
 
-        assertThat( inContext( () -> bean.root( scriptValue() ) ).getBody() ).contains( "<sitemapindex" );
-        assertThat( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ).contains( "https://example.com/b" );
+        assertThat( (String) inContext( () -> bean.root( scriptValue() ) ).getBody() ).contains( "<sitemapindex" );
+        assertThat( (String) inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ).contains( "https://example.com/b" );
         assertThat( inContext( () -> bean.file( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
-        assertThat( inContext( () -> bean.json( scriptValue() ) ).getBody() ).startsWith( "[{" );
+        assertThat( (String) inContext( () -> bean.json( scriptValue() ) ).getBody() ).startsWith( "[{" );
         assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
+        assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isInstanceOf( ByteSource.class );
+        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isInstanceOf( ByteSource.class );
+        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
     }
 
     @Test

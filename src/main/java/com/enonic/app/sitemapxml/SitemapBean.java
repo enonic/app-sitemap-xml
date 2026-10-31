@@ -40,12 +40,32 @@ public final class SitemapBean
         return respond( params, sitemap -> Optional.of( sitemap.json() ) );
     }
 
+    public SitemapResponse rootGzip( final ScriptValue params )
+    {
+        return respondBytes( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
+    }
+
+    public SitemapResponse fileGzip( final ScriptValue params, final int number )
+    {
+        return respondBytes( params, sitemap -> sitemap.fileGzip( number ) );
+    }
+
     private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
+    {
+        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
+    }
+
+    private SitemapResponse respondBytes( final ScriptValue params, final Function<Sitemap, Optional<byte[]>> body )
+    {
+        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
+    }
+
+    private SitemapResponse respondWith( final ScriptValue params, final Function<Sitemap, Optional<SitemapResponse>> response )
     {
         try
         {
             final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) );
-            return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
+            return response.apply( sitemap ).orElseGet( SitemapResponse::notFound );
         }
         catch ( SitemapBusyException e )
         {
