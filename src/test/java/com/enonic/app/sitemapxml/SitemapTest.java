@@ -186,6 +186,8 @@ class SitemapTest
 
         assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( text( sitemap.root() ).replace( ".xml<", ".xml.gz<" ) )
             .contains( "<loc>https://example.com/sitemap-1.xml.gz</loc>" );
+        assertThat( gunzip( sitemap.rootEncoded() ) ).isEqualTo( text( sitemap.root() ) )
+            .contains( "<loc>https://example.com/sitemap-1.xml</loc>" );
         assertThat( gunzip( sitemap.fileGzip( 2 ).orElseThrow() ) ).isEqualTo( text( sitemap.file( 2 ).orElseThrow() ) );
         assertThat( sitemap.fileGzip( 3 ) ).isEmpty();
         assertThat( sitemap.fileGzip( 0 ) ).isEmpty();
@@ -198,6 +200,7 @@ class SitemapTest
         final Sitemap sitemap = write( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
 
         assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( text( sitemap.root() ) );
+        assertThat( gunzip( sitemap.rootEncoded() ) ).isEqualTo( text( sitemap.root() ) );
         assertThat( sitemap.fileGzip( 1 ) ).isEmpty();
     }
 

@@ -58,13 +58,17 @@ When the site has more items than this, `sitemap.xml` becomes a [sitemap index](
 
 Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
 
+Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console submission), so the plain `.xml` URLs are compressed too: when a request accepts gzip (`Accept-Encoding: gzip`, which crawlers send), the stored file is sent as it is with `Content-Encoding: gzip`, so the response is the same XML, compressed for transfer only. Plain `.xml` responses carry `Vary: Accept-Encoding`. To have crawlers fetch the `.xml.gz` files instead, list `sitemap.xml.gz` in `robots.txt` (`Sitemap: https://example.com/sitemap.xml.gz`).
+
+Note that the Booster app does not cache responses with a `Vary` or `Content-Encoding` header, so sitemaps are served by this app's own cache, not by Booster.
+
 ## Caching
 
 The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
 
 Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `429 Too Many Requests` with a `Retry-After` header.
 
-Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
+Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
 
 ### Mappings
 

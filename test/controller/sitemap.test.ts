@@ -34,6 +34,7 @@ const bean = {
 	file: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, '<urlset n="2"/>') : response(404, null))),
 	json: jest.fn((_params: unknown) => response(200, '[]')),
 	rootGzip: jest.fn((_params: unknown) => response(200, 'gzipped root')),
+	rootEncoded: jest.fn((_params: unknown) => response(200, 'encoded root')),
 	fileGzip: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, 'gzipped 2') : response(404, null))),
 };
 
@@ -68,7 +69,7 @@ describe('sitemap controller', () => {
 
 		const res = get(request('/mysite/sitemap.xml'));
 
-		expect(res).toEqual({body: '<urlset/>', contentType: 'text/xml; charset=utf-8'});
+		expect(res).toEqual({body: '<urlset/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
 		expect(bean.root).toHaveBeenCalledWith({
 			sitePath: '/mysite',
 			siteUrl: 'https://example.com/mysite',
@@ -107,7 +108,7 @@ describe('sitemap controller', () => {
 	it('serves numbered files and 404 for unknown ones', async () => {
 		const {get} = await import('/site/controllers/sitemap/sitemap');
 
-		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml; charset=utf-8'});
+		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
 		expect(get(request('/mysite/sitemap-3.xml'))).toEqual({body: null, status: 404});
 		expect(bean.file).toHaveBeenCalledWith(expect.anything(), 3);
 	});
@@ -121,6 +122,24 @@ describe('sitemap controller', () => {
 		expect(get(request('/mysite/sitemap.xml.gz', {'Content-Type': 'application/json'})))
 			.toEqual({body: 'gzipped root', contentType: 'application/gzip'});
 		expect(bean.json).not.toHaveBeenCalled();
+	});
+
+	it('sends stored gzip files with Content-Encoding when the client accepts gzip', async () => {
+		const {get} = await import('/site/controllers/sitemap/sitemap');
+		const encoded = {Vary: 'Accept-Encoding', 'Content-Encoding': 'gzip'};
+
+		expect(get(request('/mysite/sitemap.xml', {'Accept-Encoding': 'gzip, deflate, br'})))
+			.toEqual({body: 'encoded root', contentType: 'text/xml; charset=utf-8', headers: encoded});
+		expect(get(request('/mysite/sitemap-2.xml', {'accept-encoding': 'gzip'})))
+			.toEqual({body: 'gzipped 2', contentType: 'text/xml; charset=utf-8', headers: encoded});
+		expect(get(request('/mysite/sitemap-3.xml', {'accept-encoding': 'gzip'}))).toEqual({body: null, status: 404});
+		expect(get(request('/mysite/sitemap.xml', {'Accept-Encoding': 'br, gzip;q=0'})))
+			.toEqual({body: '<urlset/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
+		expect(get(request('/mysite/sitemap.xml.gz', {'Accept-Encoding': 'gzip'})))
+			.toEqual({body: 'gzipped root', contentType: 'application/gzip'});
+		expect(get(request('/mysite/sitemap.xml', {'Accept-Encoding': 'gzip', 'Content-Type': 'application/json'})))
+			.toEqual({body: '[]', contentType: 'application/json; charset=utf-8'});
+		expect(bean.rootGzip).toHaveBeenCalledTimes(1);
 	});
 
 	it('serves json when asked for', async () => {

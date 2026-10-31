@@ -63,6 +63,7 @@ class SitemapBeanTest
         assertThat( SitemapTest.text( inContext( () -> bean.json( scriptValue() ) ).getBody() ) ).startsWith( "[{" );
         assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
         assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isNotNull();
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue() ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.fileGzip( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
     }
