@@ -10,8 +10,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
-import com.enonic.xp.node.NodeService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.security.auth.AuthenticationInfo;
@@ -26,19 +26,19 @@ import static org.mockito.Mockito.when;
 class SitemapBeanTest
 {
     @Mock
-    private NodeService nodeService;
+    private ContentService contentService;
 
     @Mock
     private SitemapCache cache;
 
     @Test
-    void answers503WhenBusy()
+    void answers429WhenBusy()
     {
         when( cache.get( any(), any(), any() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
-        assertThat( response.getStatus() ).isEqualTo( 503 );
+        assertThat( response.getStatus() ).isEqualTo( 429 );
         assertThat( response.getRetryAfter() ).isEqualTo( SitemapResponse.RETRY_AFTER_SECONDS );
         assertThat( response.getBody() ).isNull();
     }
@@ -77,7 +77,7 @@ class SitemapBeanTest
     private SitemapBean bean()
     {
         final BeanContext context = mock( BeanContext.class );
-        when( context.getService( NodeService.class ) ).thenReturn( () -> nodeService );
+        when( context.getService( ContentService.class ) ).thenReturn( () -> contentService );
         when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
         final SitemapBean bean = new SitemapBean();
         bean.initialize( context );

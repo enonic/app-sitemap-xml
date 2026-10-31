@@ -2,10 +2,9 @@ package com.enonic.app.sitemapxml;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.Collections;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -15,18 +14,21 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.enonic.xp.content.Content;
+import com.enonic.xp.content.ContentId;
+import com.enonic.xp.content.ContentIds;
+import com.enonic.xp.content.ContentPath;
+import com.enonic.xp.content.ContentPublishInfo;
+import com.enonic.xp.content.ContentQuery;
+import com.enonic.xp.content.ContentService;
+import com.enonic.xp.content.Contents;
+import com.enonic.xp.content.FindContentIdsByQueryResult;
+import com.enonic.xp.content.GetContentByIdsParams;
+import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
-import com.enonic.xp.data.PropertyTree;
-import com.enonic.xp.node.FindNodesByQueryResult;
-import com.enonic.xp.node.Node;
-import com.enonic.xp.node.NodeHit;
-import com.enonic.xp.node.NodeId;
-import com.enonic.xp.node.NodeIds;
-import com.enonic.xp.node.NodePath;
 import com.enonic.xp.node.NodeQuery;
-import com.enonic.xp.node.NodeService;
-import com.enonic.xp.node.Nodes;
+import com.enonic.xp.schema.content.ContentTypeName;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,7 +42,7 @@ class SitemapQueryTest
     private static final Instant NOW = Instant.parse( "2024-06-01T12:00:00Z" );
 
     @Mock
-    private NodeService nodeService;
+    private ContentService contentService;
 
     @Test
     void dsl()
@@ -48,7 +50,7 @@ class SitemapQueryTest
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of( "/skip/", "*/foo", "bar" ), 10,
                                                         10 );
 
-        final PropertySet bool = new SitemapQuery( nodeService, params, NOW ).dsl().getSet( "boolean" );
+        final PropertySet bool = new SitemapQuery( contentService, params, NOW ).dsl().getSet( "boolean" );
         final List<PropertySet> must = sets( bool, "must" );
         final List<PropertySet> mustNot = sets( bool, "mustNot" );
 
@@ -63,74 +65,80 @@ class SitemapQueryTest
     }
 
     @Test
-    void fetchesNodesInBatchesKeepingQueryOrder()
+    void loadsContentInBatchesKeepingQueryOrder()
     {
         final int count = SitemapQuery.FETCH_BATCH_SIZE + 5;
-        final List<Node> nodes = IntStream.range( 0, count ).mapToObj( i -> node( "n" + i, "/content/mysite/item-" + i, "base:folder" ) ).collect( Collectors.toList() );
-        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( hits( nodes ) );
-        when( nodeService.getByIds( any( NodeIds.class ) ) ).thenAnswer(
-            invocation -> Nodes.from( nodes.stream().filter( node -> invocation.<NodeIds>getArgument( 0 ).contains( node.id() ) ).collect( reversed() ) ) );
+        final List<Content> contents =
+            IntStream.range( 0, count ).mapToObj( i -> content( "c" + i, "/mysite", "item-" + i, null ) ).collect( Collectors.toList() );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
+        when( contentService.getByIds( any( GetContentByIdsParams.class ) ) ).thenAnswer( invocation -> {
+            final ContentIds ids = invocation.<GetContentByIdsParams>getArgument( 0 ).getIds();
+            final List<Content> found = contents.stream().filter( content -> ids.contains( content.getId() ) ).collect( Collectors.toList() );
+            Collections.reverse( found );
+            return Contents.from( found );
+        } );
 
-        final SitemapContents contents = draft( () -> new SitemapQuery( nodeService, params( 50_000 ), NOW ).execute() );
+        final SitemapContents result = draft( () -> new SitemapQuery( contentService, params( 50_000 ), NOW ).execute() );
 
-        assertThat( contents.entries() ).hasSize( count );
-        assertThat( contents.entries().get( 0 ) ).isEqualTo( new SitemapEntry( "/item-0", "base:folder", NOW ) );
-        assertThat( contents.entries().get( count - 1 ).path() ).isEqualTo( "/item-" + ( count - 1 ) );
-        assertThat( contents.validUntil() ).isNull();
-        verify( nodeService, times( 2 ) ).getByIds( any( NodeIds.class ) );
+        assertThat( result.entries() ).hasSize( count );
+        assertThat( result.entries().get( 0 ) ).isEqualTo( new SitemapEntry( "/item-0", "base:folder", NOW ) );
+        assertThat( result.entries().get( count - 1 ).path() ).isEqualTo( "/item-" + ( count - 1 ) );
+        assertThat( result.validUntil() ).isNull();
+        verify( contentService, times( 2 ) ).getByIds( any( GetContentByIdsParams.class ) );
 
-        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
-        verify( nodeService ).findByQuery( query.capture() );
+        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
+        verify( contentService ).find( query.capture() );
         assertThat( query.getValue().getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
-        assertThat( query.getValue().getQueryFilters().isEmpty() ).isTrue();
+        assertThat( query.getValue().getQueryExpr().getOrderList() ).extracting( Object::toString ).containsExactly( "modifiedtime DESC" );
     }
 
     @Test
     void limitsToMaxItemsAndSitePaths()
     {
-        final List<Node> nodes = List.of( node( "site", "/content/mysite", "portal:site" ), node( "other", "/content/mysiteother", "base:folder" ),
-                                          node( "a", "/content/mysite/a", "base:folder" ) );
-        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( hits( nodes ) );
-        when( nodeService.getByIds( any( NodeIds.class ) ) ).thenReturn( Nodes.from( nodes ) );
+        final List<Content> contents = List.of( content( "site", "/", "mysite", null ), content( "other", "/", "mysiteother", null ),
+                                                content( "a", "/mysite", "a", null ) );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
+        when( contentService.getByIds( any( GetContentByIdsParams.class ) ) ).thenReturn( Contents.from( contents ) );
 
-        final SitemapContents contents = draft( () -> new SitemapQuery( nodeService, params( 2 ), NOW ).execute() );
+        final SitemapContents result = draft( () -> new SitemapQuery( contentService, params( 2 ), NOW ).execute() );
 
-        assertThat( contents.entries() ).extracting( SitemapEntry::path ).containsExactly( "" );
-        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
-        verify( nodeService ).findByQuery( query.capture() );
+        assertThat( result.entries() ).extracting( SitemapEntry::path ).containsExactly( "" );
+        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
+        verify( contentService ).find( query.capture() );
         assertThat( query.getValue().getSize() ).isEqualTo( 2 );
     }
 
     @Test
-    void masterFiltersPublishTimesAndExpiresAtNextScheduledChange()
+    void masterExpiresAtNextScheduledChangeLookedUpIgnoringPublishTimes()
     {
-        final Node site = node( "site", "/content/mysite", "portal:site" );
-        final Node pending = node( "pending", "/content/mysite/pending", "base:folder" );
-        pending.data().setInstant( "publish.from", NOW.plusSeconds( 600 ) );
-        final Node expiring = node( "expiring", "/content/mysite/expiring", "base:folder" );
-        expiring.data().setInstant( "publish.to", NOW.plusSeconds( 300 ) );
+        final Content site = content( "site", "/", "mysite", null );
+        final Content pending = content( "pending", "/mysite", "pending", ContentPublishInfo.create().from( NOW.plusSeconds( 600 ) ).build() );
+        final Content expiring =
+            content( "expiring", "/mysite", "expiring", ContentPublishInfo.create().to( NOW.plusSeconds( 300 ) ).build() );
+        final List<Object> ignorePublishTimes = new ArrayList<>();
 
-        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenAnswer( invocation -> {
-            final NodeQuery query = invocation.getArgument( 0 );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
             if ( query.getSize() != 1 )
             {
-                assertThat( query.getQueryFilters().getSize() ).isEqualTo( 2 );
-                return hits( List.of( site ) );
+                return result( List.of( site ) );
             }
-            return hits( List.of( query.getOrderBys().get( 0 ).toString().startsWith( "publish.from" ) ? pending : expiring ) );
+            ignorePublishTimes.add( ContextAccessor.current().getAttribute( SitemapQuery.IGNORE_PUBLISH_TIMES ) );
+            return result( List.of( query.getQueryExpr().getOrderList().get( 0 ).toString().startsWith( "publish.from" ) ? pending : expiring ) );
         } );
-        when( nodeService.getById( pending.id() ) ).thenReturn( pending );
-        when( nodeService.getById( expiring.id() ) ).thenReturn( expiring );
-        when( nodeService.getByIds( any( NodeIds.class ) ) ).thenReturn( Nodes.from( site ) );
+        when( contentService.getById( pending.getId() ) ).thenReturn( pending );
+        when( contentService.getById( expiring.getId() ) ).thenReturn( expiring );
+        when( contentService.getByIds( any( GetContentByIdsParams.class ) ) ).thenReturn( Contents.from( site ) );
 
         final SitemapContents contents = ContextBuilder.create()
             .repositoryId( "com.enonic.cms.project" )
             .branch( "master" )
             .build()
-            .callWith( () -> new SitemapQuery( nodeService, params( 10 ), NOW ).execute() );
+            .callWith( () -> new SitemapQuery( contentService, params( 10 ), NOW ).execute() );
 
         assertThat( contents.entries() ).extracting( SitemapEntry::path ).containsExactly( "" );
         assertThat( contents.validUntil() ).isEqualTo( NOW.plusSeconds( 300 ) );
+        assertThat( ignorePublishTimes ).containsExactly( true, true );
     }
 
     @Test
@@ -159,32 +167,23 @@ class SitemapQueryTest
         return ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( callable );
     }
 
-    private static Collector<Node, ?, List<Node>> reversed()
+    private static FindContentIdsByQueryResult result( final List<Content> contents )
     {
-        return Collectors.collectingAndThen( Collectors.toList(), list -> {
-            Collections.reverse( list );
-            return list;
-        } );
+        return FindContentIdsByQueryResult.create()
+            .contents( ContentIds.from( contents.stream().map( Content::getId ).collect( Collectors.toList() ) ) )
+            .totalHits( contents.size() )
+            .build();
     }
 
-    private static FindNodesByQueryResult hits( final List<Node> nodes )
+    private static Content content( final String id, final String parent, final String name, final ContentPublishInfo publishInfo )
     {
-        final FindNodesByQueryResult.Builder result = FindNodesByQueryResult.create().totalHits( nodes.size() );
-        nodes.forEach( node -> result.addNodeHit( NodeHit.create().nodeId( node.id() ).build() ) );
-        return result.build();
-    }
-
-    private static Node node( final String id, final String path, final String type )
-    {
-        final PropertyTree data = new PropertyTree();
-        data.setString( "type", type );
-        data.setInstant( "modifiedTime", NOW );
-        final NodePath nodePath = new NodePath( path );
-        return Node.create()
-            .id( NodeId.from( id ) )
-            .parentPath( nodePath.getParentPath() )
-            .name( nodePath.getName().toString() )
-            .data( data )
+        return Content.create()
+            .id( ContentId.from( id ) )
+            .parentPath( ContentPath.from( parent ) )
+            .name( name )
+            .type( ContentTypeName.folder() )
+            .modifiedTime( NOW )
+            .publishInfo( publishInfo )
             .build();
     }
 }

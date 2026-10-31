@@ -6,27 +6,29 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.enonic.xp.content.Content;
 import com.enonic.xp.content.ContentConstants;
+import com.enonic.xp.content.ContentId;
+import com.enonic.xp.content.ContentIds;
+import com.enonic.xp.content.ContentPublishInfo;
+import com.enonic.xp.content.ContentQuery;
+import com.enonic.xp.content.ContentService;
+import com.enonic.xp.content.GetContentByIdsParams;
 import com.enonic.xp.context.ContextAccessor;
+import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
 import com.enonic.xp.index.IndexPath;
-import com.enonic.xp.node.Node;
-import com.enonic.xp.node.NodeHit;
-import com.enonic.xp.node.NodeId;
-import com.enonic.xp.node.NodeIds;
 import com.enonic.xp.node.NodeQuery;
-import com.enonic.xp.node.NodeService;
 import com.enonic.xp.query.expr.DslExpr;
 import com.enonic.xp.query.expr.FieldOrderExpr;
 import com.enonic.xp.query.expr.OrderExpr;
 import com.enonic.xp.query.expr.QueryExpr;
-import com.enonic.xp.query.filter.BooleanFilter;
-import com.enonic.xp.query.filter.Filter;
 import com.enonic.xp.query.filter.RangeFilter;
 
 public final class SitemapQuery
@@ -35,107 +37,95 @@ public final class SitemapQuery
 
     static final int FETCH_BATCH_SIZE = 1_000;
 
+    static final String IGNORE_PUBLISH_TIMES = "ignorePublishTimes";
+
     private static final String CONTENT_ROOT = "/content";
 
     private static final String BLOCK_ROBOTS_FIELD = "x.com-enonic-app-metafields.meta-data.blockRobots";
 
-    private static final String PUBLISH_FROM = "publish.from";
+    private static final IndexPath MODIFIED_TIME = IndexPath.from( "modifiedTime" );
 
-    private static final String PUBLISH_TO = "publish.to";
+    private static final IndexPath PUBLISH_FROM = IndexPath.from( "publish.from" );
 
-    private final NodeService nodeService;
+    private static final IndexPath PUBLISH_TO = IndexPath.from( "publish.to" );
+
+    private final ContentService contentService;
 
     private final SitemapParams params;
 
     private final Instant now;
 
-    public SitemapQuery( final NodeService nodeService, final SitemapParams params, final Instant now )
+    public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
     {
-        this.nodeService = nodeService;
+        this.contentService = contentService;
         this.params = params;
         this.now = now;
     }
 
     public SitemapContents execute()
     {
-        final boolean filterPublishTimes = ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() );
+        final ContentQuery query = ContentQuery.create()
+            .queryExpr( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ) ) )
+            .size( params.maxItems() <= ES_MAX_RESULT_WINDOW ? params.maxItems() : NodeQuery.ALL_RESULTS_SIZE_FLAG )
+            .build();
 
-        final NodeQuery.Builder query = NodeQuery.create()
-            .query( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( IndexPath.from( "modifiedTime" ),
-                                                                                   OrderExpr.Direction.DESC ) ) )
-            .size( params.maxItems() <= ES_MAX_RESULT_WINDOW ? params.maxItems() : NodeQuery.ALL_RESULTS_SIZE_FLAG );
-        if ( filterPublishTimes )
-        {
-            onlineFilters().forEach( query::addQueryFilter );
-        }
+        final List<ContentId> ids =
+            contentService.find( query ).getContentIds().stream().limit( params.maxItems() ).collect( Collectors.toList() );
 
-        final List<NodeId> ids = nodeService.findByQuery( query.build() )
-            .getNodeHits()
-            .stream()
-            .limit( params.maxItems() )
-            .map( NodeHit::getNodeId )
-            .collect( Collectors.toList() );
+        final Instant validUntil = ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of(
+            PUBLISH_FROM, PUBLISH_TO ).flatMap( field -> nextChange( field ).stream() ).min( Instant::compareTo ).orElse( null ) : null;
 
-        final Instant validUntil = filterPublishTimes ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
-            .flatMap( field -> nextChange( field ).stream() )
-            .min( Instant::compareTo )
-            .orElse( null ) : null;
-
-        return new SitemapContents( fetch( ids ), validUntil );
+        return new SitemapContents( entries( ids ), validUntil );
     }
 
-    private List<SitemapEntry> fetch( final List<NodeId> ids )
+    private List<SitemapEntry> entries( final List<ContentId> ids )
     {
-        final String siteNodePath = CONTENT_ROOT + params.sitePath();
         final List<SitemapEntry> entries = new ArrayList<>( ids.size() );
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
         {
-            final List<NodeId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
-            final Map<NodeId, Node> nodes = new HashMap<>();
-            nodeService.getByIds( NodeIds.from( batch ) ).forEach( node -> nodes.put( node.id(), node ) );
-            for ( final NodeId id : batch )
+            final List<ContentId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
+            final Map<ContentId, Content> contents = new HashMap<>();
+            for ( final Content content : contentService.getByIds( new GetContentByIdsParams( ContentIds.from( batch ) ) ) )
             {
-                final Node node = nodes.get( id );
-                if ( node == null )
+                contents.put( content.getId(), content );
+            }
+            for ( final ContentId id : batch )
+            {
+                final Content content = contents.get( id );
+                if ( content != null && isInSite( content.getPath().toString() ) )
                 {
-                    continue;
-                }
-                final String type = node.data().getString( "type" );
-                final String path = node.path().toString();
-                if ( type != null && ( path.equals( siteNodePath ) || path.startsWith( siteNodePath + "/" ) ) )
-                {
-                    entries.add( new SitemapEntry( path.substring( siteNodePath.length() ), type, node.data().getInstant( "modifiedTime" ) ) );
+                    entries.add( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
+                                                   content.getType().toString(), content.getModifiedTime() ) );
                 }
             }
         }
         return entries;
     }
 
-    private Optional<Instant> nextChange( final String field )
+    private boolean isInSite( final String path )
     {
-        final NodeQuery query = NodeQuery.create()
-            .query( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( IndexPath.from( field ), OrderExpr.Direction.ASC ) ) )
-            .addQueryFilter( RangeFilter.create().fieldName( field ).gt( ValueFactory.newDateTime( now ) ).build() )
-            .size( 1 )
-            .build();
-
-        return nodeService.findByQuery( query )
-            .getNodeIds()
-            .stream()
-            .findFirst()
-            .map( nodeService::getById )
-            .map( node -> node.data().getInstant( field ) );
+        return params.sitePath().isEmpty() || path.equals( params.sitePath() ) || path.startsWith( params.sitePath() + "/" );
     }
 
-    private List<Filter> onlineFilters()
+    private Optional<Instant> nextChange( final IndexPath field )
     {
-        final Filter notPending = BooleanFilter.create()
-            .mustNot( RangeFilter.create().fieldName( PUBLISH_FROM ).gt( ValueFactory.newDateTime( now ) ).build() )
-            .build();
-        final Filter notExpired = BooleanFilter.create()
-            .mustNot( RangeFilter.create().fieldName( PUBLISH_TO ).lt( ValueFactory.newDateTime( now ) ).build() )
-            .build();
-        return List.of( notPending, notExpired );
+        final Function<ContentPublishInfo, Instant> value =
+            PUBLISH_FROM.equals( field ) ? ContentPublishInfo::getFrom : ContentPublishInfo::getTo;
+
+        return ContextBuilder.from( ContextAccessor.current() ).attribute( IGNORE_PUBLISH_TIMES, true ).build().callWith( () -> {
+            final ContentQuery query = ContentQuery.create()
+                .queryExpr( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( field, OrderExpr.Direction.ASC ) ) )
+                .queryFilter( RangeFilter.create().fieldName( field.getPath() ).gt( ValueFactory.newDateTime( now ) ).build() )
+                .size( 1 )
+                .build();
+            return contentService.find( query )
+                .getContentIds()
+                .stream()
+                .findFirst()
+                .map( contentService::getById )
+                .map( Content::getPublishInfo )
+                .map( value );
+        } );
     }
 
     PropertyTree dsl()

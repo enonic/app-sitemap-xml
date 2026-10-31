@@ -5,22 +5,22 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
-import com.enonic.xp.node.NodeService;
 import com.enonic.xp.security.PrincipalKey;
 
 public final class SitemapService
 {
-    private final NodeService nodeService;
+    private final ContentService contentService;
 
     private final SitemapCache cache;
 
     private final Clock clock;
 
-    public SitemapService( final NodeService nodeService, final SitemapCache cache, final Clock clock )
+    public SitemapService( final ContentService contentService, final SitemapCache cache, final Clock clock )
     {
-        this.nodeService = nodeService;
+        this.contentService = contentService;
         this.cache = cache;
         this.clock = clock;
     }
@@ -34,6 +34,6 @@ public final class SitemapService
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
         return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ), context.getAuthInfo(),
-                          () -> new SitemapQuery( nodeService, params, clock.instant() ).execute() );
+                          () -> new SitemapQuery( contentService, params, clock.instant() ).execute() );
     }
 }

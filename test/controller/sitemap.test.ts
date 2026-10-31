@@ -25,7 +25,7 @@ function response(status: number, body: string | null) {
 	return {
 		getStatus: () => status,
 		getBody: () => body,
-		getRetryAfter: () => (status === 503 ? 10 : 0),
+		getRetryAfter: () => (status === 429 ? 10 : 0),
 	};
 }
 
@@ -117,15 +117,15 @@ describe('sitemap controller', () => {
 			.toEqual({body: '[]', contentType: 'application/json'});
 	});
 
-	it('answers 503 with Retry-After when busy', async () => {
-		bean.root.mockReturnValueOnce(response(503, null));
+	it('answers 429 with Retry-After when too many requests are in progress', async () => {
+		bean.root.mockReturnValueOnce(response(429, null));
 		const {get} = await import('/site/controllers/sitemap/sitemap');
 
 		expect(get(request('/mysite/sitemap.xml'))).toEqual({
 			body: 'Too many sitemap requests in progress, retry later.',
 			contentType: 'text/plain',
 			headers: {'Retry-After': '10'},
-			status: 503,
+			status: 429,
 		});
 	});
 });

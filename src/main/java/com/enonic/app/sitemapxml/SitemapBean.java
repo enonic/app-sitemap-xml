@@ -8,7 +8,7 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import com.enonic.xp.node.NodeService;
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.script.bean.ScriptBean;
@@ -21,7 +21,7 @@ public final class SitemapBean
     @Override
     public void initialize( final BeanContext context )
     {
-        this.service = new SitemapService( context.getService( NodeService.class ).get(), context.getService( SitemapCache.class ).get(),
+        this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( SitemapCache.class ).get(),
                                            Clock.systemUTC() );
     }
 
@@ -49,7 +49,7 @@ public final class SitemapBean
         }
         catch ( SitemapBusyException e )
         {
-            return SitemapResponse.busy();
+            return SitemapResponse.tooManyRequests();
         }
     }
 

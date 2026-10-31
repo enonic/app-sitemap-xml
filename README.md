@@ -48,15 +48,17 @@ Limit the total number of items in the sitemap. Default: 10000. Max: 1000000.
 
 ### URLs per file
 
-Maximum number of URLs in a single sitemap file. Default and max: 50000 (the limit of the [sitemap protocol](https://www.sitemaps.org/protocol.html)).
+Maximum number of URLs in a single sitemap file. Default and max: 50000.
+
+The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are always obeyed: a sitemap file holds at most 50,000 URLs and 50MB (uncompressed), a sitemap index lists at most 50,000 sitemaps, and URLs longer than 2,048 characters are left out.
 
 When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
 
 ## Caching
 
-The sitemap is generated in Java and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+The sitemap is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
 
-Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `503 Service Unavailable` with a `Retry-After` header.
+Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `429 Too Many Requests` with a `Retry-After` header.
 
 The cache is per cluster node and is emptied when the app is restarted.
 

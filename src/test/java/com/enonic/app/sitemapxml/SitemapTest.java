@@ -1,5 +1,6 @@
 package com.enonic.app.sitemapxml;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -80,6 +81,59 @@ class SitemapTest
         Sitemap.encodePathSegment( out, "æøå ~-._!$&'()*+,;=:@?#/%" );
 
         assertThat( out ).hasToString( "%C3%A6%C3%B8%C3%A5%20~-._!$&'()*+,;=:@%3F%23%2F%25" );
+    }
+
+    @Test
+    void splitsFilesAtByteLimit()
+    {
+        final List<SitemapEntry> entries =
+            IntStream.rangeClosed( 1, 5 )
+                .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
+                .collect( Collectors.toList() );
+        final long urlBytes = Sitemap.utf8Length(
+            "<url><loc>https://example.com/item-1</loc><changefreq>daily</changefreq><priority>0.8</priority></url>" );
+        final long overhead = Sitemap.utf8Length( new Sitemap( params( "https://example.com", 10 ), List.of() ).root() );
+
+        final Sitemap sitemap = new Sitemap( params( "https://example.com", 10 ), entries, overhead + 2 * urlBytes );
+
+        assertThat( sitemap.fileCount() ).isEqualTo( 3 );
+        for ( int number = 1; number <= 3; number++ )
+        {
+            assertThat( Sitemap.utf8Length( sitemap.file( number ).orElseThrow() ) ).isLessThanOrEqualTo( overhead + 2 * urlBytes );
+        }
+        assertThat( sitemap.file( 3 ).orElseThrow() ).contains( "item-5" );
+    }
+
+    @Test
+    void leavesOutTooLongUrls()
+    {
+        final String longName = "a".repeat( Sitemap.MAX_LOC_LENGTH );
+        final Sitemap sitemap = new Sitemap( params( "https://example.com", 10 ),
+                                             List.of( new SitemapEntry( "/ok", "base:folder", null ),
+                                                      new SitemapEntry( "/" + longName, "base:folder", null ) ) );
+
+        assertThat( sitemap.size() ).isEqualTo( 1 );
+        assertThat( sitemap.root() ).contains( "https://example.com/ok" ).doesNotContain( longName );
+    }
+
+    @Test
+    void indexListsAtMostMaxFiles()
+    {
+        final List<SitemapEntry> entries = IntStream.range( 0, Sitemap.MAX_FILES + 3 )
+            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
+            .collect( Collectors.toList() );
+
+        final Sitemap sitemap = new Sitemap( params( "https://example.com", 1 ), entries );
+
+        assertThat( sitemap.fileCount() ).isEqualTo( Sitemap.MAX_FILES );
+        assertThat( sitemap.size() ).isEqualTo( Sitemap.MAX_FILES );
+        assertThat( sitemap.file( Sitemap.MAX_FILES + 1 ) ).isEmpty();
+    }
+
+    @Test
+    void utf8Length()
+    {
+        assertThat( Sitemap.utf8Length( "aæ€😀" ) ).isEqualTo( "aæ€😀".getBytes( StandardCharsets.UTF_8 ).length );
     }
 
     private static SitemapParams params( final String siteUrl, final int urlsPerFile )

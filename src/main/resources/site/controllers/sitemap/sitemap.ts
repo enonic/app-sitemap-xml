@@ -103,7 +103,7 @@ export function get(request: Request<{
 			: bean.root(scriptParams);
 
 	const status = result.getStatus();
-	if (status === 503) {
+	if (status === 429) {
 		// A body is needed, otherwise XP renders its own error page without the Retry-After header.
 		return {
 			body: 'Too many sitemap requests in progress, retry later.',
