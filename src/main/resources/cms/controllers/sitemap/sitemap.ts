@@ -36,7 +36,7 @@ interface SitemapParams {
 
 interface SitemapResponse {
 	getStatus(): number
-	getBody(): string | null
+	getBody(): object | null
 	getRetryAfter(): number
 }
 

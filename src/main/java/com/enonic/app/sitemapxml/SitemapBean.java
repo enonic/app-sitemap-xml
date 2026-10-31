@@ -9,6 +9,8 @@ import java.util.function.Function;
 
 import org.jspecify.annotations.Nullable;
 
+import com.google.common.io.ByteSource;
+
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.script.ScriptValue;
@@ -42,7 +44,7 @@ public final class SitemapBean
         return respond( params, sitemap -> Optional.of( sitemap.json() ) );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         final Map<String, Object> map = params.getMap();
         try

@@ -1,5 +1,6 @@
 package com.enonic.app.sitemapxml;
 
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -7,6 +8,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +45,8 @@ public final class SitemapCache
 
     static final Duration IDLE_TIMEOUT = Duration.ofHours( 1 );
 
+    static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
+
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
@@ -55,26 +59,35 @@ public final class SitemapCache
 
     private final Duration regenerationDelay;
 
+    private final Duration fileRetention;
+
+    private final Path storage;
+
     public SitemapCache()
     {
         this( Executors.newSingleThreadScheduledExecutor( runnable -> {
             final Thread thread = new Thread( runnable, "sitemapxml-generator" );
             thread.setDaemon( true );
             return thread;
-        } ), Clock.systemUTC(), REGENERATION_DELAY );
+        } ), Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, defaultStorage() );
     }
 
-    SitemapCache( final ScheduledExecutorService generator, final Clock clock, final Duration regenerationDelay )
+    SitemapCache( final ScheduledExecutorService generator, final Clock clock, final Duration regenerationDelay,
+                  final Duration fileRetention, final Path storage )
     {
         this.generator = generator;
         this.clock = clock;
         this.regenerationDelay = regenerationDelay;
+        this.fileRetention = fileRetention;
+        this.storage = storage;
+        Sitemap.delete( storage );
     }
 
     @Deactivate
     public void deactivate()
     {
         generator.shutdownNow();
+        Sitemap.delete( storage );
     }
 
     public Sitemap get( final Key key, final AuthenticationInfo authInfo, final Supplier<SitemapContents> query )
@@ -174,7 +187,7 @@ public final class SitemapCache
     {
         if ( entry.sitemap == null || entry.lastAccess.plus( IDLE_TIMEOUT ).isBefore( clock.instant() ) )
         {
-            entries.remove( key, entry );
+            remove( key, entry );
             LOG.debug( "Removed sitemap {}", key );
             return;
         }
@@ -211,8 +224,12 @@ public final class SitemapCache
         {
             final long version = entry.version.get();
             final SitemapContents contents = generate( key, entry );
-            entry.update( new Sitemap( key.params(), contents.entries() ), contents.validUntil(), version );
+            entry.update( write( key, contents ), contents.validUntil(), version );
             entry.first.complete( entry.sitemap );
+            if ( entries.get( key ) != entry )
+            {
+                deleteLater( entry.sitemap );
+            }
         }
         catch ( RuntimeException e )
         {
@@ -232,13 +249,56 @@ public final class SitemapCache
         {
             final long version = entry.version.get();
             final SitemapContents contents = generate( key, entry );
-            entry.update( new Sitemap( key.params(), contents.entries() ), contents.validUntil(), version );
+            final Sitemap previous = entry.sitemap;
+            entry.update( write( key, contents ), contents.validUntil(), version );
+            deleteLater( previous );
+            if ( entries.get( key ) != entry )
+            {
+                deleteLater( entry.sitemap );
+            }
             LOG.debug( "Regenerated sitemap {}", key );
         }
         catch ( RuntimeException e )
         {
             LOG.warn( "Could not regenerate sitemap for {} {} {}", key.repositoryId(), key.branch(), key.params().sitePath(), e );
         }
+    }
+
+    private Sitemap write( final Key key, final SitemapContents contents )
+    {
+        return Sitemap.write( storage.resolve( UUID.randomUUID().toString() ), key.params(), contents.entries() );
+    }
+
+    private void remove( final Key key, final Entry entry )
+    {
+        if ( entries.remove( key, entry ) )
+        {
+            deleteLater( entry.sitemap );
+        }
+    }
+
+    private void deleteLater( final @Nullable Sitemap sitemap )
+    {
+        if ( sitemap == null )
+        {
+            return;
+        }
+        try
+        {
+            final Runnable delete = sitemap::delete;
+            generator.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
+        }
+        catch ( RejectedExecutionException e )
+        {
+            sitemap.delete();
+        }
+    }
+
+    static Path defaultStorage()
+    {
+        final String xpHome = System.getProperty( "xp.home" );
+        final Path work = xpHome != null ? Path.of( xpHome, "work" ) : Path.of( System.getProperty( "java.io.tmpdir" ) );
+        return work.resolve( "com.enonic.app.sitemapxml" );
     }
 
     private SitemapContents generate( final Key key, final Entry entry )
@@ -258,7 +318,7 @@ public final class SitemapCache
             entries.entrySet()
                 .stream()
                 .min( Comparator.comparing( e -> e.getValue().lastAccess ) )
-                .ifPresent( oldest -> entries.remove( oldest.getKey(), oldest.getValue() ) );
+                .ifPresent( oldest -> remove( oldest.getKey(), oldest.getValue() ) );
         }
     }
 
