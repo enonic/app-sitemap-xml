@@ -34,7 +34,7 @@ interface SitemapParams {
 
 interface SitemapResponse {
 	getStatus(): number
-	getBody(): string | null
+	getBody(): object | null
 	getRetryAfter(): number
 }
 
@@ -120,6 +120,6 @@ export function get(request: Request<{
 	}
 	return {
 		body: result.getBody(),
-		contentType: isJson ? 'application/json' : 'text/xml',
+		contentType: isJson ? 'application/json; charset=utf-8' : 'text/xml; charset=utf-8',
 	};
 }

@@ -8,6 +8,8 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.google.common.io.ByteSource;
+
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -40,7 +42,7 @@ public final class SitemapBean
         return respond( params, sitemap -> Optional.of( sitemap.json() ) );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         try
         {

@@ -60,7 +60,7 @@ The sitemap lists published content only: it is always generated from the `maste
 
 Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `429 Too Many Requests` with a `Retry-After` header.
 
-The cache is per cluster node and is emptied when the app is restarted.
+Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap), and streamed from there. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
 
 ### Mappings
 

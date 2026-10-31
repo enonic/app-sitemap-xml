@@ -1,20 +1,22 @@
 package com.enonic.app.sitemapxml;
 
+import com.google.common.io.ByteSource;
+
 public final class SitemapResponse
 {
     static final int RETRY_AFTER_SECONDS = 10;
 
     private final int status;
 
-    private final String body;
+    private final ByteSource body;
 
-    private SitemapResponse( final int status, final String body )
+    private SitemapResponse( final int status, final ByteSource body )
     {
         this.status = status;
         this.body = body;
     }
 
-    static SitemapResponse ok( final String body )
+    static SitemapResponse ok( final ByteSource body )
     {
         return new SitemapResponse( 200, body );
     }
@@ -34,7 +36,7 @@ public final class SitemapResponse
         return status;
     }
 
-    public String getBody()
+    public ByteSource getBody()
     {
         return body;
     }

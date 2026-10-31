@@ -1,10 +1,12 @@
 package com.enonic.app.sitemapxml;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -25,6 +27,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SitemapBeanTest
 {
+    @TempDir
+    private Path temp;
+
     @Mock
     private ContentService contentService;
 
@@ -49,13 +54,13 @@ class SitemapBeanTest
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
         when( cache.get( any(), any(), any() ) ).thenReturn(
-            new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
+            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
         final SitemapBean bean = bean();
 
-        assertThat( inContext( () -> bean.root( scriptValue() ) ).getBody() ).contains( "<sitemapindex" );
-        assertThat( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ).contains( "https://example.com/b" );
+        assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
+        assertThat( SitemapTest.text( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ) ).contains( "https://example.com/b" );
         assertThat( inContext( () -> bean.file( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
-        assertThat( inContext( () -> bean.json( scriptValue() ) ).getBody() ).startsWith( "[{" );
+        assertThat( SitemapTest.text( inContext( () -> bean.json( scriptValue() ) ).getBody() ) ).startsWith( "[{" );
         assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
     }
 
@@ -63,7 +68,7 @@ class SitemapBeanTest
     void keysByContext()
     {
         when( cache.get( any(), any(), any() ) ).thenReturn(
-            new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
+            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
 
         inContext( () -> bean().root( scriptValue() ) );
 
@@ -78,7 +83,7 @@ class SitemapBeanTest
     void readsPublishedContentWhenRequestedFromDraft()
     {
         when( cache.get( any(), any(), any() ) ).thenReturn(
-            new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
+            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
 
         ContextBuilder.create()
             .repositoryId( "com.enonic.cms.project" )
