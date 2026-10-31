@@ -9,7 +9,7 @@ import java.util.function.Function;
 
 import org.jspecify.annotations.Nullable;
 
-import com.enonic.xp.node.NodeService;
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -23,7 +23,7 @@ public final class SitemapBean
     @Override
     public void initialize( final BeanContext context )
     {
-        this.service = new SitemapService( context.getService( NodeService.class ).get(), context.getService( PortalUrlService.class ).get(),
+        this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( PortalUrlService.class ).get(),
                                            context.getService( SitemapCache.class ).get(), Clock.systemUTC() );
     }
 
@@ -53,7 +53,7 @@ public final class SitemapBean
         }
         catch ( SitemapBusyException e )
         {
-            return SitemapResponse.busy();
+            return SitemapResponse.tooManyRequests();
         }
     }
 

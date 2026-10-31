@@ -4,11 +4,15 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class Sitemap
 {
@@ -20,16 +24,51 @@ public final class Sitemap
 
     private static final char[] HEX = "0123456789ABCDEF".toCharArray();
 
+    static final long MAX_FILE_BYTES = 50L * 1024 * 1024;
+
+    static final int MAX_FILES = 50_000;
+
+    static final int MAX_LOC_LENGTH = 2_048;
+
+    private static final Logger LOG = LoggerFactory.getLogger( Sitemap.class );
+
+    private static final String URLSET_START = XML_DECLARATION + "<urlset xmlns=\"" + NAMESPACE + "\">";
+
+    private static final String URLSET_END = "</urlset>";
+
+    private static final String INDEX_START = XML_DECLARATION + "<sitemapindex xmlns=\"" + NAMESPACE + "\">";
+
+    private static final String INDEX_END = "</sitemapindex>";
+
     private final SitemapParams params;
 
     private final List<SitemapEntry> entries;
+
+    private final List<List<SitemapEntry>> files;
 
     private final ConcurrentMap<Integer, String> rendered = new ConcurrentHashMap<>();
 
     public Sitemap( final SitemapParams params, final List<SitemapEntry> entries )
     {
+        this( params, entries, MAX_FILE_BYTES );
+    }
+
+    Sitemap( final SitemapParams params, final List<SitemapEntry> entries, final long maxFileBytes )
+    {
         this.params = params;
-        this.entries = List.copyOf( entries );
+        final List<SitemapEntry> valid = entries.stream().filter( entry -> loc( entry ).length() <= MAX_LOC_LENGTH ).toList();
+        if ( valid.size() < entries.size() )
+        {
+            LOG.warn( "Sitemap of {}: {} URLs longer than {} characters left out", params.sitePath(), entries.size() - valid.size(),
+                      MAX_LOC_LENGTH );
+        }
+        this.files = split( valid, maxFileBytes );
+        this.entries = files.stream().flatMap( List::stream ).toList();
+        if ( this.entries.size() < valid.size() )
+        {
+            LOG.warn( "Sitemap of {}: {} URLs left out, a sitemap index lists at most {} files", params.sitePath(),
+                      valid.size() - this.entries.size(), MAX_FILES );
+        }
     }
 
     public int size()
@@ -39,7 +78,7 @@ public final class Sitemap
 
     public int fileCount()
     {
-        return Math.max( 1, ( entries.size() + params.urlsPerFile() - 1 ) / params.urlsPerFile() );
+        return files.size();
     }
 
     public boolean isIndex()
@@ -49,7 +88,7 @@ public final class Sitemap
 
     public String root()
     {
-        return rendered.computeIfAbsent( 0, n -> isIndex() ? index() : urlset( entries ) );
+        return rendered.computeIfAbsent( 0, n -> isIndex() ? index() : urlset( files.getFirst() ) );
     }
 
     public Optional<String> file( final int number )
@@ -58,7 +97,7 @@ public final class Sitemap
         {
             return Optional.empty();
         }
-        return Optional.of( rendered.computeIfAbsent( number, n -> urlset( fileEntries( n ) ) ) );
+        return Optional.of( rendered.computeIfAbsent( number, n -> urlset( files.get( n - 1 ) ) ) );
     }
 
     public String fileUrl( final int number )
@@ -68,20 +107,12 @@ public final class Sitemap
 
     public String index()
     {
-        final StringBuilder xml = new StringBuilder( XML_DECLARATION ).append( "<sitemapindex xmlns=\"" ).append( NAMESPACE ).append( "\">" );
+        final StringBuilder xml = new StringBuilder( INDEX_START );
         for ( int number = 1; number <= fileCount(); number++ )
         {
-            xml.append( "<sitemap><loc>" );
-            escapeXml( xml, fileUrl( number ) );
-            xml.append( "</loc>" );
-            fileEntries( number ).stream()
-                .map( SitemapEntry::lastModified )
-                .filter( Objects::nonNull )
-                .max( Instant::compareTo )
-                .ifPresent( lastModified -> xml.append( "<lastmod>" ).append( DATE.format( lastModified ) ).append( "</lastmod>" ) );
-            xml.append( "</sitemap>" );
+            indexEntry( xml, number );
         }
-        return xml.append( "</sitemapindex>" ).toString();
+        return xml.append( INDEX_END ).toString();
     }
 
     public String json()
@@ -128,32 +159,127 @@ public final class Sitemap
         return url.toString();
     }
 
-    private List<SitemapEntry> fileEntries( final int number )
+    private List<List<SitemapEntry>> split( final List<SitemapEntry> valid, final long maxFileBytes )
     {
-        final int from = ( number - 1 ) * params.urlsPerFile();
-        return entries.subList( from, Math.min( from + params.urlsPerFile(), entries.size() ) );
+        final long available = maxFileBytes - utf8Length( URLSET_START ) - utf8Length( URLSET_END );
+        final List<List<SitemapEntry>> result = new ArrayList<>();
+        List<SitemapEntry> current = new ArrayList<>();
+        long currentBytes = 0;
+        for ( final SitemapEntry entry : valid )
+        {
+            final StringBuilder url = new StringBuilder();
+            url( url, entry );
+            final long bytes = utf8Length( url );
+            if ( !current.isEmpty() && ( current.size() >= params.urlsPerFile() || currentBytes + bytes > available ) )
+            {
+                result.add( current );
+                current = new ArrayList<>();
+                currentBytes = 0;
+            }
+            current.add( entry );
+            currentBytes += bytes;
+        }
+        result.add( current );
+        return limitIndex( result );
+    }
+
+    private List<List<SitemapEntry>> limitIndex( final List<List<SitemapEntry>> split )
+    {
+        if ( split.size() == 1 )
+        {
+            return List.of( List.copyOf( split.getFirst() ) );
+        }
+        final long available = MAX_FILE_BYTES - utf8Length( INDEX_START ) - utf8Length( INDEX_END );
+        final List<List<SitemapEntry>> result = new ArrayList<>();
+        long bytes = 0;
+        for ( final List<SitemapEntry> file : split )
+        {
+            if ( result.size() == MAX_FILES )
+            {
+                break;
+            }
+            final StringBuilder entry = new StringBuilder();
+            indexEntry( entry, result.size() + 1, file );
+            bytes += utf8Length( entry );
+            if ( bytes > available )
+            {
+                break;
+            }
+            result.add( List.copyOf( file ) );
+        }
+        return List.copyOf( result );
+    }
+
+    private void indexEntry( final StringBuilder xml, final int number )
+    {
+        indexEntry( xml, number, files.get( number - 1 ) );
+    }
+
+    private void indexEntry( final StringBuilder xml, final int number, final List<SitemapEntry> fileEntries )
+    {
+        xml.append( "<sitemap><loc>" );
+        escapeXml( xml, fileUrl( number ) );
+        xml.append( "</loc>" );
+        fileEntries.stream()
+            .map( SitemapEntry::lastModified )
+            .filter( Objects::nonNull )
+            .max( Instant::compareTo )
+            .ifPresent( lastModified -> xml.append( "<lastmod>" ).append( DATE.format( lastModified ) ).append( "</lastmod>" ) );
+        xml.append( "</sitemap>" );
+    }
+
+    private void url( final StringBuilder xml, final SitemapEntry entry )
+    {
+        final ContentTypeSetting setting = params.setting( entry.contentType() );
+        xml.append( "<url><loc>" );
+        escapeXml( xml, loc( entry ) );
+        xml.append( "</loc>" );
+        if ( entry.lastModified() != null )
+        {
+            xml.append( "<lastmod>" ).append( DATE.format( entry.lastModified() ) ).append( "</lastmod>" );
+        }
+        xml.append( "<changefreq>" );
+        escapeXml( xml, setting.changefreq() );
+        xml.append( "</changefreq><priority>" );
+        escapeXml( xml, setting.priority() );
+        xml.append( "</priority></url>" );
+    }
+
+    static long utf8Length( final CharSequence value )
+    {
+        long bytes = 0;
+        for ( int i = 0; i < value.length(); i++ )
+        {
+            final char c = value.charAt( i );
+            if ( c < 0x80 )
+            {
+                bytes += 1;
+            }
+            else if ( c < 0x800 )
+            {
+                bytes += 2;
+            }
+            else if ( Character.isHighSurrogate( c ) )
+            {
+                bytes += 4;
+                i++;
+            }
+            else
+            {
+                bytes += 3;
+            }
+        }
+        return bytes;
     }
 
     private String urlset( final List<SitemapEntry> fileEntries )
     {
-        final StringBuilder xml = new StringBuilder( XML_DECLARATION ).append( "<urlset xmlns=\"" ).append( NAMESPACE ).append( "\">" );
+        final StringBuilder xml = new StringBuilder( URLSET_START );
         for ( final SitemapEntry entry : fileEntries )
         {
-            final ContentTypeSetting setting = params.setting( entry.contentType() );
-            xml.append( "<url><loc>" );
-            escapeXml( xml, loc( entry ) );
-            xml.append( "</loc>" );
-            if ( entry.lastModified() != null )
-            {
-                xml.append( "<lastmod>" ).append( DATE.format( entry.lastModified() ) ).append( "</lastmod>" );
-            }
-            xml.append( "<changefreq>" );
-            escapeXml( xml, setting.changefreq() );
-            xml.append( "</changefreq><priority>" );
-            escapeXml( xml, setting.priority() );
-            xml.append( "</priority></url>" );
+            url( xml, entry );
         }
-        return xml.append( "</urlset>" ).toString();
+        return xml.append( URLSET_END ).toString();
     }
 
     private String baseUrl()

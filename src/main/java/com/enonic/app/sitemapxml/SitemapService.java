@@ -11,9 +11,9 @@ import org.slf4j.LoggerFactory;
 
 import com.enonic.xp.branch.Branch;
 import com.enonic.xp.content.ContentPath;
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
-import com.enonic.xp.node.NodeService;
 import com.enonic.xp.portal.url.PortalScopeParams;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
@@ -24,7 +24,7 @@ public final class SitemapService
 {
     private static final Logger LOG = LoggerFactory.getLogger( SitemapService.class );
 
-    private final NodeService nodeService;
+    private final ContentService contentService;
 
     private final PortalUrlService portalUrlService;
 
@@ -32,10 +32,10 @@ public final class SitemapService
 
     private final Clock clock;
 
-    public SitemapService( final NodeService nodeService, final PortalUrlService portalUrlService, final SitemapCache cache,
+    public SitemapService( final ContentService contentService, final PortalUrlService portalUrlService, final SitemapCache cache,
                            final Clock clock )
     {
-        this.nodeService = nodeService;
+        this.contentService = contentService;
         this.portalUrlService = portalUrlService;
         this.cache = cache;
         this.clock = clock;
@@ -53,7 +53,7 @@ public final class SitemapService
             .orElse( requested ) : requested;
 
         return cache.get( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals, params ), context.getAuthInfo(),
-                          () -> new SitemapQuery( nodeService, params, clock.instant() ).execute() );
+                          () -> new SitemapQuery( contentService, params, clock.instant() ).execute() );
     }
 
     private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )

@@ -26,9 +26,9 @@ public final class SitemapResponse
         return new SitemapResponse( 404, null );
     }
 
-    static SitemapResponse busy()
+    static SitemapResponse tooManyRequests()
     {
-        return new SitemapResponse( 503, null );
+        return new SitemapResponse( 429, null );
     }
 
     public int getStatus()
@@ -43,6 +43,6 @@ public final class SitemapResponse
 
     public int getRetryAfter()
     {
-        return status == 503 ? RETRY_AFTER_SECONDS : 0;
+        return status == 429 ? RETRY_AFTER_SECONDS : 0;
     }
 }

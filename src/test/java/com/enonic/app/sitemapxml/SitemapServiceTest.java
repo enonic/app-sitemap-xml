@@ -14,9 +14,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.enonic.xp.app.ApplicationKey;
 import com.enonic.xp.branch.Branch;
 import com.enonic.xp.content.ContentPath;
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
-import com.enonic.xp.node.NodeService;
 import com.enonic.xp.portal.url.PortalScope;
 import com.enonic.xp.portal.url.PortalScopeParams;
 import com.enonic.xp.portal.url.PortalUrlService;
@@ -40,7 +40,7 @@ class SitemapServiceTest
         new SitemapParams( "/mysite", "https://request.example.com/mysite", List.of(), List.of(), 10, 10 );
 
     @Mock
-    private NodeService nodeService;
+    private ContentService contentService;
 
     @Mock
     private PortalUrlService portalUrlService;
@@ -88,13 +88,13 @@ class SitemapServiceTest
     }
 
     @Test
-    void beanAnswers503WhenBusy()
+    void beanAnswers429WhenBusy()
     {
         when( cache.get( any(), any(), any() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
-        assertThat( response.getStatus() ).isEqualTo( 503 );
+        assertThat( response.getStatus() ).isEqualTo( 429 );
         assertThat( response.getRetryAfter() ).isEqualTo( SitemapResponse.RETRY_AFTER_SECONDS );
         assertThat( response.getBody() ).isNull();
     }
@@ -117,7 +117,7 @@ class SitemapServiceTest
 
     private SitemapCache.Key sitemap( final boolean preferBaseUrl )
     {
-        inContext( () -> new SitemapService( nodeService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, preferBaseUrl ) );
+        inContext( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, preferBaseUrl ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
         return key.getValue();
@@ -126,7 +126,7 @@ class SitemapServiceTest
     private SitemapBean bean()
     {
         final BeanContext context = mock( BeanContext.class );
-        when( context.getService( NodeService.class ) ).thenReturn( () -> nodeService );
+        when( context.getService( ContentService.class ) ).thenReturn( () -> contentService );
         when( context.getService( PortalUrlService.class ) ).thenReturn( () -> portalUrlService );
         when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
         final SitemapBean bean = new SitemapBean();
