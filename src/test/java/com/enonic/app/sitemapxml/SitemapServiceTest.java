@@ -1,17 +1,17 @@
 package com.enonic.app.sitemapxml;
 
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import com.google.common.io.ByteSource;
 
 import com.enonic.xp.app.ApplicationKey;
 import com.enonic.xp.branch.Branch;
@@ -40,6 +40,9 @@ class SitemapServiceTest
 {
     private static final SitemapParams PARAMS =
         new SitemapParams( "/mysite", "https://request.example.com/mysite", List.of(), List.of(), 10, 10 );
+
+    @TempDir
+    private Path temp;
 
     @Mock
     private ContentService contentService;
@@ -122,16 +125,16 @@ class SitemapServiceTest
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
         when( cache.get( any(), any(), any() ) ).thenReturn(
-            new Sitemap( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
+            Sitemap.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
         final SitemapBean bean = bean();
 
-        assertThat( (String) inContext( () -> bean.root( scriptValue() ) ).getBody() ).contains( "<sitemapindex" );
-        assertThat( (String) inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ).contains( "https://example.com/b" );
+        assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
+        assertThat( SitemapTest.text( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ) ).contains( "https://example.com/b" );
         assertThat( inContext( () -> bean.file( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
-        assertThat( (String) inContext( () -> bean.json( scriptValue() ) ).getBody() ).startsWith( "[{" );
+        assertThat( SitemapTest.text( inContext( () -> bean.json( scriptValue() ) ).getBody() ) ).startsWith( "[{" );
         assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
-        assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isInstanceOf( ByteSource.class );
-        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isInstanceOf( ByteSource.class );
+        assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isNotNull();
+        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.fileGzip( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
     }
 

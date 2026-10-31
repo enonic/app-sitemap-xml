@@ -10,22 +10,17 @@ public final class SitemapResponse
 
     private final int status;
 
-    private final @Nullable Object body;
+    private final @Nullable ByteSource body;
 
-    private SitemapResponse( final int status, final @Nullable Object body )
+    private SitemapResponse( final int status, final @Nullable ByteSource body )
     {
         this.status = status;
         this.body = body;
     }
 
-    static SitemapResponse ok( final String body )
+    static SitemapResponse ok( final ByteSource body )
     {
         return new SitemapResponse( 200, body );
-    }
-
-    static SitemapResponse ok( final byte[] body )
-    {
-        return new SitemapResponse( 200, ByteSource.wrap( body ) );
     }
 
     static SitemapResponse notFound()
@@ -43,7 +38,7 @@ public final class SitemapResponse
         return status;
     }
 
-    public @Nullable Object getBody()
+    public @Nullable ByteSource getBody()
     {
         return body;
     }

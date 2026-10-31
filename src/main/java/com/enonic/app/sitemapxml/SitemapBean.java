@@ -9,6 +9,8 @@ import java.util.function.Function;
 
 import org.jspecify.annotations.Nullable;
 
+import com.google.common.io.ByteSource;
+
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.script.ScriptValue;
@@ -44,32 +46,22 @@ public final class SitemapBean
 
     public SitemapResponse rootGzip( final ScriptValue params )
     {
-        return respondBytes( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
     }
 
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
-        return respondBytes( params, sitemap -> sitemap.fileGzip( number ) );
+        return respond( params, sitemap -> sitemap.fileGzip( number ) );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<String>> body )
-    {
-        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
-    }
-
-    private SitemapResponse respondBytes( final ScriptValue params, final Function<Sitemap, Optional<byte[]>> body )
-    {
-        return respondWith( params, sitemap -> body.apply( sitemap ).map( SitemapResponse::ok ) );
-    }
-
-    private SitemapResponse respondWith( final ScriptValue params, final Function<Sitemap, Optional<SitemapResponse>> response )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         final Map<String, Object> map = params.getMap();
         try
         {
             final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
                 .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "preferBaseUrl" ) ) );
-            return response.apply( sitemap ).orElseGet( SitemapResponse::notFound );
+            return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
         }
         catch ( SitemapBusyException e )
         {

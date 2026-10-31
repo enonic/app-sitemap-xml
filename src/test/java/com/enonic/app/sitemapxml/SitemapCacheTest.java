@@ -1,5 +1,8 @@
 package com.enonic.app.sitemapxml;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,7 +23,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.event.Event;
@@ -45,7 +50,16 @@ class SitemapCacheTest
 
     private final MutableClock clock = new MutableClock( Instant.parse( "2024-01-01T00:00:00Z" ) );
 
-    private final SitemapCache cache = new SitemapCache( executor, clock, Duration.ZERO );
+    @TempDir
+    private Path storage;
+
+    private SitemapCache cache;
+
+    @BeforeEach
+    void setUp()
+    {
+        cache = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+    }
 
     @AfterEach
     void shutdown()
@@ -285,6 +299,50 @@ class SitemapCacheTest
         cache.get( new SitemapCache.Key( "repo" + SitemapCache.MAX_ENTRIES, "master", Set.of(), PARAMS ), AUTH_INFO, this::generate );
         cache.get( new SitemapCache.Key( "repo0", "master", Set.of(), PARAMS ), AUTH_INFO, this::generate );
         assertThat( generated ).hasValue( SitemapCache.MAX_ENTRIES + 2 );
+    }
+
+    @Test
+    void writesSitemapsToStorageAndDeletesReplacedFiles()
+        throws IOException
+    {
+        final Sitemap first = cache.get( KEY, AUTH_INFO, this::generate );
+        assertThat( first.directory() ).startsWith( storage ).isDirectory();
+
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+        awaitUntil( () -> generated.get() == 2 );
+        awaitUntil( () -> !Files.exists( first.directory() ) );
+
+        final Sitemap second = cache.get( KEY, AUTH_INFO, this::generate );
+        assertThat( second.directory() ).isDirectory();
+        try (var dirs = Files.list( storage ))
+        {
+            assertThat( dirs ).containsExactly( second.directory() );
+        }
+    }
+
+    @Test
+    void deletesFilesOfRemovedSitemaps()
+    {
+        final Sitemap sitemap = cache.get( KEY, AUTH_INFO, this::generate );
+        clock.now = clock.now.plus( SitemapCache.IDLE_TIMEOUT ).plusSeconds( 1 );
+
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+
+        awaitUntil( () -> !Files.exists( sitemap.directory() ) );
+    }
+
+    @Test
+    void cleansStorageOnStartAndStop()
+        throws IOException
+    {
+        final Path stale = Files.createDirectories( storage.resolve( "stale" ) );
+        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        assertThat( stale ).doesNotExist();
+
+        restarted.get( KEY, AUTH_INFO, this::generate );
+        restarted.deactivate();
+
+        assertThat( storage ).doesNotExist();
     }
 
     private SitemapContents generate()
