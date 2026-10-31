@@ -31,12 +31,19 @@ interface SitemapParams {
 	ignorePatterns: string[]
 	maxItems: number
 	urlsPerFile: number
+	preferBaseUrl: boolean
+}
+
+interface SitemapResponse {
+	getStatus(): number
+	getBody(): string | null
+	getRetryAfter(): number
 }
 
 interface SitemapBean {
-	root(params: ScriptValue): string
-	file(params: ScriptValue, number: number): string | null
-	json(params: ScriptValue): string
+	root(params: ScriptValue): SitemapResponse
+	file(params: ScriptValue, number: number): SitemapResponse
+	json(params: ScriptValue): SitemapResponse
 }
 
 const FILE_PATH_REGEXP = /\/sitemap-(\d+)\.xml$/;
@@ -84,35 +91,40 @@ export function get(request: Request<{
 		ignorePatterns: (ignoreList ? forceArray(ignoreList) : []).map(({path}) => path || ''),
 		maxItems: toInt(maxItems, DEFAULT_MAX_ITEMS, MAX_ITEMS_LIMIT),
 		urlsPerFile: toInt(urlsPerFile, MAX_URLS_PER_FILE, MAX_URLS_PER_FILE),
+		// Without "Base URL" override, a Base URL configured for the site in XP is used when present,
+		// so the sitemap is the same whichever host it is requested from.
+		preferBaseUrl: !overrideDomain,
 	};
 
 	const bean = __.newBean<SitemapBean>('com.enonic.app.sitemapxml.SitemapBean');
 	const scriptParams = __.toScriptValue(params);
 
-	if (request.headers['Content-Type'] === 'application/json') {
-		return {
-			body: bean.json(scriptParams),
-			contentType: 'application/json',
-		};
-	}
-
+	const isJson = request.headers['Content-Type'] === 'application/json';
 	const fileMatch = FILE_PATH_REGEXP.exec(request.path);
-	if (fileMatch) {
-		const body = bean.file(scriptParams, parseInt(fileMatch[1], 10));
-		if (body === null) {
-			return {
-				body: null,
-				status: 404,
-			};
-		}
+	const result = isJson
+		? bean.json(scriptParams)
+		: fileMatch
+			? bean.file(scriptParams, parseInt(fileMatch[1], 10))
+			: bean.root(scriptParams);
+
+	const status = result.getStatus();
+	if (status === 503) {
+		// A body is needed, otherwise XP renders its own error page without the Retry-After header.
 		return {
-			body,
-			contentType: 'text/xml',
+			body: 'Too many sitemap requests in progress, retry later.',
+			contentType: 'text/plain',
+			headers: {'Retry-After': String(result.getRetryAfter())},
+			status,
 		};
 	}
-
+	if (status !== 200) {
+		return {
+			body: null,
+			status,
+		};
+	}
 	return {
-		body: bean.root(scriptParams),
-		contentType: 'text/xml',
+		body: result.getBody(),
+		contentType: isJson ? 'application/json' : 'text/xml',
 	};
 }

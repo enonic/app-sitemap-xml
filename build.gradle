@@ -8,6 +8,7 @@ plugins {
 dependencies {
 	implementation xplibs.api.core
 	implementation xplibs.api.script
+	implementation xplibs.api.portal
 
 	include xplibs.context
 	include xplibs.content

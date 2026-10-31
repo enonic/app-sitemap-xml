@@ -29,6 +29,11 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
         ignorePatterns = ignorePatterns.stream().filter( pattern -> !pattern.isBlank() ).toList();
     }
 
+    public SitemapParams withSiteUrl( final String url )
+    {
+        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns, maxItems, urlsPerFile );
+    }
+
     public ContentTypeSetting setting( final String contentType )
     {
         return contentTypes.stream()

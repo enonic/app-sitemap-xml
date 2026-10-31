@@ -7,6 +7,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public final class Sitemap
 {
@@ -21,6 +23,8 @@ public final class Sitemap
     private final SitemapParams params;
 
     private final List<SitemapEntry> entries;
+
+    private final ConcurrentMap<Integer, String> rendered = new ConcurrentHashMap<>();
 
     public Sitemap( final SitemapParams params, final List<SitemapEntry> entries )
     {
@@ -45,7 +49,7 @@ public final class Sitemap
 
     public String root()
     {
-        return isIndex() ? index() : urlset( entries );
+        return rendered.computeIfAbsent( 0, n -> isIndex() ? index() : urlset( entries ) );
     }
 
     public Optional<String> file( final int number )
@@ -54,7 +58,7 @@ public final class Sitemap
         {
             return Optional.empty();
         }
-        return Optional.of( urlset( fileEntries( number ) ) );
+        return Optional.of( rendered.computeIfAbsent( number, n -> urlset( fileEntries( n ) ) ) );
     }
 
     public String fileUrl( final int number )

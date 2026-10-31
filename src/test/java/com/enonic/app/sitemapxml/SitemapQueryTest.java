@@ -14,19 +14,23 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
+import com.enonic.xp.index.FieldValues;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.node.FindNodesByQueryResult;
 import com.enonic.xp.node.Node;
 import com.enonic.xp.node.NodeHit;
 import com.enonic.xp.node.NodeId;
 import com.enonic.xp.node.NodeIds;
+import com.enonic.xp.node.NodeIndexPath;
 import com.enonic.xp.node.NodePath;
 import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.node.NodeService;
 import com.enonic.xp.node.Nodes;
+import com.enonic.xp.sortvalues.SortValuesProperty;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,6 +61,49 @@ class SitemapQueryTest
         assertThat( mustNot.get( 0 ).getSet( "term" ).getBoolean( "value" ) ).isTrue();
         assertThat( mustNot.subList( 1, 4 ) ).extracting( set -> set.getSet( "like" ).getString( "value" ) )
             .containsExactly( "/content/mysite/skip", "*/foo", "/content/mysite/bar" );
+    }
+
+    @Test
+    void readsPathTypeAndModifiedTimeFromIndex()
+    {
+        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
+                                                        List.of( new ContentTypeSetting( "com.example:MyType", "", "" ) ), List.of(), 10,
+                                                        10 );
+        final FindNodesByQueryResult result = FindNodesByQueryResult.create()
+            .addNodeHit( indexedHit( "a", "/content/mysite/a", "2024-02-02T09:01:33.169382938Z", "com.example:mytype" ) )
+            .addNodeHit( indexedHit( "site", "/content/mysite", "2024-01-01T00:00:00Z", "portal:site" ) )
+            .addNodeHit( indexedHit( "other", "/content/mysiteother/b", "2024-01-01T00:00:00Z", "portal:site" ) )
+            .totalHits( 3 )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( result );
+
+        final SitemapContents contents = draft( () -> new SitemapQuery( nodeService, params, NOW ).execute() );
+
+        assertThat( contents.entries() ).containsExactly(
+            new SitemapEntry( "/a", "com.example:MyType", Instant.parse( "2024-02-02T09:01:33.169382938Z" ) ),
+            new SitemapEntry( "", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ) );
+        verify( nodeService, never() ).getByIds( any( NodeIds.class ) );
+
+        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
+        verify( nodeService ).findByQuery( query.capture() );
+        assertThat( query.getValue().getReturnFields() ).containsExactly( NodeIndexPath.PATH );
+        assertThat( query.getValue().getOrderBys() ).extracting( Object::toString ).containsExactly( "modifiedtime DESC", "type ASC" );
+    }
+
+    @Test
+    void loadsNodesWhenIndexValuesAreMissing()
+    {
+        final Node node = node( "a", "/content/mysite/a", "base:folder" );
+        final FindNodesByQueryResult result = FindNodesByQueryResult.create()
+            .addNodeHit( indexedHit( "a", "/content/mysite/a", "not a date", "base:folder" ) )
+            .totalHits( 1 )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( result );
+        when( nodeService.getByIds( NodeIds.from( node.id() ) ) ).thenReturn( Nodes.from( node ) );
+
+        final SitemapContents contents = draft( () -> new SitemapQuery( nodeService, params( 10 ), NOW ).execute() );
+
+        assertThat( contents.entries() ).containsExactly( new SitemapEntry( "/a", "base:folder", NOW ) );
     }
 
     @Test
@@ -161,6 +208,15 @@ class SitemapQueryTest
         final FindNodesByQueryResult.Builder result = FindNodesByQueryResult.create().totalHits( nodes.size() );
         nodes.forEach( node -> result.addNodeHit( NodeHit.create().nodeId( node.id() ).build() ) );
         return result.build();
+    }
+
+    private static NodeHit indexedHit( final String id, final String path, final String modifiedTime, final String type )
+    {
+        return NodeHit.create()
+            .nodeId( NodeId.from( id ) )
+            .fields( FieldValues.create().add( "_path", List.of( path ) ).build() )
+            .sort( SortValuesProperty.create().values( modifiedTime, type ).build() )
+            .build();
     }
 
     private static Node node( final String id, final String path, final String type )

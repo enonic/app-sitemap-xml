@@ -2,38 +2,75 @@ package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.enonic.xp.branch.Branch;
+import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.node.NodeService;
+import com.enonic.xp.portal.url.PortalScopeParams;
+import com.enonic.xp.portal.url.PortalUrlService;
+import com.enonic.xp.project.ProjectName;
+import com.enonic.xp.repository.RepositoryId;
 import com.enonic.xp.security.PrincipalKey;
 
 public final class SitemapService
 {
+    private static final Logger LOG = LoggerFactory.getLogger( SitemapService.class );
+
     private final NodeService nodeService;
+
+    private final PortalUrlService portalUrlService;
 
     private final SitemapCache cache;
 
     private final Clock clock;
 
-    public SitemapService( final NodeService nodeService, final SitemapCache cache, final Clock clock )
+    public SitemapService( final NodeService nodeService, final PortalUrlService portalUrlService, final SitemapCache cache,
+                           final Clock clock )
     {
         this.nodeService = nodeService;
+        this.portalUrlService = portalUrlService;
         this.cache = cache;
         this.clock = clock;
     }
 
-    public Sitemap sitemap( final SitemapParams params )
+    public Sitemap sitemap( final SitemapParams requested, final boolean preferBaseUrl )
     {
         final Context context = ContextAccessor.current();
-        final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
-        final String branch = Objects.requireNonNull( context.getBranch(), "No branch in context" ).getValue();
+        final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
+        final Branch branch = Objects.requireNonNull( context.getBranch(), "No branch in context" );
         final Set<String> principals =
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
-        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ),
+        final SitemapParams params = preferBaseUrl ? baseUrl( repositoryId, branch, requested.sitePath() ).map( requested::withSiteUrl )
+            .orElse( requested ) : requested;
+
+        return cache.get( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals, params ), context.getAuthInfo(),
                           () -> new SitemapQuery( nodeService, params, clock.instant() ).execute() );
+    }
+
+    private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
+    {
+        try
+        {
+            return Optional.ofNullable( portalUrlService.portalScope( PortalScopeParams.create()
+                                                                          .setProjectName( ProjectName.from( repositoryId ) )
+                                                                          .setBranch( branch )
+                                                                          .setContentPath( ContentPath.from(
+                                                                              sitePath.isEmpty() ? "/" : sitePath ) )
+                                                                          .build() ).getBaseUrl() );
+        }
+        catch ( RuntimeException e )
+        {
+            LOG.debug( "Could not resolve Base URL of {}", sitePath, e );
+            return Optional.empty();
+        }
     }
 }

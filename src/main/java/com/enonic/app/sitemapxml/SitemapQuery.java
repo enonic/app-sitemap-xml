@@ -1,12 +1,17 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
+
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.enonic.xp.content.ContentConstants;
 import com.enonic.xp.context.ContextAccessor;
@@ -18,6 +23,7 @@ import com.enonic.xp.node.Node;
 import com.enonic.xp.node.NodeHit;
 import com.enonic.xp.node.NodeId;
 import com.enonic.xp.node.NodeIds;
+import com.enonic.xp.node.NodeIndexPath;
 import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.node.NodeService;
 import com.enonic.xp.query.expr.DslExpr;
@@ -32,6 +38,8 @@ public final class SitemapQuery
 {
     static final int ES_MAX_RESULT_WINDOW = 10_000;
 
+    private static final Logger LOG = LoggerFactory.getLogger( SitemapQuery.class );
+
     static final int FETCH_BATCH_SIZE = 1_000;
 
     private static final String CONTENT_ROOT = "/content";
@@ -41,6 +49,10 @@ public final class SitemapQuery
     private static final String PUBLISH_FROM = "publish.from";
 
     private static final String PUBLISH_TO = "publish.to";
+
+    private static final IndexPath MODIFIED_TIME = IndexPath.from( "modifiedTime" );
+
+    private static final IndexPath TYPE = IndexPath.from( "type" );
 
     private final NodeService nodeService;
 
@@ -60,54 +72,115 @@ public final class SitemapQuery
         final boolean filterPublishTimes = ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() );
 
         final NodeQuery.Builder query = NodeQuery.create()
-            .query( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( IndexPath.from( "modifiedTime" ),
-                                                                                   OrderExpr.Direction.DESC ) ) )
+            .query( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ),
+                                    FieldOrderExpr.create( TYPE, OrderExpr.Direction.ASC ) ) )
+            .returnFields( NodeIndexPath.PATH )
             .size( params.maxItems() <= ES_MAX_RESULT_WINDOW ? params.maxItems() : NodeQuery.ALL_RESULTS_SIZE_FLAG );
         if ( filterPublishTimes )
         {
             onlineFilters().forEach( query::addQueryFilter );
         }
 
-        final List<NodeId> ids = nodeService.findByQuery( query.build() )
-            .getNodeHits()
-            .stream()
-            .limit( params.maxItems() )
-            .map( NodeHit::getNodeId )
-            .toList();
+        final List<NodeHit> hits = nodeService.findByQuery( query.build() ).getNodeHits().stream().limit( params.maxItems() ).toList();
 
         final Instant validUntil = filterPublishTimes ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
             .flatMap( field -> nextChange( field ).stream() )
             .min( Instant::compareTo )
             .orElse( null ) : null;
 
-        return new SitemapContents( fetch( ids ), validUntil );
+        return new SitemapContents( entries( hits ), validUntil );
     }
 
-    private List<SitemapEntry> fetch( final List<NodeId> ids )
+    private List<SitemapEntry> entries( final List<NodeHit> hits )
     {
-        final String siteNodePath = CONTENT_ROOT + params.sitePath();
-        final List<SitemapEntry> entries = new ArrayList<>( ids.size() );
+        final List<@Nullable SitemapEntry> fromIndex = hits.stream().map( this::fromIndex ).toList();
+        final List<NodeId> missing = new ArrayList<>();
+        for ( int i = 0; i < hits.size(); i++ )
+        {
+            if ( fromIndex.get( i ) == null )
+            {
+                missing.add( hits.get( i ).getNodeId() );
+            }
+        }
+        final Map<NodeId, SitemapEntry> loaded = missing.isEmpty() ? Map.of() : load( missing );
+        LOG.debug( "Sitemap of {}: {} entries from index, {} loaded from nodes", params.sitePath(), hits.size() - missing.size(),
+                   missing.size() );
+
+        final List<SitemapEntry> entries = new ArrayList<>( hits.size() );
+        for ( int i = 0; i < hits.size(); i++ )
+        {
+            final SitemapEntry indexed = fromIndex.get( i );
+            final SitemapEntry resolved = indexed != null ? indexed : loaded.get( hits.get( i ).getNodeId() );
+            if ( resolved != null && isInSite( resolved.path() ) )
+            {
+                entries.add( new SitemapEntry( resolved.path().substring( siteNodePath().length() ), resolved.contentType(),
+                                               resolved.lastModified() ) );
+            }
+        }
+        return entries;
+    }
+
+    private @Nullable SitemapEntry fromIndex( final NodeHit hit )
+    {
+        final Optional<String> path = hit.getFields().getSingleValue( NodeIndexPath.PATH ).map( Object::toString );
+        final List<Object> sortValues = hit.getSort() != null ? hit.getSort().getValues() : List.of();
+        if ( path.isEmpty() || sortValues.size() != 2 )
+        {
+            return null;
+        }
+        final Optional<String> type = contentType( String.valueOf( sortValues.get( 1 ) ) );
+        final Optional<Instant> modifiedTime = instant( String.valueOf( sortValues.get( 0 ) ) );
+        if ( type.isEmpty() || modifiedTime.isEmpty() )
+        {
+            return null;
+        }
+        return new SitemapEntry( path.get(), type.get(), modifiedTime.get() );
+    }
+
+    private Optional<String> contentType( final String indexed )
+    {
+        return params.contentTypeNames().stream().filter( type -> type.equalsIgnoreCase( indexed ) ).findFirst();
+    }
+
+    static Optional<Instant> instant( final String indexed )
+    {
+        try
+        {
+            return Optional.of( Instant.parse( indexed ) );
+        }
+        catch ( DateTimeParseException e )
+        {
+            return Optional.empty();
+        }
+    }
+
+    private Map<NodeId, SitemapEntry> load( final List<NodeId> ids )
+    {
+        final Map<NodeId, SitemapEntry> entries = new HashMap<>();
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
         {
             final List<NodeId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
-            final Map<NodeId, Node> nodes = new HashMap<>();
-            nodeService.getByIds( NodeIds.from( batch ) ).forEach( node -> nodes.put( node.id(), node ) );
-            for ( final NodeId id : batch )
+            for ( final Node node : nodeService.getByIds( NodeIds.from( batch ) ) )
             {
-                final Node node = nodes.get( id );
-                if ( node == null )
-                {
-                    continue;
-                }
                 final String type = node.data().getString( "type" );
-                final String path = node.path().toString();
-                if ( type != null && ( path.equals( siteNodePath ) || path.startsWith( siteNodePath + "/" ) ) )
+                if ( type != null )
                 {
-                    entries.add( new SitemapEntry( path.substring( siteNodePath.length() ), type, node.data().getInstant( "modifiedTime" ) ) );
+                    entries.put( node.id(), new SitemapEntry( node.path().toString(), type, node.data().getInstant( "modifiedTime" ) ) );
                 }
             }
         }
         return entries;
+    }
+
+    private boolean isInSite( final String path )
+    {
+        final String siteNodePath = siteNodePath();
+        return path.equals( siteNodePath ) || path.startsWith( siteNodePath + "/" );
+    }
+
+    private String siteNodePath()
+    {
+        return CONTENT_ROOT + params.sitePath();
     }
 
     private Optional<Instant> nextChange( final String field )

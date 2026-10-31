@@ -1,9 +1,11 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -11,12 +13,19 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.event.Event;
+import com.enonic.xp.security.PrincipalKey;
+import com.enonic.xp.security.auth.AuthenticationInfo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,45 +34,116 @@ class SitemapCacheTest
 {
     private static final SitemapParams PARAMS = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 );
 
-    private static final SitemapCache.Key KEY = new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ), PARAMS );
+    private static final SitemapCache.Key KEY =
+        new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ), PARAMS );
+
+    private static final AuthenticationInfo AUTH_INFO = AuthenticationInfo.unAuthenticated();
 
     private final AtomicInteger generated = new AtomicInteger();
 
-    @Test
-    void cachesUntilInvalidatedByNodeEvent()
-    {
-        final SitemapCache cache = new SitemapCache();
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 
-        cache.get( KEY, this::generate );
-        cache.get( KEY, this::generate );
+    private final MutableClock clock = new MutableClock( Instant.parse( "2024-01-01T00:00:00Z" ) );
+
+    private final SitemapCache cache = new SitemapCache( executor, clock, Duration.ZERO );
+
+    @AfterEach
+    void shutdown()
+    {
+        executor.shutdownNow();
+    }
+
+    @Test
+    void generatesOnceAndServesFromCache()
+    {
+        final Sitemap first = cache.get( KEY, AUTH_INFO, this::generate );
+
+        assertThat( cache.get( KEY, AUTH_INFO, this::generate ) ).isSameAs( first );
         assertThat( generated ).hasValue( 1 );
+    }
+
+    @Test
+    void generatesInContextOfKey()
+    {
+        final List<String> seen = new ArrayList<>();
+        final AuthenticationInfo authInfo = AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() ).principals( PrincipalKey.ofAnonymous() ).build();
+
+        cache.get( KEY, authInfo, () -> {
+            seen.add( ContextAccessor.current().getRepositoryId() + " " + ContextAccessor.current().getBranch() + " " +
+                          ContextAccessor.current().getAuthInfo().getPrincipals() );
+            return generate();
+        } );
+
+        assertThat( seen ).containsExactly( "com.enonic.cms.project master " + authInfo.getPrincipals() );
+    }
+
+    @Test
+    void servesStaleSitemapWhileRegeneratingAfterNodeEvent()
+    {
+        final Sitemap first = cache.get( KEY, AUTH_INFO, this::generate );
 
         cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.other", "master" ) );
         cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "draft" ) );
-        cache.get( KEY, this::generate );
+        awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
         cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        cache.get( KEY, this::generate );
+        awaitUntil( () -> generated.get() == 2 );
+        awaitIdle();
+
+        final Sitemap regenerated = cache.get( KEY, AUTH_INFO, this::generate );
+        assertThat( regenerated ).isNotSameAs( first );
         assertThat( generated ).hasValue( 2 );
     }
 
     @Test
-    void invalidatedByRepositoryEvent()
+    void returnsPreviousSitemapUntilRegenerationCompletes()
+        throws Exception
     {
-        final SitemapCache cache = new SitemapCache();
-        cache.get( KEY, this::generate );
+        final Sitemap first = cache.get( KEY, AUTH_INFO, this::generate );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        final SitemapCache.Key key = KEY;
+        final CountDownLatch started = new CountDownLatch( 1 );
+        executor.submit( () -> {
+            started.countDown();
+            await( release );
+        } );
+        started.await();
 
-        cache.onEvent( Event.create( "repository.deleted" ).value( "id", "com.enonic.cms.project" ).build() );
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+        assertThat( cache.get( key, AUTH_INFO, this::generate ) ).isSameAs( first );
 
-        assertThat( cache.size() ).isZero();
+        release.countDown();
+        awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test
-    void invalidatedByPermissionsEvent()
+    void removesIdleSitemapInsteadOfRegenerating()
     {
-        final SitemapCache cache = new SitemapCache();
-        cache.get( KEY, this::generate );
+        cache.get( KEY, AUTH_INFO, this::generate );
+        clock.now = clock.now.plus( SitemapCache.IDLE_TIMEOUT ).plusSeconds( 1 );
+
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+
+        assertThat( cache.size() ).isZero();
+        awaitIdle();
+        assertThat( generated ).hasValue( 1 );
+    }
+
+    @Test
+    void repositoryEventRegenerates()
+    {
+        cache.get( KEY, AUTH_INFO, this::generate );
+
+        cache.onEvent( Event.create( "repository.updated" ).value( "id", "com.enonic.cms.project" ).build() );
+
+        awaitUntil( () -> generated.get() == 2 );
+    }
+
+    @Test
+    void permissionsEventRegenerates()
+    {
+        cache.get( KEY, AUTH_INFO, this::generate );
 
         cache.onEvent( Event.create( "node.permissionsUpdated" )
                            .value( "id", "1" )
@@ -71,86 +151,139 @@ class SitemapCacheTest
                            .value( "branch", "master" )
                            .build() );
 
-        assertThat( cache.size() ).isZero();
+        awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test
-    void expiresWhenScheduledContentChanges()
+    void regeneratesWhenScheduledContentChanges()
     {
-        final MutableClock clock = new MutableClock( Instant.parse( "2024-01-01T00:00:00Z" ) );
-        final SitemapCache cache = new SitemapCache( clock );
-        final Instant validUntil = Instant.parse( "2024-01-01T01:00:00Z" );
+        final Instant validUntil = clock.now.plusSeconds( 3600 );
+        final Sitemap first = cache.get( KEY, AUTH_INFO, () -> generate( validUntil ) );
 
-        cache.get( KEY, () -> generate( validUntil ) );
         clock.now = validUntil.minusSeconds( 1 );
-        cache.get( KEY, () -> generate( validUntil ) );
+        assertThat( cache.get( KEY, AUTH_INFO, this::generate ) ).isSameAs( first );
+        awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
         clock.now = validUntil;
-        cache.get( KEY, () -> generate( validUntil ) );
-        assertThat( generated ).hasValue( 2 );
+        assertThat( cache.get( KEY, AUTH_INFO, this::generate ) ).isSameAs( first );
+        awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test
-    void failedGenerationIsNotCached()
+    void failedFirstGenerationIsNotCached()
     {
-        final SitemapCache cache = new SitemapCache();
-
-        assertThatThrownBy( () -> cache.get( KEY, () -> {
+        assertThatThrownBy( () -> cache.get( KEY, AUTH_INFO, () -> {
             throw new IllegalStateException( "boom" );
         } ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "boom" );
 
-        cache.get( KEY, this::generate );
+        cache.get( KEY, AUTH_INFO, this::generate );
         assertThat( generated ).hasValue( 1 );
     }
 
     @Test
-    void concurrentRequestsShareOneGeneration()
+    void failedRegenerationKeepsPreviousSitemap()
+    {
+        final AtomicInteger calls = new AtomicInteger();
+        final Supplier<SitemapContents> failingAfterFirst = () -> {
+            if ( calls.incrementAndGet() > 1 )
+            {
+                throw new IllegalStateException( "boom" );
+            }
+            return generate();
+        };
+        final Sitemap first = cache.get( KEY, AUTH_INFO, failingAfterFirst );
+
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+        awaitUntil( () -> calls.get() == 2 );
+        awaitIdle();
+
+        assertThat( cache.get( KEY, AUTH_INFO, failingAfterFirst ) ).isSameAs( first );
+    }
+
+    @Test
+    void generationsAreSerializedAndShared()
         throws Exception
     {
-        final SitemapCache cache = new SitemapCache();
-        final CountDownLatch started = new CountDownLatch( 1 );
-        final CountDownLatch release = new CountDownLatch( 1 );
-        final ExecutorService executor = Executors.newFixedThreadPool( 4 );
+        final AtomicInteger running = new AtomicInteger();
+        final AtomicInteger maxRunning = new AtomicInteger();
+        final ExecutorService requests = Executors.newFixedThreadPool( 6 );
         try
         {
-            final Future<Sitemap> first = executor.submit( () -> cache.get( KEY, () -> {
+            final List<Future<Sitemap>> results = new ArrayList<>();
+            for ( int i = 0; i < 6; i++ )
+            {
+                final SitemapCache.Key key = new SitemapCache.Key( "repo" + ( i % 3 ), "master", Set.of(), PARAMS );
+                results.add( requests.submit( () -> cache.get( key, AUTH_INFO, () -> {
+                    maxRunning.accumulateAndGet( running.incrementAndGet(), Math::max );
+                    sleep( 20 );
+                    running.decrementAndGet();
+                    return generate();
+                } ) ) );
+            }
+            for ( final Future<Sitemap> result : results )
+            {
+                assertThat( result.get( 5, TimeUnit.SECONDS ) ).isNotNull();
+            }
+            assertThat( maxRunning ).hasValue( 1 );
+            assertThat( generated ).hasValue( 3 );
+        }
+        finally
+        {
+            requests.shutdownNow();
+        }
+    }
+
+    @Test
+    void rejectsRequestsBeyondInFlightLimit()
+        throws Exception
+    {
+        final CountDownLatch release = new CountDownLatch( 1 );
+        final CountDownLatch started = new CountDownLatch( 1 );
+        final ExecutorService requests = Executors.newFixedThreadPool( SitemapCache.MAX_IN_FLIGHT );
+        try
+        {
+            final List<Future<Sitemap>> waiting = new ArrayList<>();
+            waiting.add( requests.submit( () -> cache.get( KEY, AUTH_INFO, () -> {
                 started.countDown();
                 await( release );
                 return generate();
-            } ) );
+            } ) ) );
             started.await();
-            final List<Future<Sitemap>> others =
-                List.of( executor.submit( () -> cache.get( KEY, this::generate ) ), executor.submit( () -> cache.get( KEY, this::generate ) ) );
-            release.countDown();
-
-            final Sitemap sitemap = first.get( 5, TimeUnit.SECONDS );
-            for ( final Future<Sitemap> other : others )
+            for ( int i = 1; i < SitemapCache.MAX_IN_FLIGHT; i++ )
             {
-                assertThat( other.get( 5, TimeUnit.SECONDS ) ).isSameAs( sitemap );
+                waiting.add( requests.submit( () -> cache.get( KEY, AUTH_INFO, this::generate ) ) );
             }
+            awaitUntil( () -> cache.inFlight() == SitemapCache.MAX_IN_FLIGHT );
+
+            assertThatThrownBy( () -> cache.get( KEY, AUTH_INFO, this::generate ) ).isInstanceOf( SitemapBusyException.class );
+
+            release.countDown();
+            for ( final Future<Sitemap> result : waiting )
+            {
+                assertThat( result.get( 5, TimeUnit.SECONDS ) ).isNotNull();
+            }
+            assertThat( cache.get( KEY, AUTH_INFO, this::generate ) ).isNotNull();
             assertThat( generated ).hasValue( 1 );
         }
         finally
         {
-            executor.shutdownNow();
+            requests.shutdownNow();
         }
     }
 
     @Test
-    void evictsOldestWhenFull()
+    void evictsLeastRecentlyUsedWhenFull()
     {
-        final MutableClock clock = new MutableClock( Instant.parse( "2024-01-01T00:00:00Z" ) );
-        final SitemapCache cache = new SitemapCache( clock );
         for ( int i = 0; i <= SitemapCache.MAX_ENTRIES; i++ )
         {
             clock.now = clock.now.plusSeconds( 1 );
-            cache.get( new SitemapCache.Key( "repo" + i, "master", Set.of(), PARAMS ), this::generate );
+            cache.get( new SitemapCache.Key( "repo" + i, "master", Set.of(), PARAMS ), AUTH_INFO, this::generate );
         }
 
         assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_ENTRIES );
-        cache.get( new SitemapCache.Key( "repo" + SitemapCache.MAX_ENTRIES, "master", Set.of(), PARAMS ), this::generate );
-        cache.get( new SitemapCache.Key( "repo0", "master", Set.of(), PARAMS ), this::generate );
+        cache.get( new SitemapCache.Key( "repo" + SitemapCache.MAX_ENTRIES, "master", Set.of(), PARAMS ), AUTH_INFO, this::generate );
+        cache.get( new SitemapCache.Key( "repo0", "master", Set.of(), PARAMS ), AUTH_INFO, this::generate );
         assertThat( generated ).hasValue( SitemapCache.MAX_ENTRIES + 2 );
     }
 
@@ -165,9 +298,50 @@ class SitemapCacheTest
         return new SitemapContents( List.of(), validUntil );
     }
 
+    private void awaitIdle()
+    {
+        try
+        {
+            executor.submit( () -> {
+            } ).get( 5, TimeUnit.SECONDS );
+        }
+        catch ( Exception e )
+        {
+            throw new IllegalStateException( e );
+        }
+    }
+
+    private static void awaitUntil( final BooleanSupplier condition )
+    {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos( 5 );
+        while ( !condition.getAsBoolean() )
+        {
+            if ( System.nanoTime() > deadline )
+            {
+                throw new AssertionError( "Condition not met in time" );
+            }
+            sleep( 5 );
+        }
+    }
+
     private static Event nodeEvent( final String type, final String repo, final String branch )
     {
-        return Event.create( type ).value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) ).build();
+        return Event.create( type )
+            .value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) )
+            .build();
+    }
+
+    private static void sleep( final long millis )
+    {
+        try
+        {
+            Thread.sleep( millis );
+        }
+        catch ( InterruptedException e )
+        {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException( e );
+        }
     }
 
     private static void await( final CountDownLatch latch )
@@ -186,7 +360,7 @@ class SitemapCacheTest
     private static final class MutableClock
         extends Clock
     {
-        private Instant now;
+        private volatile Instant now;
 
         MutableClock( final Instant now )
         {

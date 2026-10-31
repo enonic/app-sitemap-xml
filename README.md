@@ -52,15 +52,23 @@ Maximum number of URLs in a single sitemap file. Default and max: 50000 (the lim
 
 When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
 
-## Caching
+## Caching and background generation
 
-The sitemap is generated once and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+The sitemap is generated in Java and kept in memory. The first request for a sitemap waits for it to be generated; after that, requests are answered from memory.
+
+When content in the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete), the sitemap is regenerated in the background a few seconds later. Until the new sitemap is ready, the previous one is served. On the `master` branch, the sitemap is also regenerated when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are dropped instead of regenerated.
+
+Sitemaps are generated one at a time, never in parallel. When more than 10 sitemap requests are in progress at once (for example many cold sitemaps requested at the same time), further requests get `503 Service Unavailable` with a `Retry-After` header.
 
 The cache is per cluster node and is emptied when the app is restarted.
 
-### Override the generated domain name
+### URLs in the sitemap
 
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
+URLs are resolved in this order:
+
+1. `Base URL` in this app's site configuration, see [Override the generated domain name](#override-the-generated-domain-name).
+2. The `Base URL` configured for the site in XP (the `portal` site configuration). The sitemap is then the same whichever host it is requested from.
+3. The URL of the site as seen by the request.
 
 ### Mappings
 
