@@ -1,5 +1,6 @@
 plugins {
 	id 'maven-publish'
+	id 'jacoco'
 	id 'com.enonic.defaults' version '2.1.5'
 	id 'com.enonic.xp.app' version '3.5.0'
 	id 'com.github.node-gradle.node' version '7.0.2'
@@ -14,13 +15,39 @@ app {
 }
 
 dependencies {
+	compileOnly "com.enonic.xp:core-api:${xpVersion}"
+	compileOnly "com.enonic.xp:script-api:${xpVersion}"
+
 	include "com.enonic.xp:lib-context:${xpVersion}"
 	include "com.enonic.xp:lib-content:${xpVersion}"
-	include "com.enonic.xp:lib-node:${xpVersion}"
 	include "com.enonic.xp:lib-portal:${xpVersion}"
 
 	include 'com.enonic.lib:lib-cache:2.2.1'
-	include "com.enonic.lib:lib-xslt:2.1.1"
+
+	testImplementation "com.enonic.xp:core-api:${xpVersion}"
+	testImplementation "com.enonic.xp:script-api:${xpVersion}"
+	testImplementation platform('org.junit:junit-bom:5.13.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testImplementation platform('org.mockito:mockito-bom:5.20.0')
+	testImplementation 'org.mockito:mockito-core'
+	testImplementation 'org.mockito:mockito-junit-jupiter'
+	testImplementation 'org.assertj:assertj-core:3.27.7'
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 11
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+	finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+	reports {
+		xml.required = true
+	}
 }
 
 repositories {
@@ -66,6 +93,7 @@ tasks.register('npmBuild', NpmTask) {
 }
 
 jar.dependsOn npmBuild
+classes.dependsOn npmBuild
 
 tasks.register('npmCheck', NpmTask) {
 	dependsOn npmInstall

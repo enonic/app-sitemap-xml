@@ -22,7 +22,9 @@ It includes the required tags of a sitemap.xml (`<loc>`, `<lastmod>`, `<changefr
 
 Be aware that only content from the current site will be added to a site's sitemap.
 
-> **_NOTE:_** The order of the controller mapping is set to 50.
+When the sitemap is split into several files, the controller also responds to `[yoursite.something]/sitemap-1.xml`, `[yoursite.something]/sitemap-2.xml`, etc.
+
+> **_NOTE:_** The order of the controller mapping is set to 12.
 
 ## Headless integration
 
@@ -42,13 +44,29 @@ The app will automatically add the site content, if not already added in the sit
 
 ### Max included items
 
-Limit the number of items in the file. Default: 10000. Max: 50000.
+Limit the total number of items in the sitemap. Default: 10000. Max: 1000000.
 
-> **_WARNING:_** The number of included items will affect the time it takes to generate the sitemap.xml file.
+### URLs per file
 
-### Override the generated domain name
+Maximum number of URLs in a single sitemap file. Default and max: 50000.
 
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
+The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are always obeyed: a sitemap file holds at most 50,000 URLs and 50MB (uncompressed), a sitemap index lists at most 50,000 sitemaps, and URLs longer than 2,048 characters are left out.
+
+When the site has more items than this, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
+
+### Gzip
+
+Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
+
+Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console submission), so the plain `.xml` URLs are compressed too: when a request accepts gzip (`Accept-Encoding: gzip`, which crawlers send), the stored file is sent as it is with `Content-Encoding: gzip`, so the response is the same XML, compressed for transfer only. Plain `.xml` responses carry `Vary: Accept-Encoding`. To have crawlers fetch the `.xml.gz` files instead, list `sitemap.xml.gz` in `robots.txt` (`Sitemap: https://example.com/sitemap.xml.gz`).
+
+## Caching
+
+The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and kept in memory until the content of the project changes (any node event in the project repository and branch, e.g. publish, unpublish, move or delete). The next request after a change generates it again. On the `master` branch, the cached sitemap also expires when scheduled content goes online or offline (`Online from` / `Online to`).
+
+Sitemaps are generated one at a time, never in parallel; requests for the same sitemap share one generation. When more than 10 sitemap requests are in progress at once, further requests get `429 Too Many Requests` with a `Retry-After` header.
+
+Generated sitemap files are kept on disk, not in memory, in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
 
 ### Mappings
 
