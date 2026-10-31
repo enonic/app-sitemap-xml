@@ -68,7 +68,7 @@ describe('sitemap controller', () => {
 
 		const res = get(request('/mysite/sitemap.xml'));
 
-		expect(res).toEqual({body: '<urlset/>', contentType: 'text/xml'});
+		expect(res).toEqual({body: '<urlset/>', contentType: 'text/xml; charset=utf-8'});
 		expect(bean.root).toHaveBeenCalledWith({
 			sitePath: '/mysite',
 			siteUrl: 'https://example.com/mysite',
@@ -109,7 +109,7 @@ describe('sitemap controller', () => {
 	it('serves numbered files and 404 for unknown ones', async () => {
 		const {get} = await import('/cms/controllers/sitemap/sitemap');
 
-		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml'});
+		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml; charset=utf-8'});
 		expect(get(request('/mysite/sitemap-3.xml'))).toEqual({body: null, status: 404});
 		expect(bean.file).toHaveBeenCalledWith(expect.anything(), 3);
 	});
@@ -129,7 +129,7 @@ describe('sitemap controller', () => {
 		const {get} = await import('/cms/controllers/sitemap/sitemap');
 
 		expect(get(request('/mysite/sitemap.xml', {'Content-Type': 'application/json'})))
-			.toEqual({body: '[]', contentType: 'application/json'});
+			.toEqual({body: '[]', contentType: 'application/json; charset=utf-8'});
 	});
 
 	it('answers 429 with Retry-After when too many requests are in progress', async () => {

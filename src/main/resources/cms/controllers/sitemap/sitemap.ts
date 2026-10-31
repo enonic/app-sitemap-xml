@@ -129,6 +129,6 @@ export function get(request: Request<{
 	}
 	return {
 		body: result.getBody(),
-		contentType: isJson ? 'application/json' : isGzip ? 'application/gzip' : 'text/xml',
+		contentType: isJson ? 'application/json; charset=utf-8' : isGzip ? 'application/gzip' : 'text/xml; charset=utf-8',
 	};
 }
