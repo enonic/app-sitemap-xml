@@ -165,7 +165,7 @@ class SitemapTest
 
         assertThatThrownBy( () -> Sitemap.write( blocked.resolve( "sitemap" ), params( "https://example.com", 1 ), List.of() ) )
             .isInstanceOf( UncheckedIOException.class );
-        assertThat( blocked.resolve( "sitemap" ) ).doesNotExist();
+        assertThat( Files.exists( blocked.resolve( "sitemap" ) ) ).isFalse();
     }
 
     @Test
