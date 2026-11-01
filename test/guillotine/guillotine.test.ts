@@ -96,7 +96,6 @@ const graphQL: GraphQL = {
 
 const siteConfig: SitemapXmlSiteConfig = {
 	ignoreList: [],
-	maxItems: '1000',
 	overrideDomain: 'https://enonic.com',
 	siteMap: []
 }
@@ -259,8 +258,7 @@ describe('guillotine extensions', () => {
 				expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 					sitePath: '',
 					siteUrl: projectConfig.overrideDomain,
-					maxItems: 1000,
-				}), 1000);
+				}), 2147483647);
 				const {run} = await import('/lib/xp/context');
 				expect(jest.mocked(run)).toHaveBeenLastCalledWith(
 					expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
@@ -286,7 +284,7 @@ describe('guillotine extensions', () => {
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			})).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
 
 			const files = filesResolver({args: {}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source});
 			expect(files).toEqual([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}]);

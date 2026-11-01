@@ -5,6 +5,6 @@ public final class SitemapBusyException
 {
     public SitemapBusyException()
     {
-        super( "Too many sitemap requests in progress" );
+        super( "Too many requests are waiting for sitemaps to be generated" );
     }
 }

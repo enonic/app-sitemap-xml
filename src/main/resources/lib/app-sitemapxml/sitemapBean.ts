@@ -3,11 +3,6 @@ import type {SitemapXmlSiteConfig} from '/types';
 
 
 import {forceArray} from '@enonic/js-utils/array/forceArray';
-import {
-	DEFAULT_MAX_ITEMS,
-	MAX_ITEMS_LIMIT,
-	MAX_URLS_PER_FILE,
-} from '/lib/app-sitemapxml/constants';
 
 
 export interface SitemapParams {
@@ -19,9 +14,8 @@ export interface SitemapParams {
 		priority: string
 	}[]
 	ignorePatterns: string[]
-	maxItems: number
-	urlsPerFile: number
-	preferBaseUrl?: boolean
+	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
+	siteUrlFromRequest?: boolean
 }
 
 export interface SitemapResponse {
@@ -42,14 +36,6 @@ export interface SitemapBean {
 	guillotineFile(params: ScriptValue, number: number): string | null
 }
 
-export function toInt(value: string | number | undefined, defaultValue: number, max: number): number {
-	const parsed = typeof value === 'number' ? value : parseInt(value || '', 10);
-	if (isNaN(parsed) || parsed < 1) {
-		return defaultValue;
-	}
-	return Math.min(parsed, max);
-}
-
 export function toSitemapParams({
 	sitePath,
 	siteUrl,
@@ -61,9 +47,7 @@ export function toSitemapParams({
 }): SitemapParams {
 	const {
 		ignoreList,
-		maxItems,
 		siteMap,
-		urlsPerFile,
 	} = siteConfig;
 	return {
 		sitePath,
@@ -74,8 +58,6 @@ export function toSitemapParams({
 			priority: priority || '',
 		})),
 		ignorePatterns: (ignoreList ? forceArray(ignoreList) : []).map(({path}) => path || ''),
-		maxItems: toInt(maxItems, DEFAULT_MAX_ITEMS, MAX_ITEMS_LIMIT),
-		urlsPerFile: toInt(urlsPerFile, MAX_URLS_PER_FILE, MAX_URLS_PER_FILE),
 	};
 }
 

@@ -1,4 +1,5 @@
 /// <reference types="@enonic-types/global"/>
+import type {Request} from '@enonic-types/core';
 
 import {
 	beforeEach,
@@ -44,18 +45,25 @@ globalThis.__ = {
 	toScriptValue: (value: unknown) => value,
 };
 
-function request(path: string, headers: Record<string, string> = {}) {
+function request(path: string, headers: Record<string, string> = {}): Request {
 	return {
 		branch: 'master',
+		cookies: {},
+		getHeader: (name: string) => {
+			const key = Object.keys(headers).filter((header) => header.toLowerCase() === name.toLowerCase())[0];
+			return key ? headers[key] : null;
+		},
 		headers,
 		host: 'example.com',
 		method: 'GET',
 		mode: 'live',
+		params: {},
 		path,
 		port: 443,
+		rawPath: path,
 		scheme: 'https',
 		url: `https://example.com${path}`,
-	} as const;
+	} as unknown as Request;
 }
 
 describe('sitemap controller', () => {
@@ -75,19 +83,15 @@ describe('sitemap controller', () => {
 			siteUrl: 'https://example.com/mysite',
 			contentTypes: [],
 			ignorePatterns: [],
-			maxItems: 10000,
-			urlsPerFile: 50000,
-			preferBaseUrl: true,
+			siteUrlFromRequest: true,
 		});
 	});
 
 	it('passes the site configuration', async () => {
 		siteConfig = {
 			ignoreList: {path: '/skip'},
-			maxItems: '2000000',
 			overrideDomain: 'https://override.example.org',
 			siteMap: [{contentType: 'base:folder', updatePeriod: 'daily', priority: '0.7'}, {}],
-			urlsPerFile: 'abc',
 		};
 		const {get} = await import('/cms/controllers/sitemap/sitemap');
 
@@ -101,9 +105,7 @@ describe('sitemap controller', () => {
 				{contentType: '', changefreq: '', priority: ''},
 			],
 			ignorePatterns: ['/skip'],
-			maxItems: 1000000,
-			urlsPerFile: 50000,
-			preferBaseUrl: false,
+			siteUrlFromRequest: false,
 		});
 	});
 

@@ -1,11 +1,14 @@
 package com.enonic.app.sitemapxml;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 import org.jspecify.annotations.Nullable;
+
+import com.fasterxml.jackson.core.JsonGenerator;
 
 final class SitemapRenderer
 {
@@ -69,44 +72,43 @@ final class SitemapRenderer
         return xml.append( "</priority></url>" ).toString();
     }
 
-    String json( final SitemapEntry entry, final String loc )
+    void json( final JsonGenerator json, final SitemapEntry entry, final String loc )
+        throws IOException
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
-        final StringBuilder json = new StringBuilder( "{\"changefreq\":" );
-        jsonString( json, setting.changefreq() );
+        json.writeStartObject();
+        json.writeStringField( "changefreq", setting.changefreq() );
         if ( entry.lastModified() != null )
         {
-            json.append( ",\"lastmod\":" );
-            jsonString( json, entry.lastModified().toString() );
+            json.writeStringField( "lastmod", entry.lastModified().toString() );
         }
-        json.append( ",\"priority\":" );
-        jsonString( json, setting.priority() );
-        json.append( ",\"loc\":" );
-        jsonString( json, loc );
-        return json.append( '}' ).toString();
+        json.writeStringField( "priority", setting.priority() );
+        json.writeStringField( "loc", loc );
+        json.writeEndObject();
     }
 
-    String urlsetEntry( final SitemapEntry entry )
+    /**
+     * Writes the path-based entry served through Guillotine. Change frequency and priority are left out when they have default values.
+     */
+    void urlsetEntry( final JsonGenerator json, final SitemapEntry entry )
+        throws IOException
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
-        final StringBuilder json = new StringBuilder( "{\"path\":" );
-        jsonString( json, entry.path().isEmpty() ? "/" : entry.path() );
+        json.writeStartObject();
+        json.writeStringField( "path", entry.path().isEmpty() ? "/" : entry.path() );
         if ( entry.lastModified() != null )
         {
-            json.append( ",\"lastmod\":" );
-            jsonString( json, entry.lastModified().toString() );
+            json.writeStringField( "lastmod", entry.lastModified().toString() );
         }
         if ( !SitemapParams.DEFAULT_CHANGEFREQ.equals( setting.changefreq() ) )
         {
-            json.append( ",\"changefreq\":" );
-            jsonString( json, setting.changefreq() );
+            json.writeStringField( "changefreq", setting.changefreq() );
         }
         if ( !SitemapParams.DEFAULT_PRIORITY.equals( setting.priority() ) )
         {
-            json.append( ",\"priority\":" );
-            jsonString( json, setting.priority() );
+            json.writeStringField( "priority", setting.priority() );
         }
-        return json.append( '}' ).toString();
+        json.writeEndObject();
     }
 
     String indexEntry( final String fileUrl, final @Nullable Instant lastModified )
@@ -190,34 +192,5 @@ final class SitemapRenderer
                 default -> out.append( c );
             }
         }
-    }
-
-    static void jsonString( final StringBuilder out, final String value )
-    {
-        out.append( '"' );
-        for ( int i = 0; i < value.length(); i++ )
-        {
-            final char c = value.charAt( i );
-            switch ( c )
-            {
-                case '"' -> out.append( "\\\"" );
-                case '\\' -> out.append( "\\\\" );
-                case '\n' -> out.append( "\\n" );
-                case '\r' -> out.append( "\\r" );
-                case '\t' -> out.append( "\\t" );
-                default ->
-                {
-                    if ( c < 0x20 )
-                    {
-                        out.append( String.format( "\\u%04x", (int) c ) );
-                    }
-                    else
-                    {
-                        out.append( c );
-                    }
-                }
-            }
-        }
-        out.append( '"' );
     }
 }

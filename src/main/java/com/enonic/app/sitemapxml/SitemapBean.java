@@ -1,7 +1,6 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,24 +61,7 @@ public final class SitemapBean
 
     public String guillotineFiles( final ScriptValue params )
     {
-        final Sitemap sitemap = guillotineSitemap( params );
-        final StringBuilder json = new StringBuilder( "[" );
-        final List<@Nullable Instant> lastModified = sitemap.lastModified();
-        for ( int i = 0; i < lastModified.size(); i++ )
-        {
-            if ( i > 0 )
-            {
-                json.append( ',' );
-            }
-            json.append( "{\"number\":" ).append( i + 1 );
-            final Instant lastmod = lastModified.get( i );
-            if ( lastmod != null )
-            {
-                json.append( ",\"lastmod\":\"" ).append( lastmod ).append( '"' );
-            }
-            json.append( '}' );
-        }
-        return json.append( ']' ).toString();
+        return guillotineSitemap( params ).filesJson();
     }
 
     public String guillotineUrlset( final ScriptValue params, final int count )
@@ -103,7 +85,7 @@ public final class SitemapBean
         try
         {
             final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
-                .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "preferBaseUrl" ) ) );
+                .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
             return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
         }
         catch ( SitemapBusyException e )
@@ -122,8 +104,7 @@ public final class SitemapBean
             .toList();
         final List<String> ignorePatterns = list( map.get( "ignorePatterns" ) ).stream().map( SitemapBean::string ).toList();
 
-        return new SitemapParams( string( map.get( "sitePath" ) ), string( map.get( "siteUrl" ) ), contentTypes, ignorePatterns,
-                                  integer( map.get( "maxItems" ) ), integer( map.get( "urlsPerFile" ) ) );
+        return new SitemapParams( string( map.get( "sitePath" ) ), string( map.get( "siteUrl" ) ), contentTypes, ignorePatterns );
     }
 
     private static List<?> list( final @Nullable Object value )
@@ -134,16 +115,5 @@ public final class SitemapBean
     private static String string( final @Nullable Object value )
     {
         return value == null ? "" : value.toString();
-    }
-
-    private static int integer( final @Nullable Object value )
-    {
-        return switch ( value )
-        {
-            case Number number -> number.intValue();
-            case String string -> Integer.parseInt( string.trim() );
-            case null -> throw new IllegalArgumentException( "Missing number" );
-            default -> throw new IllegalArgumentException( "Not a number: " + value );
-        };
     }
 }

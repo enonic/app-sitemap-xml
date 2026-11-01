@@ -1,18 +1,17 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
 import org.jspecify.annotations.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.enonic.xp.content.Content;
 import com.enonic.xp.content.ContentConstants;
@@ -21,14 +20,12 @@ import com.enonic.xp.content.ContentIds;
 import com.enonic.xp.content.ContentPublishInfo;
 import com.enonic.xp.content.ContentQuery;
 import com.enonic.xp.content.ContentService;
-import com.enonic.xp.content.FindContentIdsByQueryResult;
 import com.enonic.xp.content.GetContentByIdsParams;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
-import com.enonic.xp.index.FieldValues;
 import com.enonic.xp.index.IndexPath;
 import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.expr.DslExpr;
@@ -37,23 +34,19 @@ import com.enonic.xp.query.expr.OrderExpr;
 import com.enonic.xp.query.expr.QueryExpr;
 import com.enonic.xp.query.filter.RangeFilter;
 
+/**
+ * Finds the published contents of a sitemap with the content API. The query only returns ids, the contents are then loaded in batches
+ * and streamed to the sitemap writer, newest first, so neither contents nor entries of the whole sitemap are held in memory.
+ */
 public final class SitemapQuery
 {
-    static final int ES_MAX_RESULT_WINDOW = 10_000;
-
     static final int FETCH_BATCH_SIZE = 1_000;
 
     static final String IGNORE_PUBLISH_TIMES = "ignorePublishTimes";
 
-    private static final Logger LOG = LoggerFactory.getLogger( SitemapQuery.class );
-
     private static final String CONTENT_ROOT = "/content";
 
     private static final String BLOCK_ROBOTS_FIELD = "x.com-enonic-app-metafields.meta-data.blockRobots";
-
-    private static final IndexPath PATH = IndexPath.from( "_path" );
-
-    private static final IndexPath TYPE = IndexPath.from( "type" );
 
     private static final IndexPath MODIFIED_TIME = IndexPath.from( "modifiedTime" );
 
@@ -74,100 +67,47 @@ public final class SitemapQuery
         this.now = now;
     }
 
-    public SitemapContents execute()
+    /**
+     * Streams the entries of the sitemap to the given consumer.
+     *
+     * @param cancelled checked between batches, the query stops with a {@link CancellationException} once it returns true
+     * @return when the sitemap must be generated again because scheduled content goes online or offline, or null
+     */
+    public @Nullable Instant execute( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
     {
         final ContentQuery query = ContentQuery.create()
             .queryExpr( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ) ) )
-            .returnFields( PATH, TYPE, MODIFIED_TIME )
-            .size( params.maxItems() <= ES_MAX_RESULT_WINDOW ? params.maxItems() : NodeQuery.ALL_RESULTS_SIZE_FLAG )
+            .size( NodeQuery.ALL_RESULTS_SIZE_FLAG )
             .build();
+        final List<ContentId> ids = contentService.find( query ).getContentIds().stream().toList();
 
-        final FindContentIdsByQueryResult result = contentService.find( query );
-        final List<ContentId> ids = result.getContentIds().stream().limit( params.maxItems() ).toList();
-
-        final Instant validUntil = ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of(
-            PUBLISH_FROM, PUBLISH_TO ).flatMap( field -> nextChange( field ).stream() ).min( Instant::compareTo ).orElse( null ) : null;
-
-        return new SitemapContents( entries( ids, result.getFields() ), validUntil );
-    }
-
-    private List<SitemapEntry> entries( final List<ContentId> ids, final Map<ContentId, FieldValues> fields )
-    {
-        final Map<ContentId, SitemapEntry> fromIndex = new HashMap<>();
-        final List<ContentId> missing = new ArrayList<>();
-        for ( final ContentId id : ids )
-        {
-            final SitemapEntry entry = fromIndex( fields.getOrDefault( id, FieldValues.empty() ) );
-            if ( entry != null )
-            {
-                fromIndex.put( id, entry );
-            }
-            else
-            {
-                missing.add( id );
-            }
-        }
-        final Map<ContentId, SitemapEntry> loaded = missing.isEmpty() ? Map.of() : load( missing );
-        LOG.debug( "Sitemap of {}: {} entries from index, {} loaded", params.sitePath(), fromIndex.size(), missing.size() );
-
-        final List<SitemapEntry> entries = new ArrayList<>( ids.size() );
-        for ( final ContentId id : ids )
-        {
-            final SitemapEntry entry = fromIndex.containsKey( id ) ? fromIndex.get( id ) : loaded.get( id );
-            if ( entry != null && isInSite( entry.path() ) )
-            {
-                entries.add( new SitemapEntry( entry.path().substring( params.sitePath().length() ), entry.contentType(),
-                                               entry.lastModified() ) );
-            }
-        }
-        return entries;
-    }
-
-    private @Nullable SitemapEntry fromIndex( final FieldValues fields )
-    {
-        final Optional<String> path = fields.getSingleValue( PATH ).map( Object::toString );
-        final Optional<String> type = fields.getSingleValue( TYPE ).map( Object::toString );
-        final Optional<Instant> modifiedTime = fields.getSingleValue( MODIFIED_TIME ).flatMap( SitemapQuery::instant );
-        if ( path.isEmpty() || type.isEmpty() || modifiedTime.isEmpty() )
-        {
-            return null;
-        }
-        return new SitemapEntry( path.get(), type.get(), modifiedTime.get() );
-    }
-
-    static Optional<Instant> instant( final Object value )
-    {
-        if ( value instanceof Instant instant )
-        {
-            return Optional.of( instant );
-        }
-        if ( value instanceof Number millis )
-        {
-            return Optional.of( Instant.ofEpochMilli( millis.longValue() ) );
-        }
-        try
-        {
-            return Optional.of( Instant.parse( value.toString() ) );
-        }
-        catch ( DateTimeParseException e )
-        {
-            return Optional.empty();
-        }
-    }
-
-    private Map<ContentId, SitemapEntry> load( final List<ContentId> ids )
-    {
-        final Map<ContentId, SitemapEntry> entries = new HashMap<>();
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
         {
-            final List<ContentId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
-            for ( final Content content : contentService.getByIds( new GetContentByIdsParams( ContentIds.from( batch ) ) ) )
+            if ( cancelled.getAsBoolean() )
             {
-                entries.put( content.getId(), new SitemapEntry( content.getPath().toString(), content.getType().toString(),
-                                                                content.getModifiedTime() ) );
+                throw new CancellationException( "Sitemap generation of " + params.sitePath() + " cancelled" );
+            }
+            final List<ContentId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
+            final Map<ContentId, Content> contents = new HashMap<>();
+            for ( final Content content : contentService.getByIds( GetContentByIdsParams.create().contentIds( ContentIds.from( batch ) ).build() ) )
+            {
+                contents.put( content.getId(), content );
+            }
+            for ( final ContentId id : batch )
+            {
+                final Content content = contents.get( id );
+                if ( content != null && isInSite( content.getPath().toString() ) )
+                {
+                    sink.accept( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
+                                                   content.getType().toString(), content.getModifiedTime() ) );
+                }
             }
         }
-        return entries;
+
+        return ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
+            .flatMap( field -> nextChange( field ).stream() )
+            .min( Instant::compareTo )
+            .orElse( null ) : null;
     }
 
     private boolean isInSite( final String path )

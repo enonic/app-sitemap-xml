@@ -8,9 +8,7 @@ export declare interface SitemapXmlSiteConfig {
 	ignoreList?: {
 		path?: string
 	}[]
-	maxItems?: string
 	overrideDomain?: string
-	urlsPerFile?: string
 	siteMap: {
 		contentType?: string
 		updatePeriod?: tChangeFreq

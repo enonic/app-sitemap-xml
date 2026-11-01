@@ -10,13 +10,13 @@ dependencies {
 	implementation xplibs.api.core
 	implementation xplibs.api.script
 	implementation xplibs.api.portal
+	implementation libs.jackson.core
 
 	include xplibs.context
 	include xplibs.content
 	include xplibs.portal
 	include xplibs.project
 
-	include libs.lib.cache
 
 	testImplementation platform(libs.junit.bom)
 	testImplementation platform(libs.mockito.bom)

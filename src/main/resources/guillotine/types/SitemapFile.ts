@@ -8,7 +8,7 @@ import {
 
 
 // One sitemap file: the URLs are split into files the same way as sitemap.xml (at most 50 000 URLs and 50MB each),
-// so a client can fetch them one at a time, like Next.js generateSitemaps().
+// so a client can fetch a huge sitemap one file at a time.
 export const SitemapFile = (graphQL: GraphQL) => ({
 	description: 'Sitemap file, a part of the sitemap',
 	fields: {

@@ -3,6 +3,7 @@ package com.enonic.app.sitemapxml;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -16,8 +17,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.enonic.xp.app.ApplicationKey;
 import com.enonic.xp.branch.Branch;
+import com.enonic.xp.content.ContentIds;
 import com.enonic.xp.content.ContentPath;
+import com.enonic.xp.content.ContentQuery;
 import com.enonic.xp.content.ContentService;
+import com.enonic.xp.content.FindContentIdsByQueryResult;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.portal.url.PortalScope;
@@ -32,6 +36,8 @@ import com.enonic.xp.site.SiteConfigs;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -41,7 +47,7 @@ import static org.mockito.Mockito.when;
 class SitemapServiceTest
 {
     private static final SitemapParams PARAMS =
-        new SitemapParams( "/mysite", "https://request.example.com/mysite", List.of(), List.of(), 10, 10 );
+        new SitemapParams( "/mysite", "https://request.example.com/mysite", List.of(), List.of() );
 
     @TempDir
     private Path temp;
@@ -60,7 +66,7 @@ class SitemapServiceTest
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
 
-        final SitemapCache.Key key = sitemap( true );
+        final SitemapCache.Key key = sitemap( true, true );
 
         assertThat( key.params().siteUrl() ).isEqualTo( "https://www.example.com" );
         assertThat( key.repositoryId() ).isEqualTo( "com.enonic.cms.project" );
@@ -82,9 +88,16 @@ class SitemapServiceTest
             .callWith( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
+        verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), source.capture() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
         assertThat( key.getValue().repositoryId() ).isEqualTo( "com.enonic.cms.project" );
+
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn(
+            FindContentIdsByQueryResult.create().contents( ContentIds.empty() ).totalHits( 0 ).build() );
+        final List<SitemapEntry> entries = new ArrayList<>();
+        assertThat( inContext( () -> source.getValue().write( entries::add, () -> false ) ) ).isNull();
+        assertThat( entries ).isEmpty();
     }
 
     @Test
@@ -92,7 +105,7 @@ class SitemapServiceTest
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
 
-        assertThat( sitemap( true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
@@ -100,19 +113,19 @@ class SitemapServiceTest
     {
         when( portalUrlService.portalScope( any() ) ).thenThrow( new IllegalStateException( "boom" ) );
 
-        assertThat( sitemap( true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
     void ignoresBaseUrlWhenOverridden()
     {
-        assertThat( sitemap( false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( sitemap( false, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
     void beanAnswers429WhenBusy()
     {
-        when( cache.get( any(), any(), any() ) ).thenThrow( new SitemapBusyException() );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
@@ -126,8 +139,9 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 1,
+                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
         assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
@@ -146,8 +160,9 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
                                                     new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), 10, 1 ), entries ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of() ), entries, 1,
+                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
         assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
@@ -159,15 +174,16 @@ class SitemapServiceTest
         assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 3 ) ) ).isNull();
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache, atLeastOnce() ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        verify( cache, atLeastOnce() ).get( key.capture(), eq( true ), any( AuthenticationInfo.class ), any() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
-    private SitemapCache.Key sitemap( final boolean preferBaseUrl )
+    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean background )
     {
-        inContext( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, preferBaseUrl ) );
+        inContext(
+            () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), eq( background ), any( AuthenticationInfo.class ), any() );
         return key.getValue();
     }
 
@@ -186,7 +202,7 @@ class SitemapServiceTest
     {
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn(
-            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10, "urlsPerFile", 10 ) );
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true ) );
         return value;
     }
 

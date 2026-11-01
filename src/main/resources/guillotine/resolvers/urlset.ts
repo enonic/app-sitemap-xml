@@ -70,11 +70,9 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 	SiteMapResolverData,
 	SitemapUrl[]
 > => (env) => {
-	const localContext = env.localContext as LocalContext<SiteMapResolverLocaleContext>;
-	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig;
-	const maxItems = toSitemapParams({sitePath: '', siteUrl: '', siteConfig: siteConfig || {}}).maxItems;
-	const count = env.args.count && env.args.count > 0 ? Math.min(env.args.count, maxItems) : maxItems;
-	return withSitemap(localContext, (bean, params) => JSON.parse(bean.guillotineUrlset(params, count)) as SitemapUrl[]);
+	const count = env.args.count && env.args.count > 0 ? env.args.count : 2147483647;
+	return withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
+		(bean, params) => JSON.parse(bean.guillotineUrlset(params, count)) as SitemapUrl[]);
 };
 
 export const files = (_graphQL: GraphQL): Resolver<

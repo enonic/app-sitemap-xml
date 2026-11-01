@@ -1,15 +1,8 @@
 /**
- * Tells whether a request accepts a gzip-encoded response body (Content-Encoding: gzip).
- * Header names are matched ignoring case, as clients and HTTP versions differ in how they send them.
+ * Tells whether an Accept-Encoding header value accepts a gzip-encoded response body (Content-Encoding: gzip).
  * An explicit "gzip;q=0" (or "*;q=0" without "gzip") refuses it.
  */
-export function acceptsGzip(headers: Record<string, string> = {}): boolean {
-	let value: string | undefined;
-	for (const key of Object.keys(headers)) {
-		if (key.toLowerCase() === 'accept-encoding') {
-			value = headers[key];
-		}
-	}
+export function acceptsGzip(value: string | null | undefined): boolean {
 	if (!value) {
 		return false;
 	}

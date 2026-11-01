@@ -1,9 +1,9 @@
-import type {Site} from '@enonic-types/lib-content';
 import type {
 	Request,
 	Response,
-	SitemapXmlSiteConfig,
-} from '/types';
+} from '@enonic-types/core';
+import type {Site} from '@enonic-types/lib-content';
+import type {SitemapXmlSiteConfig} from '/types';
 
 
 import {
@@ -27,11 +27,7 @@ function getSiteUrl(sitePath: string, overrideDomain: string): string {
 		: pageUrl({path: sitePath, type: 'absolute'});
 }
 
-export function get(request: Request<{
-	headers: {
-		'Content-Type'?: string
-	}
-}>): Response {
+export function get(request: Request): Response {
 	// This controller runs in site context, so site can't be null.
 	const site = getSite<SitemapXmlSiteConfig>() as Site<SitemapXmlSiteConfig>;
 	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>() || {} as Partial<SitemapXmlSiteConfig>;
@@ -46,7 +42,7 @@ export function get(request: Request<{
 		}),
 		// Without "Base URL" override, a Base URL configured for the site in XP is used when present,
 		// so the sitemap is the same whichever host it is requested from.
-		preferBaseUrl: !overrideDomain,
+		siteUrlFromRequest: !overrideDomain,
 	};
 
 	const bean = newSitemapBean();
@@ -55,9 +51,9 @@ export function get(request: Request<{
 	const match = PATH_REGEXP.exec(request.path);
 	const fileNumber = match && match[1] ? parseInt(match[1], 10) : 0;
 	const isGzip = !!(match && match[2]);
-	const isJson = !isGzip && request.headers['Content-Type'] === 'application/json';
+	const isJson = !isGzip && request.getHeader('Content-Type') === 'application/json';
 	// Files are stored gzip-compressed, so a plain .xml request that accepts gzip gets the stored file as is.
-	const isEncoded = !isGzip && !isJson && acceptsGzip(request.headers);
+	const isEncoded = !isGzip && !isJson && acceptsGzip(request.getHeader('Accept-Encoding'));
 	const result = isJson
 		? bean.json(scriptParams)
 		: isGzip

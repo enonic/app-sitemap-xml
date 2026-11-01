@@ -42,7 +42,11 @@ public final class SitemapService
         this.clock = clock;
     }
 
-    public Sitemap sitemap( final SitemapParams requested, final boolean preferBaseUrl )
+    /**
+     * @param siteUrlFromRequest true when the site URL of the params is taken from the request: a Base URL configured for the site in
+     *                           XP is then used instead, when there is one
+     */
+    public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
         final Context context = ContextAccessor.current();
         final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
@@ -50,11 +54,15 @@ public final class SitemapService
         final Set<String> principals =
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
-        final SitemapParams params = preferBaseUrl ? baseUrl( repositoryId, branch, requested.sitePath() ).map( requested::withSiteUrl )
-            .orElse( requested ) : requested;
+        final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
+        final SitemapParams params = baseUrl.map( requested::withSiteUrl ).orElse( requested );
 
-        return cache.get( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals, params ), context.getAuthInfo(),
-                          () -> new SitemapQuery( contentService, params, clock.instant() ).execute() );
+        // Only a sitemap whose URLs do not depend on the request can be generated again before it is requested.
+        final boolean background = !siteUrlFromRequest || baseUrl.isPresent();
+
+        return cache.get( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals, params ), background,
+                          context.getAuthInfo(),
+                          ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled ) );
     }
 
     private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
