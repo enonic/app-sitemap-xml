@@ -10,10 +10,11 @@ import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
-import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -75,8 +76,12 @@ public final class Sitemap
 
     private final List<Instant> lastModified;
 
-    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified )
+    private final List<String> digests;
+
+    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified,
+                     final List<String> digests )
     {
+        this.digests = List.copyOf( digests );
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -250,13 +255,15 @@ public final class Sitemap
         json.writeStartObject();
         json.writeNumberField( "size", size );
         json.writeArrayFieldStart( "files" );
-        for ( final Instant lastmod : lastModified )
+        for ( int i = 0; i < lastModified.size(); i++ )
         {
             json.writeStartObject();
+            final Instant lastmod = lastModified.get( i );
             if ( lastmod != null )
             {
                 json.writeStringField( "lastmod", lastmod.toString() );
             }
+            json.writeStringField( "digest", digests.get( i ) );
             json.writeEndObject();
         }
         json.writeEndArray();
@@ -281,10 +288,12 @@ public final class Sitemap
             throw new IllegalArgumentException( "No sitemap in " + directory );
         }
         final List<Instant> lastModified = new ArrayList<>();
+        final List<String> digests = new ArrayList<>();
         for ( final Object file : Json.list( description, "files" ) )
         {
             final String lastmod = Json.optionalString( Json.object( file ), "lastmod" );
             lastModified.add( lastmod == null ? null : Instant.parse( lastmod ) );
+            digests.add( Json.string( Json.object( file ), "digest" ) );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
         final Map<String, ?> bytes = Json.object( description.get( "bytes" ) );
@@ -292,7 +301,7 @@ public final class Sitemap
         {
             plainSizes.put( name, Json.number( bytes, name ) );
         }
-        return new Sitemap( directory, (int) Json.number( description, "size" ), plainSizes, lastModified );
+        return new Sitemap( directory, (int) Json.number( description, "size" ), plainSizes, lastModified, digests );
     }
 
     Path directory()
@@ -388,12 +397,14 @@ public final class Sitemap
     }
 
     /**
-     * Counts the UTF-8 bytes written, which is the size of the file when served plain.
+     * Counts the UTF-8 bytes written, which is the size of the file when served plain, and digests them.
      */
     private static final class CountingWriter
         extends Writer
     {
         private final Writer delegate;
+
+        private final MessageDigest digest = sha256();
 
         private long bytes;
 
@@ -406,7 +417,9 @@ public final class Sitemap
         public void write( final String value )
             throws IOException
         {
-            bytes += utf8Length( value );
+            final byte[] utf8 = value.getBytes( StandardCharsets.UTF_8 );
+            bytes += utf8.length;
+            digest.update( utf8 );
             delegate.write( value );
         }
 
@@ -414,8 +427,7 @@ public final class Sitemap
         public void write( final char[] chars, final int offset, final int length )
             throws IOException
         {
-            bytes += utf8Length( CharBuffer.wrap( chars, offset, length ) );
-            delegate.write( chars, offset, length );
+            write( new String( chars, offset, length ) );
         }
 
         @Override
@@ -435,6 +447,33 @@ public final class Sitemap
         long bytes()
         {
             return bytes;
+        }
+
+        String digest()
+        {
+            return toHex( digest.digest() );
+        }
+
+        private static String toHex( final byte[] bytes )
+        {
+            final StringBuilder hex = new StringBuilder( bytes.length * 2 );
+            for ( final byte b : bytes )
+            {
+                hex.append( Character.forDigit( ( b >> 4 ) & 0xF, 16 ) ).append( Character.forDigit( b & 0xF, 16 ) );
+            }
+            return hex.toString();
+        }
+
+        private static MessageDigest sha256()
+        {
+            try
+            {
+                return MessageDigest.getInstance( "SHA-256" );
+            }
+            catch ( NoSuchAlgorithmException e )
+            {
+                throw new IllegalStateException( e );
+            }
         }
     }
 
@@ -459,6 +498,8 @@ public final class Sitemap
         private final int maxFiles;
 
         private final List<Instant> lastModified = new ArrayList<>();
+
+        private final List<String> digests = new ArrayList<>();
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
@@ -513,7 +554,6 @@ public final class Sitemap
                 Objects.requireNonNull( file ).write( url );
                 renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
                 fileUrls++;
-                lastModified.set( lastModified.size() - 1, latest( lastModified.get( lastModified.size() - 1 ), entry.lastModified() ) );
                 size++;
             }
             catch ( IOException e )
@@ -522,7 +562,14 @@ public final class Sitemap
             }
         }
 
-        public Sitemap build()
+        /**
+         * Finishes the files. A file keeps the modification time of the same file of the previous sitemap when its content is the same,
+         * and gets the given time otherwise: crawlers fetch a file of a sitemap index again when its modification time changes.
+         *
+         * @param previous the sitemap this one replaces, if any
+         * @param now      the modification time of the files that changed
+         */
+        public Sitemap build( final Sitemap previous, final Instant now )
         {
             try
             {
@@ -537,11 +584,21 @@ public final class Sitemap
                               leftOut, maxFiles, MAX_FILE_BYTES );
                 }
 
-                if ( lastModified.isEmpty() )
+                final boolean empty = lastModified.isEmpty();
+                if ( empty )
                 {
                     writeEmpty();
                 }
-                else if ( lastModified.size() == 1 )
+                for ( int i = 0; i < lastModified.size(); i++ )
+                {
+                    lastModified.set( i, unchanged( previous, i ) ? previous.lastModified.get( i ) : now );
+                }
+                if ( empty )
+                {
+                    built = true;
+                    return new Sitemap( directory, size, plainSizes, lastModified, digests );
+                }
+                if ( lastModified.size() == 1 )
                 {
                     Files.move( gzPath( fileName( 1 ) ), gzPath( ROOT_FILE ) );
                     plainSizes.put( ROOT_FILE, plainSizes.remove( fileName( 1 ) ) );
@@ -552,12 +609,18 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified );
+                return new Sitemap( directory, size, plainSizes, lastModified, digests );
             }
             catch ( IOException e )
             {
                 throw new UncheckedIOException( e );
             }
+        }
+
+        private boolean unchanged( final Sitemap previous, final int index )
+        {
+            return previous != null && index < previous.digests.size() && previous.digests.get( index ).equals( digests.get( index ) ) &&
+                previous.lastModified.get( index ) != null;
         }
 
         private void writeEmpty()
@@ -566,6 +629,7 @@ public final class Sitemap
             final CountingWriter root = open( ROOT_FILE );
             root.write( URLSET_START + URLSET_END );
             close( root, ROOT_FILE );
+            digests.add( root.digest() );
             close( open( urlsetFileName( 1 ) ), urlsetFileName( 1 ) );
             lastModified.add( null );
         }
@@ -620,6 +684,7 @@ public final class Sitemap
             {
                 file.write( URLSET_END );
                 close( file, fileName( lastModified.size() ) );
+                digests.add( file.digest() );
                 file = null;
                 Objects.requireNonNull( urlset ).close();
                 urlset = null;
@@ -669,15 +734,6 @@ public final class Sitemap
                 }
             }
             delete( directory );
-        }
-
-        private static Instant latest( final Instant a, final Instant b )
-        {
-            if ( a == null )
-            {
-                return b;
-            }
-            return b == null || a.isAfter( b ) ? a : b;
         }
     }
 }

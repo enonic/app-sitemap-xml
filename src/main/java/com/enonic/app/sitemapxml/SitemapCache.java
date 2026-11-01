@@ -216,7 +216,7 @@ public final class SitemapCache
                 .authInfo( authInfo )
                 .build()
                 .callWith( () -> source.write( builder::add, () -> false ) );
-            final Sitemap sitemap = builder.build();
+            final Sitemap sitemap = builder.build( null, clock.instant() );
             retire( sitemap );
             return sitemap;
         }
@@ -765,7 +765,7 @@ public final class SitemapCache
                     {
                         throw new CancellationException();
                     }
-                    sitemap = builder.build();
+                    sitemap = builder.build( entry.sitemap, clock.instant() );
                 }
                 publish( sitemap, validUntil );
             }
@@ -804,6 +804,7 @@ public final class SitemapCache
             {
                 retire( previous );
             }
+            evictOverflow( key );
             LOG.debug( "Generated sitemap {}", key );
 
             if ( entry.background && validUntil != null )

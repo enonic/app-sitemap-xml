@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SitemapTest
 {
+    static final Instant NOW = Instant.parse( "2024-06-01T00:00:00Z" );
+
     private static final List<ContentTypeSetting> CONTENT_TYPES = List.of( new ContentTypeSetting( "base:folder", "daily", "0.8" ) );
 
     @TempDir
@@ -55,11 +57,11 @@ class SitemapTest
         assertThat( text( sitemap.root() ) ).isEqualTo( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
                                                             "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-1.xml</loc>" +
-                                                            "<lastmod>2024-01-05</lastmod></sitemap>" +
+                                                            "<lastmod>2024-06-01</lastmod></sitemap>" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-2.xml</loc>" +
-                                                            "<lastmod>2024-01-03</lastmod></sitemap>" +
+                                                            "<lastmod>2024-06-01</lastmod></sitemap>" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-3.xml</loc>" +
-                                                            "<lastmod>2024-01-01</lastmod></sitemap>" + "</sitemapindex>" );
+                                                            "<lastmod>2024-06-01</lastmod></sitemap>" + "</sitemapindex>" );
         assertThat( text( sitemap.file( 3 ).orElseThrow() ) ).contains( "<loc>https://example.com/site/project/master/mysite/item-5</loc>" )
             .doesNotContain( "item-4" );
         assertThat( sitemap.file( 0 ) ).isEmpty();
@@ -180,7 +182,7 @@ class SitemapTest
             {
                 builder.add( new SitemapEntry( "/item-" + i, "base:folder", null ) );
             }
-            sitemap = builder.build();
+            sitemap = builder.build( null, NOW );
         }
 
         assertThat( sitemap.size() ).isEqualTo( 120_000 );
@@ -261,7 +263,7 @@ class SitemapTest
                                                                  new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 50_000 );
         final Sitemap sitemap = write( params, 2, entries );
 
-        assertThat( sitemap.lastModified() ).containsExactly( Instant.parse( "2024-01-03T10:00:00Z" ), null );
+        assertThat( sitemap.lastModified() ).containsExactly( NOW, NOW );
         assertThat( sitemap.urlsetJson( 10 ) ).isEqualTo(
             "[{\"path\":\"/\",\"lastmod\":\"2024-01-03T10:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}," +
                 "{\"path\":\"/a\",\"lastmod\":\"2024-01-02T10:00:00Z\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}," +
@@ -271,6 +273,29 @@ class SitemapTest
         assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b c\"}]" );
         assertThat( sitemap.fileUrlsetJson( 3 ) ).isEmpty();
         assertThat( sitemap.fileUrlsetJson( 0 ) ).isEmpty();
+    }
+
+    @Test
+    void filesKeepTheirModificationTimeOnlyWhileTheirContentIsTheSame()
+    {
+        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
+            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + ( 6 - i ) + "T10:00:00Z" ) ) )
+            .collect( Collectors.toList() );
+        final Sitemap first = write( params( "https://example.com" ), 2, entries );
+        final Instant later = NOW.plusSeconds( 3600 );
+
+        final Sitemap same = build( params( "https://example.com" ), 2, entries, first, later );
+        assertThat( same.lastModified() ).containsExactly( NOW, NOW, NOW );
+
+        final List<SitemapEntry> withoutOldest = entries.subList( 0, 4 );
+        final Sitemap changed = build( params( "https://example.com" ), 2, withoutOldest, same, later );
+        assertThat( changed.fileCount() ).isEqualTo( 2 );
+        assertThat( changed.lastModified() ).containsExactly( NOW, NOW );
+
+        final List<SitemapEntry> withoutNewest = entries.subList( 1, 5 );
+        final Sitemap shifted = build( params( "https://example.com" ), 2, withoutNewest, same, later );
+        assertThat( shifted.lastModified() ).containsExactly( later, later );
+        assertThat( text( shifted.root() ) ).contains( "<lastmod>2024-06-01</lastmod>" );
     }
 
     @Test
@@ -304,7 +329,18 @@ class SitemapTest
         try (Sitemap.Builder builder = Sitemap.builder( directory, params, urlsPerFile, maxFileBytes, maxFiles ))
         {
             entries.forEach( builder::add );
-            return builder.build();
+            return builder.build( null, NOW );
+        }
+    }
+
+    private Sitemap build( final SitemapParams params, final int urlsPerFile, final List<SitemapEntry> entries, final Sitemap previous,
+                           final Instant now )
+    {
+        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( "sitemap-" + System.nanoTime() ), params, urlsPerFile,
+                                                        Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ))
+        {
+            entries.forEach( builder::add );
+            return builder.build( previous, now );
         }
     }
 

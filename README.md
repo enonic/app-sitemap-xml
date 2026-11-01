@@ -90,7 +90,7 @@ By default, the app will use the domain name of the site. If you want to overrid
 
 The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are always obeyed: a sitemap file holds at most 50,000 URLs and 50MB (uncompressed), a sitemap index lists at most 50,000 sitemaps, and URLs longer than 2,048 characters are left out.
 
-When the items do not fit in one file of 50MB, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
+When the items do not fit in one file of 50MB, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping. The `<lastmod>` of each file in the index is the time that file last changed: a file whose content is the same as in the previous sitemap keeps its time.
 
 URLs are sorted by path, which compresses better. When the site has more items than "Max included items", the most recently modified items are included, sorted newest first.
 
