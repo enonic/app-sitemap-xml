@@ -142,7 +142,7 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
 
-* The sitemap lists the content the requesting user can read, and is cached per user; anonymous requests (crawlers) share one.
+* The sitemap lists the content the requesting user can read, and is cached per user; anonymous requests (crawlers) share one. When the site itself is readable by everyone, logged-in users get that public sitemap too.
 * In preview (`draft` branch), the sitemap lists the site URL only, and is not kept.
 * A site URL taken from the request must be `http` or `https` (lower case) without user info; other requests get `400 Bad Request`. Query and fragment are left out.
 
