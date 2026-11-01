@@ -1,6 +1,8 @@
 package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -8,7 +10,7 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -37,13 +39,14 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.jr.ob.JSON;
 
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.event.EventListener;
 import com.enonic.xp.home.HomeDir;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.util.GenericValue;
 
 /**
  * Generated sitemaps. A sitemap is served until a newer one of the same site replaces it, also when its content changed in the
@@ -385,22 +388,20 @@ public final class SitemapCache
         final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
         try
         {
-            try (JsonGenerator json = Sitemap.JSON.createGenerator( Files.newOutputStream( temporary ) ))
+            final GenericValue.ObjectBuilder description = GenericValue.newObject()
+                .put( "format", FORMAT )
+                .put( "key", key.store() )
+                .put( "background", entry.background )
+                .put( "lastAccess", entry.lastAccess.toString() );
+            final Instant validUntil = entry.validUntil;
+            if ( validUntil != null )
             {
-                json.writeStartObject();
-                json.writeNumberField( "format", FORMAT );
-                json.writeFieldName( "key" );
-                key.store( json );
-                json.writeBooleanField( "background", entry.background );
-                json.writeStringField( "lastAccess", entry.lastAccess.toString() );
-                final Instant validUntil = entry.validUntil;
-                if ( validUntil != null )
-                {
-                    json.writeStringField( "validUntil", validUntil.toString() );
-                }
-                json.writeFieldName( "sitemap" );
-                sitemap.store( json );
-                json.writeEndObject();
+                description.put( "validUntil", validUntil.toString() );
+            }
+            description.put( "sitemap", sitemap.store() );
+            try (OutputStream out = Files.newOutputStream( temporary ))
+            {
+                JSON.std.write( description.build().toRawJava(), out );
             }
             Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
         }
@@ -460,17 +461,21 @@ public final class SitemapCache
         }
         try
         {
-            final Map<String, ?> description = Json.readObject( file );
-            if ( Json.number( description, "format" ) != FORMAT )
+            final GenericValue description;
+            try (InputStream in = Files.newInputStream( file ))
+            {
+                description = GenericValue.fromRawJava( JSON.std.mapFrom( in ) );
+            }
+            if ( description.property( "format" ).asInteger() != FORMAT )
             {
                 return null;
             }
-            final Key key = Key.restore( Json.object( description.get( "key" ) ) );
-            final Entry entry = new Entry( Instant.parse( Json.string( description, "lastAccess" ) ) );
-            entry.background = Json.bool( description, "background" );
-            final String validUntil = Json.optionalString( description, "validUntil" );
-            entry.validUntil = validUntil == null ? null : Instant.parse( validUntil );
-            final Sitemap sitemap = Sitemap.restore( directory, Json.object( description.get( "sitemap" ) ) );
+            final Key key = Key.restore( description.property( "key" ) );
+            final Entry entry = new Entry( Instant.parse( description.property( "lastAccess" ).asString() ) );
+            entry.background = description.property( "background" ).asBoolean();
+            entry.validUntil =
+                description.optional( "validUntil" ).map( validUntil -> Instant.parse( validUntil.asString() ) ).orElse( null );
+            final Sitemap sitemap = Sitemap.restore( directory, description.property( "sitemap" ) );
             entry.sitemap = sitemap;
             entry.ready.complete( sitemap );
             return Map.entry( key, entry );
@@ -569,53 +574,46 @@ public final class SitemapCache
                 params.sitePath().equals( other.params.sitePath() ) && principals.equals( other.principals );
         }
 
-        void store( final JsonGenerator json )
-            throws IOException
+        GenericValue store()
         {
-            json.writeStartObject();
-            json.writeStringField( "repository", repositoryId );
-            json.writeStringField( "branch", branch );
-            json.writeArrayFieldStart( "principals" );
-            for ( final String principal : new TreeSet<>( principals ) )
-            {
-                json.writeString( principal );
-            }
-            json.writeEndArray();
-            json.writeStringField( "sitePath", params.sitePath() );
-            json.writeStringField( "siteUrl", params.siteUrl() );
-            json.writeArrayFieldStart( "contentTypes" );
-            for ( final ContentTypeSetting setting : params.contentTypes() )
-            {
-                json.writeStartObject();
-                json.writeStringField( "contentType", setting.contentType() );
-                json.writeStringField( "changefreq", setting.changefreq() );
-                json.writeStringField( "priority", setting.priority() );
-                json.writeEndObject();
-            }
-            json.writeEndArray();
-            json.writeArrayFieldStart( "ignorePatterns" );
-            for ( final String pattern : params.ignorePatterns() )
-            {
-                json.writeString( pattern );
-            }
-            json.writeEndArray();
-            json.writeEndObject();
+            final GenericValue contentTypes = params.contentTypes()
+                .stream()
+                .map( setting -> GenericValue.newObject()
+                    .put( "contentType", setting.contentType() )
+                    .put( "changefreq", setting.changefreq() )
+                    .put( "priority", setting.priority() )
+                    .build() )
+                .collect( GenericValue.listCollector() );
+            return GenericValue.newObject()
+                .put( "repository", repositoryId )
+                .put( "branch", branch )
+                .put( "principals", strings( new TreeSet<>( principals ) ) )
+                .put( "sitePath", params.sitePath() )
+                .put( "siteUrl", params.siteUrl() )
+                .put( "contentTypes", contentTypes )
+                .put( "ignorePatterns", strings( params.ignorePatterns() ) )
+                .build();
         }
 
-        static Key restore( final Map<String, ?> key )
+        static Key restore( final GenericValue key )
         {
-            final List<ContentTypeSetting> contentTypes = new ArrayList<>();
-            for ( final Object item : Json.list( key, "contentTypes" ) )
-            {
-                final Map<String, ?> setting = Json.object( item );
-                contentTypes.add( new ContentTypeSetting( Json.string( setting, "contentType" ), Json.string( setting, "changefreq" ),
-                                                          Json.string( setting, "priority" ) ) );
-            }
+            final List<ContentTypeSetting> contentTypes = key.property( "contentTypes" )
+                .values()
+                .stream()
+                .map( setting -> new ContentTypeSetting( setting.property( "contentType" ).asString(),
+                                                         setting.property( "changefreq" ).asString(),
+                                                         setting.property( "priority" ).asString() ) )
+                .toList();
             final SitemapParams params =
-                new SitemapParams( Json.string( key, "sitePath" ), Json.string( key, "siteUrl" ), contentTypes,
-                                   Json.strings( key, "ignorePatterns" ) );
-            return new Key( Json.string( key, "repository" ), Json.string( key, "branch" ),
-                            Set.copyOf( Json.strings( key, "principals" ) ), params );
+                new SitemapParams( key.property( "sitePath" ).asString(), key.property( "siteUrl" ).asString(), contentTypes,
+                                   key.property( "ignorePatterns" ).toStringList() );
+            return new Key( key.property( "repository" ).asString(), key.property( "branch" ).asString(),
+                            Set.copyOf( key.property( "principals" ).toStringList() ), params );
+        }
+
+        private static GenericValue strings( final Collection<String> values )
+        {
+            return values.stream().map( GenericValue::stringValue ).collect( GenericValue.listCollector() );
         }
     }
 

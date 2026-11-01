@@ -39,6 +39,8 @@ import com.fasterxml.jackson.core.io.SerializedString;
 import com.google.common.io.ByteSource;
 import com.google.common.io.MoreFiles;
 
+import com.enonic.xp.util.GenericValue;
+
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_END;
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_START;
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_LASTMOD_BYTES;
@@ -248,41 +250,36 @@ public final class Sitemap
     }
 
     /**
-     * Writes a description of the sitemap, for {@link #restore} to read the sitemap back from its directory.
+     * Describes the sitemap, for {@link #restore} to read the sitemap back from its directory.
      */
-    void store( final JsonGenerator json )
-        throws IOException
+    GenericValue store()
     {
-        json.writeStartObject();
-        json.writeNumberField( "size", size );
-        json.writeArrayFieldStart( "files" );
+        final GenericValue.ListBuilder files = GenericValue.newList();
         for ( int i = 0; i < lastModified.size(); i++ )
         {
-            json.writeStartObject();
+            final GenericValue.ObjectBuilder file = GenericValue.newObject();
             final Instant lastmod = lastModified.get( i );
             if ( lastmod != null )
             {
-                json.writeStringField( "lastmod", lastmod.toString() );
+                file.put( "lastmod", lastmod.toString() );
             }
-            json.writeStringField( "digest", digests.get( i ) );
-            json.writeEndObject();
+            files.add( file.put( "digest", digests.get( i ) ).build() );
         }
-        json.writeEndArray();
-        json.writeObjectFieldStart( "bytes" );
+        final GenericValue.ObjectBuilder bytes = GenericValue.newObject();
         for ( final Map.Entry<String, Long> file : plainSizes.entrySet() )
         {
-            json.writeNumberField( file.getKey(), file.getValue() );
+            bytes.put( file.getKey(), file.getValue().longValue() );
         }
-        json.writeEndObject();
-        json.writeEndObject();
+        return GenericValue.newObject().put( "size", size ).put( "files", files.build() ).put( "bytes", bytes.build() ).build();
     }
 
     /**
      * Reads back a sitemap that {@link #store} described from its directory.
      *
-     * @throws IllegalArgumentException when the description is incomplete or the files are missing
+     * @throws IllegalArgumentException when the files are missing
+     * @throws RuntimeException when the description is incomplete
      */
-    static Sitemap restore( final Path directory, final Map<String, ?> description )
+    static Sitemap restore( final Path directory, final GenericValue description )
     {
         if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
         {
@@ -290,19 +287,17 @@ public final class Sitemap
         }
         final List<@Nullable Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
-        for ( final Object file : Json.list( description, "files" ) )
+        for ( final GenericValue file : description.property( "files" ).values() )
         {
-            final String lastmod = Json.optionalString( Json.object( file ), "lastmod" );
-            lastModified.add( lastmod == null ? null : Instant.parse( lastmod ) );
-            digests.add( Json.string( Json.object( file ), "digest" ) );
+            lastModified.add( file.optional( "lastmod" ).map( lastmod -> Instant.parse( lastmod.asString() ) ).orElse( null ) );
+            digests.add( file.property( "digest" ).asString() );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
-        final Map<String, ?> bytes = Json.object( description.get( "bytes" ) );
-        for ( final String name : bytes.keySet() )
+        for ( final Map.Entry<String, GenericValue> file : description.property( "bytes" ).properties() )
         {
-            plainSizes.put( name, Json.number( bytes, name ) );
+            plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        return new Sitemap( directory, (int) Json.number( description, "size" ), plainSizes, lastModified, digests );
+        return new Sitemap( directory, description.property( "size" ).asInteger(), plainSizes, lastModified, digests );
     }
 
     Path directory()
