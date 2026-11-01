@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
+import java.io.Writer;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -88,18 +89,18 @@ public final class Sitemap
     /**
      * Starts writing a sitemap to the given directory. Entries are written to the files as they are added.
      */
-    public static Writer writer( final Path directory, final SitemapParams params )
+    public static Builder builder( final Path directory, final SitemapParams params )
     {
-        return writer( directory, params, MAX_URLS_PER_FILE, MAX_FILE_BYTES, MAX_FILES );
+        return builder( directory, params, MAX_URLS_PER_FILE, MAX_FILE_BYTES, MAX_FILES );
     }
 
-    static Writer writer( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
+    static Builder builder( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
                           final int maxFiles )
     {
         try
         {
             Files.createDirectories( directory );
-            return new Writer( directory, params, maxUrlsPerFile, maxFileBytes, maxFiles );
+            return new Builder( directory, params, maxUrlsPerFile, maxFileBytes, maxFiles );
         }
         catch ( IOException e )
         {
@@ -404,13 +405,13 @@ public final class Sitemap
      * Counts the UTF-8 bytes written, which is the size of the file when served plain.
      */
     private static final class CountingWriter
-        extends java.io.Writer
+        extends Writer
     {
-        private final java.io.Writer delegate;
+        private final Writer delegate;
 
         private long bytes;
 
-        CountingWriter( final java.io.Writer delegate )
+        CountingWriter( final Writer delegate )
         {
             this.delegate = delegate;
         }
@@ -454,9 +455,9 @@ public final class Sitemap
     /**
      * Writes the files of a sitemap as entries are added, so a sitemap is never held in memory. Files are split by the limits of the
      * sitemap protocol: at most 50 000 URLs and 50MB (uncompressed) per file, at most 50 000 files and 50MB in the index.
-     * Closing a writer that is not finished deletes what was written.
+     * Closing a builder that is not built deletes what was written.
      */
-    public static final class Writer
+    public static final class Builder
         implements Closeable
     {
         private final Path directory;
@@ -497,9 +498,9 @@ public final class Sitemap
 
         private int leftOut;
 
-        private boolean finished;
+        private boolean built;
 
-        private Writer( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
+        private Builder( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
                         final int maxFiles )
             throws IOException
         {
@@ -544,7 +545,7 @@ public final class Sitemap
             }
         }
 
-        public Sitemap finish()
+        public Sitemap build()
         {
             try
             {
@@ -576,7 +577,7 @@ public final class Sitemap
                     writeIndex( ROOT_FILE, ".xml" + GZIP_EXTENSION );
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
-                finished = true;
+                built = true;
                 return new Sitemap( directory, size, plainSizes, lastModified );
             }
             catch ( IOException e )
@@ -675,7 +676,7 @@ public final class Sitemap
         @Override
         public void close()
         {
-            if ( finished )
+            if ( built )
             {
                 return;
             }

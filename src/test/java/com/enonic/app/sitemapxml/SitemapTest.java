@@ -164,18 +164,18 @@ class SitemapTest
         final Path blocked = temp.resolve( "blocked" );
         Files.writeString( blocked, "not a directory" );
 
-        assertThatThrownBy( () -> Sitemap.writer( blocked.resolve( "sitemap" ), params( "https://example.com" ) ) ).isInstanceOf(
+        assertThatThrownBy( () -> Sitemap.builder( blocked.resolve( "sitemap" ), params( "https://example.com" ) ) ).isInstanceOf(
             UncheckedIOException.class );
         assertThat( Files.exists( blocked.resolve( "sitemap" ) ) ).isFalse();
     }
 
     @Test
-    void closingUnfinishedWriterDeletesFiles()
+    void closingUnbuiltBuilderDeletesFiles()
     {
         final Path directory = temp.resolve( "unfinished" );
-        try (Sitemap.Writer writer = Sitemap.writer( directory, params( "https://example.com" ) ))
+        try (Sitemap.Builder builder = Sitemap.builder( directory, params( "https://example.com" ) ))
         {
-            writer.add( new SitemapEntry( "/a", "base:folder", null ) );
+            builder.add( new SitemapEntry( "/a", "base:folder", null ) );
             assertThat( directory ).isDirectory();
         }
 
@@ -187,13 +187,13 @@ class SitemapTest
     {
         final Path directory = temp.resolve( "huge" );
         final Sitemap sitemap;
-        try (Sitemap.Writer writer = Sitemap.writer( directory, params( "https://example.com" ) ))
+        try (Sitemap.Builder builder = Sitemap.builder( directory, params( "https://example.com" ) ))
         {
             for ( int i = 0; i < 120_000; i++ )
             {
-                writer.add( new SitemapEntry( "/item-" + i, "base:folder", null ) );
+                builder.add( new SitemapEntry( "/item-" + i, "base:folder", null ) );
             }
-            sitemap = writer.finish();
+            sitemap = builder.build();
         }
 
         assertThat( sitemap.size() ).isEqualTo( 120_000 );
@@ -316,10 +316,10 @@ class SitemapTest
     static Sitemap write( final Path directory, final SitemapParams params, final List<SitemapEntry> entries, final int urlsPerFile,
                           final long maxFileBytes, final int maxFiles )
     {
-        try (Sitemap.Writer writer = Sitemap.writer( directory, params, urlsPerFile, maxFileBytes, maxFiles ))
+        try (Sitemap.Builder builder = Sitemap.builder( directory, params, urlsPerFile, maxFileBytes, maxFiles ))
         {
-            entries.forEach( writer::add );
-            return writer.finish();
+            entries.forEach( builder::add );
+            return builder.build();
         }
     }
 
