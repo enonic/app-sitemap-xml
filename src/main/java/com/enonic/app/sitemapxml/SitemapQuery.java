@@ -115,7 +115,7 @@ public final class SitemapQuery
         this.ignoredByPattern = params.ignorePatterns()
             .stream()
             .map( pattern -> ignorePath( contentRoot, pattern ) )
-            .filter( path -> !isExact( path ) && !isChildren( path ) )
+            .filter( path -> !isExact( path ) && !isDescendants( path ) )
             .map( SitemapQuery::glob )
             .toList();
     }
@@ -381,7 +381,7 @@ public final class SitemapQuery
         blockRobots.addString( "field", BLOCK_ROBOTS_FIELD );
         blockRobots.addBoolean( "value", true );
 
-        // Ignore patterns that are a path, or the children of a path, are terms too. Other patterns are matched after loading, as a
+        // Ignore patterns that are a path, or everything below a path (/a/b/*: all descendants, not /a/b itself), are terms too. Other patterns are matched after loading, as a
         // wildcard here would enumerate paths in each query, all paths of the repository for a pattern starting with *.
         for ( final String pattern : params.ignorePatterns() )
         {
@@ -390,12 +390,12 @@ public final class SitemapQuery
             {
                 term( bool.addSet( "mustNot" ), PATH.getPath(), path );
             }
-            else if ( isChildren( path ) )
+            else if ( isDescendants( path ) )
             {
                 final String parent = path.substring( 0, path.length() - 2 );
-                final PropertySet children = bool.addSet( "mustNot" ).addSet( "boolean" );
-                term( children.addSet( "must" ), PATH_HIERARCHY, parent );
-                term( children.addSet( "mustNot" ), PATH.getPath(), parent );
+                final PropertySet descendants = bool.addSet( "mustNot" ).addSet( "boolean" );
+                term( descendants.addSet( "must" ), PATH_HIERARCHY, parent );
+                term( descendants.addSet( "mustNot" ), PATH.getPath(), parent );
             }
         }
 
@@ -417,7 +417,7 @@ public final class SitemapQuery
         return path.indexOf( '*' ) < 0 && path.indexOf( '?' ) < 0;
     }
 
-    static boolean isChildren( final String path )
+    static boolean isDescendants( final String path )
     {
         return path.endsWith( "/*" ) && path.length() > 2 && isExact( path.substring( 0, path.length() - 2 ) );
     }

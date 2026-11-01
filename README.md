@@ -176,9 +176,9 @@ For example, to exclude all paths ending with `/foo`, you can add the following 
 
 To exclude a specific content use: `/full/path`
 
-To exclude just the children of a specific folder use: `/some/folder/*`
+To exclude everything below a specific folder (all its descendants, at any depth), but not the folder itself, use: `/some/folder/*`
 
-To exclude a specific folder AND it's children use two patterns:
+To exclude a specific folder AND everything below it use two patterns:
 * `/some/folder`
 * `/some/folder/*`
 
