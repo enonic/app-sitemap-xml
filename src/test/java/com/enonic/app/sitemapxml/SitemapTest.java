@@ -57,11 +57,11 @@ class SitemapTest
         assertThat( text( sitemap.root() ) ).isEqualTo( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
                                                             "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-1.xml</loc>" +
-                                                            "<lastmod>2024-06-01</lastmod></sitemap>" +
+                                                            "<lastmod>2024-06-01T00:00:00Z</lastmod></sitemap>" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-2.xml</loc>" +
-                                                            "<lastmod>2024-06-01</lastmod></sitemap>" +
+                                                            "<lastmod>2024-06-01T00:00:00Z</lastmod></sitemap>" +
                                                             "<sitemap><loc>https://example.com/site/project/master/mysite/sitemap-3.xml</loc>" +
-                                                            "<lastmod>2024-06-01</lastmod></sitemap>" + "</sitemapindex>" );
+                                                            "<lastmod>2024-06-01T00:00:00Z</lastmod></sitemap>" + "</sitemapindex>" );
         assertThat( text( sitemap.file( 3 ).orElseThrow() ) ).contains( "<loc>https://example.com/site/project/master/mysite/item-5</loc>" )
             .doesNotContain( "item-4" );
         assertThat( sitemap.file( 0 ) ).isEmpty();
@@ -295,7 +295,8 @@ class SitemapTest
         final List<SitemapEntry> withoutNewest = entries.subList( 1, 5 );
         final Sitemap shifted = build( params( "https://example.com" ), 2, withoutNewest, same, later );
         assertThat( shifted.lastModified() ).containsExactly( later, later );
-        assertThat( text( shifted.root() ) ).contains( "<lastmod>2024-06-01</lastmod>" );
+        assertThat( text( shifted.root() ) ).contains( "<lastmod>2024-06-01T01:00:00Z</lastmod>" )
+            .doesNotContain( "<lastmod>2024-06-01T00:00:00Z</lastmod>" );
     }
 
     @Test

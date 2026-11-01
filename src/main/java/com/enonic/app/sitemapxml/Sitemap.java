@@ -40,7 +40,7 @@ import com.google.common.io.MoreFiles;
 
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_END;
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_START;
-import static com.enonic.app.sitemapxml.SitemapRenderer.LASTMOD_BYTES;
+import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_LASTMOD_BYTES;
 import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_END;
 import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
 import static com.enonic.app.sitemapxml.SitemapRenderer.utf8Length;
@@ -659,7 +659,7 @@ public final class Sitemap
 
             final int number = lastModified.size() + 1;
             final long indexEntryBytes =
-                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + LASTMOD_BYTES;
+                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES;
             if ( number > maxFiles || indexBytes + indexEntryBytes > MAX_FILE_BYTES )
             {
                 return false;

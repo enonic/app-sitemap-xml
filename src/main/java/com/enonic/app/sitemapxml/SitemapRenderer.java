@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 
 import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
@@ -27,7 +28,7 @@ final class SitemapRenderer
 
     static final String INDEX_END = "</sitemapindex>";
 
-    static final int LASTMOD_BYTES = "<lastmod>0000-00-00</lastmod>".length();
+    static final int INDEX_LASTMOD_BYTES = "<lastmod>0000-00-00T00:00:00Z</lastmod>".length();
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE.withZone( ZoneOffset.UTC );
 
@@ -119,7 +120,7 @@ final class SitemapRenderer
             textElement( "loc", fileUrl );
             if ( lastModified != null )
             {
-                textElement( "lastmod", DATE.format( lastModified ) );
+                textElement( "lastmod", DateTimeFormatter.ISO_INSTANT.format( lastModified.truncatedTo( ChronoUnit.SECONDS ) ) );
             }
             xml.writeEndElement();
         } );

@@ -257,6 +257,8 @@ describe('guillotine extensions', () => {
 				siteUrl: 'https://enonic.com',
 				maxItems: 1000,
 			}), 10);
+			expect(urlsetResolver({args: {count: 0}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source})).toEqual([]);
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
 			const {run} = await import('/lib/xp/context');
 			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
 				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)

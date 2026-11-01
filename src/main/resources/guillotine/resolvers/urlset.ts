@@ -51,7 +51,7 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 		siteUrl: siteConfig?.overrideDomain || '',
 		siteConfig: siteConfig || {},
 	});
-	const count = args.count && args.count > 0 ? Math.min(args.count, params.maxItems) : params.maxItems;
+	const count = args.count === undefined || args.count === null ? params.maxItems : Math.max(0, Math.min(args.count, params.maxItems));
 
 	const {project} = localContext;
 	const {
