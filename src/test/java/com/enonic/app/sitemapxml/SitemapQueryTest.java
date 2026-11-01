@@ -35,6 +35,7 @@ import com.enonic.xp.content.GetContentByIdsParams;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
+import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.aggregation.AggregationQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
 import com.enonic.xp.query.filter.Filter;
@@ -59,7 +60,8 @@ class SitemapQueryTest
     @Test
     void dsl()
     {
-        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of( "/skip/", "*/foo", "bar" ), 10 );
+        final SitemapParams params =
+            new SitemapParams( "/mysite", "https://example.com", List.of(), List.of( "/skip/", "*/foo", "bar", "/folder/*", "/x*" ), 10 );
 
         final PropertySet bool = new SitemapQuery( contentService, params, NOW ).dsl().getSet( "boolean" );
         final List<PropertySet> must = sets( bool, "must" );
@@ -68,10 +70,28 @@ class SitemapQueryTest
         assertThat( must.get( 0 ).getSet( "in" ).getStrings( "values" ) ).containsExactly( "portal:site" );
         assertThat( must.get( 1 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
         assertThat( must.get( 1 ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite" );
+        assertThat( mustNot ).hasSize( 4 );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "x.com-enonic-app-metafields.meta-data.blockRobots" );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getBoolean( "value" ) ).isTrue();
-        assertThat( mustNot.subList( 1, 4 ) ).extracting( set -> set.getSet( "like" ).getString( "value" ) )
-            .containsExactly( "/content/mysite/skip", "*/foo", "/content/mysite/bar" );
+        assertThat( mustNot.subList( 1, 3 ) ).extracting( set -> set.getSet( "term" ).getString( "field" ) + " " + set.getSet( "term" ).getString( "value" ) )
+            .containsExactly( "_path /content/mysite/skip", "_path /content/mysite/bar" );
+        final PropertySet children = mustNot.get( 3 ).getSet( "boolean" );
+        assertThat( children.getSet( "must" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
+        assertThat( children.getSet( "must" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
+        assertThat( children.getSet( "mustNot" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path" );
+        assertThat( children.getSet( "mustNot" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
+    }
+
+    @Test
+    void glob()
+    {
+        assertThat( SitemapQuery.glob( "*/Foo" ).matcher( "/content/s/a/foo" ).matches() ).isTrue();
+        assertThat( SitemapQuery.glob( "*/foo" ).matcher( "/content/s/a/foobar" ).matches() ).isFalse();
+        assertThat( SitemapQuery.glob( "/content/s/a?c" ).matcher( "/content/s/abc" ).matches() ).isTrue();
+        assertThat( SitemapQuery.glob( "/content/s/a.c" ).matcher( "/content/s/abc" ).matches() ).isFalse();
+        assertThat( SitemapQuery.isChildren( "/content/s/a/*" ) ).isTrue();
+        assertThat( SitemapQuery.isChildren( "/content/s/a*/*" ) ).isFalse();
+        assertThat( SitemapQuery.isExact( "/content/s/a" ) ).isTrue();
     }
 
     @Test
@@ -137,44 +157,48 @@ class SitemapQueryTest
     }
 
     @Test
-    void largeSitemapIsReadNewestFirstInTimeRanges()
+    void largeSitemapIsReadNewestFirstInSlices()
     {
         final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
         final Instant hour = day.minus( Duration.ofDays( 2 ) );
         final Instant second = Instant.parse( "2024-01-01T10:20:30Z" );
+        final Instant stored = Instant.parse( "2024-01-03T00:00:00Z" );
         final List<String> requests = new ArrayList<>();
         when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
             final ContentQuery query = invocation.getArgument( 0 );
-            final String interval = interval( query );
-            final String range = range( query );
-            requests.add( ( interval != null ? interval : query.getSize() + " " + query.getQueryExpr().getOrderList() ) + " " + range );
-            if ( interval == null && query.getQueryFilters().getSize() > 1 )
+            final String histogram = histogram( query );
+            final String filters = filters( query );
+            requests.add( ( histogram != null ? histogram : query.getSize() + " " + query.getQueryExpr().getOrderList() ) + " " + filters );
+            if ( histogram == null )
             {
-                throw new IllegalStateException( "Only one page expected" );
-            }
-            if ( interval == null )
-            {
-                // One content per range query, named after its range.
-                final Content content = content( "c" + requests.size(), "/mysite/" + range.replace( ':', '-' ).replace( ' ', '_' ) );
+                // One content per slice, named after its filters.
+                final Content content = content( "c" + requests.size(), "/mysite/c" + requests.size() );
                 answerGetByIds( List.of( content ) );
                 return result( List.of( content ) );
             }
-            switch ( interval )
+            // newest day 6000, then 7000, then a day of 25000 split by hours, then a day with 30000 modified in one millisecond and
+            // stored on three days, then 3000
+            switch ( histogram )
             {
-                case "1d":
+                case "modifiedtime 1d":
                     return overview( 71_000, bucket( day, 6_000 ), bucket( day.minus( Duration.ofDays( 1 ) ), 7_000 ),
-                                     bucket( day.minus( Duration.ofDays( 2 ) ), 25_000 ),
-                                     bucket( second.truncatedTo( ChronoUnit.DAYS ), 30_000 ),
+                                     bucket( day.minus( Duration.ofDays( 2 ) ), 25_000 ), bucket( second.truncatedTo( ChronoUnit.DAYS ), 30_000 ),
                                      bucket( second.minus( Duration.ofDays( 1 ) ).truncatedTo( ChronoUnit.DAYS ), 3_000 ) );
-                case "1h":
-                    return range.startsWith( hour.toString() )
+                case "modifiedtime 1h":
+                    return filters.contains( hour.toString() )
                         ? overview( 25_000, bucket( hour, 9_000 ), bucket( hour.plus( Duration.ofHours( 1 ) ), 8_000 ),
                                     bucket( hour.plus( Duration.ofHours( 5 ) ), 8_000 ) )
                         : overview( 30_000, bucket( second.truncatedTo( ChronoUnit.HOURS ), 30_000 ) );
-                case "1m":
+                case "modifiedtime 1m":
                     return overview( 30_000, bucket( second.truncatedTo( ChronoUnit.MINUTES ), 30_000 ) );
-                default:
+                case "modifiedtime 1s":
+                case "modifiedtime 1ms":
                     return overview( 30_000, bucket( second, 30_000 ) );
+                case "_ts 1d":
+                    return overview( 30_000, bucket( stored.minus( Duration.ofDays( 2 ) ), 10_000 ), bucket( stored, 10_000 ),
+                                     bucket( stored.minus( Duration.ofDays( 1 ) ), 10_000 ) );
+                default:
+                    throw new IllegalStateException( histogram );
             }
         } );
 
@@ -182,21 +206,64 @@ class SitemapQueryTest
         draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
 
         final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC] ";
-        // All ranges are planned first, then read newest first.
-        assertThat( requests ).containsExactly( "1d -",
-                                                "1h 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
-                                                "1h 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
-                                                "1m 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
-                                                "1s 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
-                                                "1ms 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
-                                                desc + "2024-05-01T00:00:00Z 2024-05-02T00:00:00Z",
-                                                desc + "2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
-                                                desc + "2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
-                                                desc + "2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
-                                                desc + "2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
-                                                SitemapQuery.PAGE_SIZE + " [_path ASC] 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z",
-                                                desc + "2023-12-31T00:00:00Z 2024-01-01T00:00:00Z" );
-        assertThat( entries ).hasSize( 7 );
+        final String ms = "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
+        // All slices are planned first, then read newest first.
+        assertThat( requests ).containsExactly( "modifiedtime 1d -",
+                                                "modifiedtime 1h modifiedtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
+                                                "modifiedtime 1h modifiedtime 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
+                                                "modifiedtime 1m modifiedtime 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
+                                                "modifiedtime 1s modifiedtime 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
+                                                "modifiedtime 1ms modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
+                                                "_ts 1d " + ms,
+                                                desc + "modifiedtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z",
+                                                desc + "modifiedtime 2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
+                                                desc + "modifiedtime 2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
+                                                desc + "modifiedtime 2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
+                                                desc + "modifiedtime 2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
+                                                desc + ms + " & _ts 2024-01-03T00:00:00Z 2024-01-04T00:00:00Z",
+                                                desc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z",
+                                                desc + ms + " & _ts 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
+                                                desc + "modifiedtime 2023-12-31T00:00:00Z 2024-01-01T00:00:00Z" );
+        assertThat( entries ).hasSize( 9 );
+    }
+
+    @Test
+    void sliceThatCannotBeSplitIsScrolled()
+    {
+        final Instant instant = Instant.parse( "2024-01-01T10:20:30Z" );
+        final List<ContentQuery> reads = new ArrayList<>();
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            if ( histogram( query ) != null )
+            {
+                return overview( 60_000, bucket( instant, 60_000 ) );
+            }
+            reads.add( query );
+            return result( List.of() );
+        } );
+
+        draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entry -> {
+        }, () -> false ) );
+
+        assertThat( reads ).hasSize( 1 );
+        assertThat( reads.get( 0 ).getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
+        assertThat( filters( reads.get( 0 ) ) ).isEqualTo(
+            "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z & _ts 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z" );
+    }
+
+    @Test
+    void ignorePatternsWithWildcardsAreMatchedAfterLoading()
+    {
+        final List<Content> contents = List.of( content( "a", "/mysite/a/Foo" ), content( "b", "/mysite/b" ), content( "c", "/mysite/c-x" ) );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
+        answerGetByIds( contents );
+        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of( new ContentTypeSetting( "base:folder", "", "" ) ),
+                                                        List.of( "*/foo", "c-?" ), 10 );
+
+        final List<SitemapEntry> entries = new ArrayList<>();
+        draft( () -> new SitemapQuery( contentService, params, NOW ).execute( entries::add, () -> false ) );
+
+        assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "/b" );
     }
 
     @Test
@@ -281,23 +348,26 @@ class SitemapQueryTest
         assertThat( SitemapQuery.ignorePath( "/content/s", "*a" ) ).isEqualTo( "*a" );
     }
 
-    private static String interval( final ContentQuery query )
+    private static String histogram( final ContentQuery query )
     {
         for ( final AggregationQuery aggregation : query.getAggregationQueries() )
         {
-            return ( (DateHistogramAggregationQuery) aggregation ).getInterval();
+            final DateHistogramAggregationQuery histogram = (DateHistogramAggregationQuery) aggregation;
+            return histogram.getFieldName() + " " + histogram.getInterval();
         }
         return null;
     }
 
-    private static String range( final ContentQuery query )
+    private static String filters( final ContentQuery query )
     {
+        final List<String> filters = new ArrayList<>();
         for ( final Filter filter : query.getQueryFilters() )
         {
             final RangeFilter range = (RangeFilter) filter;
-            return range.getFrom().asInstant() + " " + range.getTo().asInstant();
+            filters.add( range.getFieldName() + " " +
+                             ( range.getFrom().isDateType() ? range.getFrom().asInstant() + " " + range.getTo().asInstant() : range.getFrom().asString() ) );
         }
-        return "-";
+        return filters.isEmpty() ? "-" : String.join( " & ", filters );
     }
 
     private static DateHistogramBucket bucket( final Instant key, final long count )
