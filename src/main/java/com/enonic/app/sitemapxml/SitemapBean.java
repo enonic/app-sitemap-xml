@@ -12,6 +12,7 @@ import org.jspecify.annotations.Nullable;
 import com.google.common.io.ByteSource;
 
 import com.enonic.xp.content.ContentService;
+import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -26,7 +27,8 @@ public final class SitemapBean
     public void initialize( final BeanContext context )
     {
         this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( ProjectService.class ).get(),
-                                           context.getService( SitemapCache.class ).get(), Clock.systemUTC() );
+                                           context.getService( PortalUrlService.class ).get(), context.getService( SitemapCache.class ).get(),
+                                           Clock.systemUTC() );
     }
 
     public SitemapResponse root( final ScriptValue params )
@@ -67,6 +69,11 @@ public final class SitemapBean
     public @Nullable String guillotineFile( final ScriptValue params, final int number )
     {
         return guillotineSitemap( params ).fileUrlsetJson( number ).orElse( null );
+    }
+
+    public @Nullable String portalBaseUrl( final String sitePath )
+    {
+        return Objects.requireNonNull( service, "Bean not initialized" ).portalBaseUrl( sitePath ).orElse( null );
     }
 
     private Sitemap guillotineSitemap( final ScriptValue params )

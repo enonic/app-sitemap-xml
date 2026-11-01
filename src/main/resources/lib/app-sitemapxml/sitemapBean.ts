@@ -14,7 +14,7 @@ export interface SitemapParams {
 		priority: string
 	}[]
 	ignorePatterns: string[]
-	// True when siteUrl is taken from the request.
+	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
 	siteUrlFromRequest?: boolean
 }
 
@@ -33,6 +33,7 @@ export interface SitemapBean {
 	guillotineFiles(params: ScriptValue): string
 	guillotineUrlset(params: ScriptValue, count: number): string
 	guillotineFile(params: ScriptValue, number: number): string | null
+	portalBaseUrl(sitePath: string): string | null
 }
 
 export function toSitemapParams({

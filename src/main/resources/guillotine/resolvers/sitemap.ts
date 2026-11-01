@@ -21,6 +21,7 @@ import {
 	TRACE,
 } from '/constants';
 import {SITEMAP_FIELD_NAME} from '/guillotine/constants';
+import {newSitemapBean} from '/lib/app-sitemapxml/sitemapBean';
 import {resolveSourceConfig} from '/lib/app-sitemapxml/resolveSourceConfig';
 
 
@@ -63,9 +64,7 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		if (!siteConfig) {
 			return null;
 		}
-		const {
-			overrideDomain: baseUrl = null
-		} = siteConfig || {};
+		const baseUrl = siteConfig.overrideDomain || newSitemapBean().portalBaseUrl(site?._path || '') || null;
 		return graphQL.createDataFetcherResult({
 			data: __.toScriptValue<SiteMapResolverData>({
 				baseUrl,
