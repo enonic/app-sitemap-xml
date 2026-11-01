@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -483,6 +484,31 @@ class SitemapCacheTest
         assertThat( earlier ).startsWith( "018bcfe5-6800-7" ).isLessThan( later );
         assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ).directory().getFileName().toString() ).startsWith(
             SitemapCache.uuid7( clock.now.toEpochMilli() ).substring( 0, 13 ) );
+    }
+
+    @Test
+    void stopWaitsForRunningGenerationToHalt()
+        throws Exception
+    {
+        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
+        final CountDownLatch started = new CountDownLatch( 1 );
+        final AtomicBoolean halted = new AtomicBoolean();
+        requests.submit( () -> cache.get( key( "other" ), false, AUTH_INFO, ( sink, cancelled ) -> {
+            started.countDown();
+            while ( !cancelled.getAsBoolean() )
+            {
+                Thread.onSpinWait();
+            }
+            sink.accept( new SitemapEntry( "/late", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            halted.set( true );
+            return null;
+        } ) );
+        assertThat( started.await( 5, TimeUnit.SECONDS ) ).isTrue();
+
+        cache.deactivate();
+
+        assertThat( halted ).isTrue();
+        assertThat( sitemapDirectories() ).containsExactly( first.directory() );
     }
 
     @Test

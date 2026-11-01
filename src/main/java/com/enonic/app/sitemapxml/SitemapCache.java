@@ -71,6 +71,8 @@ public final class SitemapCache
 
     static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
 
+    static final Duration STOP_TIMEOUT = Duration.ofSeconds( 30 );
+
     static final String ENTRY_FILE = "entry.json";
 
     private static final int FORMAT = 1;
@@ -114,14 +116,34 @@ public final class SitemapCache
     }
 
     /**
-     * Stops generating. Generated sitemaps stay on disk, to be served after a restart.
+     * Stops generating, and waits for a running generation to halt, so that a new instance finds no generation writing to disk.
+     * Generated sitemaps stay on disk, to be served after a restart.
      */
     @Deactivate
     public void deactivate()
     {
-        generator.shutdownNow();
-        entries.values().forEach( entry -> entry.ready.completeExceptionally( new CancellationException( "Sitemaps stopped" ) ) );
+        for ( final Entry entry : entries.values() )
+        {
+            final Generation generation = entry.generation;
+            if ( generation != null )
+            {
+                generation.cancel();
+            }
+            entry.ready.completeExceptionally( new CancellationException( "Sitemaps stopped" ) );
+        }
         entries.clear();
+        generator.shutdownNow();
+        try
+        {
+            if ( !generator.awaitTermination( STOP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS ) )
+            {
+                LOG.warn( "Sitemap generation still running after {}", STOP_TIMEOUT );
+            }
+        }
+        catch ( InterruptedException e )
+        {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
