@@ -258,7 +258,8 @@ class SitemapCacheTest
     void requestBoundSitemapIsGeneratedAgainWhenScheduledContentChanges()
     {
         final Instant validUntil = clock.now.plusSeconds( 3600 );
-        cache.get( KEY, false, AUTH_INFO, ( sink, cancelled ) -> generate( validUntil ) );
+        final AtomicInteger runs = new AtomicInteger();
+        cache.get( KEY, false, AUTH_INFO, ( sink, cancelled ) -> generate( runs.incrementAndGet() == 1 ? validUntil : null ) );
 
         clock.now = validUntil.minusSeconds( 1 );
         cache.get( KEY, false, AUTH_INFO, this::generate );
