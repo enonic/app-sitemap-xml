@@ -130,6 +130,8 @@ All published content of the site that matches the mappings is included, there i
 
 When the site has more items than fit in one file, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
 
+URLs in a sitemap that fits in one file are sorted by path, which compresses better. When the sitemap is split into several files, URLs are sorted newest first, so each file holds a range of modification times and its `lastmod` in the index tells crawlers whether it changed.
+
 ### Gzip
 
 Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
