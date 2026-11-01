@@ -1,10 +1,15 @@
 package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamWriter;
 
 import org.jspecify.annotations.Nullable;
 
@@ -30,11 +35,25 @@ final class SitemapRenderer
 
     private static final char[] HEX = "0123456789ABCDEF".toCharArray();
 
+    private static final XMLOutputFactory XML_OUTPUT = XMLOutputFactory.newDefaultFactory();
+
     private final SitemapParams params;
+
+    private final StringWriter buffer = new StringWriter();
+
+    private final XMLStreamWriter xml;
 
     SitemapRenderer( final SitemapParams params )
     {
         this.params = params;
+        try
+        {
+            this.xml = XML_OUTPUT.createXMLStreamWriter( buffer );
+        }
+        catch ( XMLStreamException e )
+        {
+            throw new IllegalStateException( e );
+        }
     }
 
     String loc( final SitemapEntry entry )
@@ -58,18 +77,17 @@ final class SitemapRenderer
     String url( final SitemapEntry entry, final String loc )
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
-        final StringBuilder xml = new StringBuilder( "<url><loc>" );
-        escapeXml( xml, loc );
-        xml.append( "</loc>" );
-        if ( entry.lastModified() != null )
-        {
-            xml.append( "<lastmod>" ).append( DATE.format( entry.lastModified() ) ).append( "</lastmod>" );
-        }
-        xml.append( "<changefreq>" );
-        escapeXml( xml, setting.changefreq() );
-        xml.append( "</changefreq><priority>" );
-        escapeXml( xml, setting.priority() );
-        return xml.append( "</priority></url>" ).toString();
+        return element( () -> {
+            xml.writeStartElement( "url" );
+            textElement( "loc", loc );
+            if ( entry.lastModified() != null )
+            {
+                textElement( "lastmod", DATE.format( entry.lastModified() ) );
+            }
+            textElement( "changefreq", setting.changefreq() );
+            textElement( "priority", setting.priority() );
+            xml.writeEndElement();
+        } );
     }
 
     void json( final JsonGenerator json, final SitemapEntry entry, final String loc )
@@ -113,14 +131,41 @@ final class SitemapRenderer
 
     String indexEntry( final String fileUrl, final @Nullable Instant lastModified )
     {
-        final StringBuilder xml = new StringBuilder( "<sitemap><loc>" );
-        escapeXml( xml, fileUrl );
-        xml.append( "</loc>" );
-        if ( lastModified != null )
+        return element( () -> {
+            xml.writeStartElement( "sitemap" );
+            textElement( "loc", fileUrl );
+            if ( lastModified != null )
+            {
+                textElement( "lastmod", DATE.format( lastModified ) );
+            }
+            xml.writeEndElement();
+        } );
+    }
+
+    /**
+     * Writes one element with the XML stream writer and returns it, so its size is known before it is added to a file.
+     */
+    private String element( final XmlContent content )
+    {
+        buffer.getBuffer().setLength( 0 );
+        try
         {
-            xml.append( "<lastmod>" ).append( DATE.format( lastModified ) ).append( "</lastmod>" );
+            content.write();
+            xml.flush();
         }
-        return xml.append( "</sitemap>" ).toString();
+        catch ( XMLStreamException e )
+        {
+            throw new IllegalStateException( e );
+        }
+        return buffer.toString();
+    }
+
+    private void textElement( final String name, final String text )
+        throws XMLStreamException
+    {
+        xml.writeStartElement( name );
+        xml.writeCharacters( text );
+        xml.writeEndElement();
     }
 
     String fileUrl( final String fileName )
@@ -177,20 +222,10 @@ final class SitemapRenderer
         }
     }
 
-    static void escapeXml( final StringBuilder out, final String value )
+    @FunctionalInterface
+    private interface XmlContent
     {
-        for ( int i = 0; i < value.length(); i++ )
-        {
-            final char c = value.charAt( i );
-            switch ( c )
-            {
-                case '&' -> out.append( "&amp;" );
-                case '<' -> out.append( "&lt;" );
-                case '>' -> out.append( "&gt;" );
-                case '"' -> out.append( "&quot;" );
-                case '\'' -> out.append( "&apos;" );
-                default -> out.append( c );
-            }
-        }
+        void write()
+            throws XMLStreamException;
     }
 }
