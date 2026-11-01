@@ -107,6 +107,10 @@ Every sitemap file is also served gzip-compressed, as allowed by the [sitemap pr
 
 Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console submission), so the plain `.xml` URLs are compressed too: when a request accepts gzip (`Accept-Encoding: gzip`, which crawlers send), the stored file is sent as it is with `Content-Encoding: gzip`, so the response is the same XML, compressed for transfer only. Plain `.xml` responses carry `Vary: Accept-Encoding`. To have crawlers fetch the `.xml.gz` files instead, list `sitemap.xml.gz` in `robots.txt` (`Sitemap: https://example.com/sitemap.xml.gz`).
 
+### Conditional requests
+
+Every sitemap file is sent with an `ETag`: the SHA-256 digest of its uncompressed content, and a weak `W/"…-gzip"` tag when it is sent gzip-compressed. A request with a matching `If-None-Match` (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
+
 ## Caching and background generation
 
 The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.

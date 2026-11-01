@@ -84,6 +84,29 @@ class SitemapBeanTest
     }
 
     @Test
+    void answers304WhenEntityTagMatches()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, entries ) );
+        final SitemapBean bean = bean();
+
+        final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
+        assertThat( first.getStatus() ).isEqualTo( 200 );
+        final String etag = first.getETag();
+        assertThat( etag ).isNotNull();
+
+        final SitemapResponse unchanged = inContext( () -> bean.root( scriptValue( "W/" + etag + ", \"other\"" ) ) );
+        assertThat( unchanged.getStatus() ).isEqualTo( 304 );
+        assertThat( unchanged.getBody() ).isNull();
+        assertThat( unchanged.getETag() ).isEqualTo( etag );
+
+        assertThat( inContext( () -> bean.root( scriptValue( "\"other\"" ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( etag ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( "*" ) ) ).getStatus() ).isEqualTo( 304 );
+    }
+
+    @Test
     void keysByContext()
     {
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
@@ -264,6 +287,14 @@ class SitemapBeanTest
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn(
             Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10 ) );
+        return value;
+    }
+
+    private static ScriptValue scriptValue( final String ifNoneMatch )
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10, "ifNoneMatch", ifNoneMatch ) );
         return value;
     }
 

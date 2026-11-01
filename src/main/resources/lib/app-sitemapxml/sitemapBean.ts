@@ -20,12 +20,15 @@ export interface SitemapParams {
 	maxItems: number
 	// True when siteUrl is taken from the request: the sitemap is then generated on request only.
 	siteUrlFromRequest?: boolean
+	// If-None-Match header of the request, answered with 304 when it matches the file's entity tag.
+	ifNoneMatch?: string
 }
 
 export interface SitemapResponse {
 	getStatus(): number
 	getBody(): object | null
 	getRetryAfter(): number
+	getETag(): string | null
 }
 
 export interface SitemapBean {

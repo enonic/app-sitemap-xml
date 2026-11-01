@@ -300,6 +300,33 @@ class SitemapTest
     }
 
     @Test
+    void entityTagsAreDigestsOfContentAndSurviveRestore()
+    {
+        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
+            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
+            .collect( Collectors.toList() );
+        final Sitemap split = write( params( "https://example.com" ), 2, entries );
+        final Sitemap again = write( params( "https://example.com" ), 2, entries );
+
+        assertThat( split.rootETag( false ) ).matches( "\"[0-9a-f]{64}\"" ).isEqualTo( again.rootETag( false ) );
+        final String plain = split.rootETag( false );
+        assertThat( split.rootETag( true ) ).isEqualTo( "W/" + plain.substring( 0, plain.length() - 1 ) + "-gzip\"" );
+        assertThat( split.rootGzipETag() ).startsWith( "W/\"" ).isNotEqualTo( split.rootETag( true ) );
+        assertThat( split.fileETag( 1, false ) ).isNotEqualTo( split.fileETag( 2, false ) ).isEqualTo( again.fileETag( 1, false ) );
+        assertThat( split.fileETag( 4, false ) ).isEmpty();
+
+        final Sitemap restored = Sitemap.restore( split.directory(), split.store() );
+        assertThat( restored.rootETag( false ) ).isEqualTo( split.rootETag( false ) );
+        assertThat( restored.rootGzipETag() ).isEqualTo( split.rootGzipETag() );
+        assertThat( restored.fileETag( 3, true ) ).isEqualTo( split.fileETag( 3, true ) );
+
+        final Sitemap single = write( params( "https://example.com" ), 10, entries );
+        assertThat( single.rootETag( false ) ).isNotNull().isNotEqualTo( split.rootETag( false ) );
+        assertThat( single.rootGzipETag() ).isEqualTo( single.rootETag( true ) );
+        assertThat( write( params( "https://other.example.com" ), 10, entries ).rootETag( false ) ).isNotEqualTo( single.rootETag( false ) );
+    }
+
+    @Test
     void urlsetForGuillotineOfSingleAndEmptySitemap()
     {
         final Sitemap single = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );

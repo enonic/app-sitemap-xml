@@ -29,27 +29,28 @@ public final class SitemapBean
 
     public SitemapResponse root( final ScriptValue params )
     {
-        return respond( params, sitemap -> Optional.of( sitemap.root() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.root() ), sitemap -> Optional.ofNullable( sitemap.rootETag( false ) ) );
     }
 
     public SitemapResponse file( final ScriptValue params, final int number )
     {
-        return respond( params, sitemap -> sitemap.file( number ) );
+        return respond( params, sitemap -> sitemap.file( number ), sitemap -> sitemap.fileETag( number, false ) );
     }
 
     public SitemapResponse rootGzip( final ScriptValue params )
     {
-        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ), sitemap -> Optional.ofNullable( sitemap.rootGzipETag() ) );
     }
 
     public SitemapResponse rootEncoded( final ScriptValue params )
     {
-        return respond( params, sitemap -> Optional.of( sitemap.rootEncoded() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.rootEncoded() ),
+                        sitemap -> Optional.ofNullable( sitemap.rootETag( true ) ) );
     }
 
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
-        return respond( params, sitemap -> sitemap.fileGzip( number ) );
+        return respond( params, sitemap -> sitemap.fileGzip( number ), sitemap -> sitemap.fileETag( number, true ) );
     }
 
     public String guillotineUrlset( final ScriptValue params, final int count )
@@ -57,14 +58,25 @@ public final class SitemapBean
         return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ), false ).urlsetJson( count );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
+    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body,
+                                     final Function<Sitemap, Optional<String>> etag )
     {
         try
         {
             final Map<String, Object> map = params.getMap();
             final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
                 .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
-            return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
+            final Optional<ByteSource> content = body.apply( sitemap );
+            if ( content.isEmpty() )
+            {
+                return SitemapResponse.notFound();
+            }
+            final String tag = etag.apply( sitemap ).orElse( null );
+            if ( tag != null && matches( map.get( "ifNoneMatch" ), tag ) )
+            {
+                return SitemapResponse.notModified( tag );
+            }
+            return SitemapResponse.ok( content.get(), tag );
         }
         catch ( SitemapBusyException e )
         {
@@ -74,6 +86,32 @@ public final class SitemapBean
         {
             return SitemapResponse.badRequest();
         }
+    }
+
+    /**
+     * Whether an {@code If-None-Match} header matches the entity tag, by weak comparison.
+     */
+    static boolean matches( final Object ifNoneMatch, final String etag )
+    {
+        if ( !( ifNoneMatch instanceof String ) )
+        {
+            return false;
+        }
+        final String opaque = opaqueTag( etag );
+        for ( final String candidate : ( (String) ifNoneMatch ).split( "," ) )
+        {
+            final String trimmed = candidate.trim();
+            if ( trimmed.equals( "*" ) || opaqueTag( trimmed ).equals( opaque ) )
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String opaqueTag( final String etag )
+    {
+        return etag.startsWith( "W/" ) ? etag.substring( 2 ) : etag;
     }
 
     static SitemapParams toParams( final Map<String, Object> map )

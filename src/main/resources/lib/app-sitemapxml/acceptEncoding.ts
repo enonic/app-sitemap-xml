@@ -4,12 +4,7 @@
  * An explicit "gzip;q=0" (or "*;q=0" without "gzip") refuses it.
  */
 export function acceptsGzip(headers: Record<string, string> = {}): boolean {
-	let value: string | undefined;
-	for (const key of Object.keys(headers)) {
-		if (key.toLowerCase() === 'accept-encoding') {
-			value = headers[key];
-		}
-	}
+	const value = header(headers, 'Accept-Encoding');
 	if (!value) {
 		return false;
 	}
@@ -33,4 +28,17 @@ export function acceptsGzip(headers: Record<string, string> = {}): boolean {
 		}
 	}
 	return (gzip >= 0 ? gzip : any) > 0;
+}
+
+/**
+ * The value of a request header, matching its name ignoring case.
+ */
+export function header(headers: Record<string, string> = {}, name: string): string | undefined {
+	let value: string | undefined;
+	for (const key of Object.keys(headers)) {
+		if (key.toLowerCase() === name.toLowerCase()) {
+			value = headers[key];
+		}
+	}
+	return value;
 }

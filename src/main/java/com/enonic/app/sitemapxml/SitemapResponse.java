@@ -10,30 +10,38 @@ public final class SitemapResponse
 
     private final ByteSource body;
 
-    private SitemapResponse( final int status, final ByteSource body )
+    private final String etag;
+
+    private SitemapResponse( final int status, final ByteSource body, final String etag )
     {
         this.status = status;
         this.body = body;
+        this.etag = etag;
     }
 
-    static SitemapResponse ok( final ByteSource body )
+    static SitemapResponse ok( final ByteSource body, final String etag )
     {
-        return new SitemapResponse( 200, body );
+        return new SitemapResponse( 200, body, etag );
+    }
+
+    static SitemapResponse notModified( final String etag )
+    {
+        return new SitemapResponse( 304, null, etag );
     }
 
     static SitemapResponse notFound()
     {
-        return new SitemapResponse( 404, null );
+        return new SitemapResponse( 404, null, null );
     }
 
     static SitemapResponse badRequest()
     {
-        return new SitemapResponse( 400, null );
+        return new SitemapResponse( 400, null, null );
     }
 
     static SitemapResponse tooManyRequests()
     {
-        return new SitemapResponse( 429, null );
+        return new SitemapResponse( 429, null, null );
     }
 
     public int getStatus()
@@ -44,6 +52,11 @@ public final class SitemapResponse
     public ByteSource getBody()
     {
         return body;
+    }
+
+    public String getETag()
+    {
+        return etag;
     }
 
     public int getRetryAfter()

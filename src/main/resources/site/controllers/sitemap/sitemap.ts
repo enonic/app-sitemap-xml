@@ -11,7 +11,10 @@ import {
 	getSiteConfig,
 	pageUrl
 } from '/lib/xp/portal';
-import {acceptsGzip} from '/lib/app-sitemapxml/acceptEncoding';
+import {
+	acceptsGzip,
+	header,
+} from '/lib/app-sitemapxml/acceptEncoding';
 import {
 	newSitemapBean,
 	toSitemapParams,
@@ -46,6 +49,7 @@ export function get(request: Request<{
 		}),
 		// With a "Base URL" override the URLs do not depend on the request, so the sitemap can be generated in the background.
 		siteUrlFromRequest: !overrideDomain,
+		ifNoneMatch: header(request.headers, 'If-None-Match'),
 	};
 
 	const bean = newSitemapBean();
@@ -72,6 +76,15 @@ export function get(request: Request<{
 			status,
 		};
 	}
+	const etag = result.getETag();
+	const etagHeader: Record<string, string> = etag ? {ETag: etag} : {};
+	if (status === 304) {
+		return {
+			body: null,
+			headers: isGzip ? etagHeader : {...etagHeader, Vary: 'Accept-Encoding'},
+			status,
+		};
+	}
 	if (status !== 200) {
 		return {
 			body: null,
@@ -82,13 +95,14 @@ export function get(request: Request<{
 		return {
 			body: result.getBody(),
 			contentType: 'application/gzip',
+			...(etag ? {headers: etagHeader} : {}),
 		};
 	}
 	return {
 		body: result.getBody(),
 		contentType: 'text/xml; charset=utf-8',
 		headers: isEncoded
-			? {'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
-			: {Vary: 'Accept-Encoding'},
+			? {...etagHeader, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
+			: {...etagHeader, Vary: 'Accept-Encoding'},
 	};
 }

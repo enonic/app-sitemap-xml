@@ -21,11 +21,12 @@ jest.mock('/lib/xp/portal', () => ({
 	pageUrl,
 }), {virtual: true});
 
-function response(status: number, body: string | object | null) {
+function response(status: number, body: string | object | null, etag: string | null = null) {
 	return {
 		getStatus: () => status,
 		getBody: () => body,
 		getRetryAfter: () => (status === 429 ? 10 : 0),
+		getETag: () => etag,
 	};
 }
 
@@ -109,6 +110,31 @@ describe('sitemap controller', () => {
 		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
 		expect(get(request('/mysite/sitemap-3.xml'))).toEqual({body: null, status: 404});
 		expect(bean.file).toHaveBeenCalledWith(expect.anything(), 3);
+	});
+
+	it('sends the entity tag and answers 304 to a matching If-None-Match', async () => {
+		const {get} = await import('/site/controllers/sitemap/sitemap');
+		bean.root.mockReturnValueOnce(response(200, '<urlset/>', '"abc"'));
+		expect(get(request('/mysite/sitemap.xml'))).toEqual({
+			body: '<urlset/>',
+			contentType: 'text/xml; charset=utf-8',
+			headers: {ETag: '"abc"', Vary: 'Accept-Encoding'},
+		});
+
+		bean.root.mockReturnValueOnce(response(304, null, '"abc"'));
+		expect(get(request('/mysite/sitemap.xml', {'if-none-match': '"abc"'}))).toEqual({
+			body: null,
+			headers: {ETag: '"abc"', Vary: 'Accept-Encoding'},
+			status: 304,
+		});
+		expect(bean.root).toHaveBeenLastCalledWith(expect.objectContaining({ifNoneMatch: '"abc"'}));
+
+		bean.rootGzip.mockReturnValueOnce(response(200, 'gzipped root', 'W/"abc-gzip"'));
+		expect(get(request('/mysite/sitemap.xml.gz'))).toEqual({
+			body: 'gzipped root',
+			contentType: 'application/gzip',
+			headers: {ETag: 'W/"abc-gzip"'},
+		});
 	});
 
 	it('serves gzipped sitemaps', async () => {
