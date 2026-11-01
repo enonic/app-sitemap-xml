@@ -13,7 +13,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -200,15 +199,6 @@ public final class SitemapCache
                 waiting.release();
             }
         }
-    }
-
-    /**
-     * Returns the sitemap generated for the given key, if there is one, without generating or keeping anything.
-     */
-    public Optional<Sitemap> cached( final Key key )
-    {
-        final Entry entry = entries.get( key );
-        return Optional.ofNullable( entry == null ? null : entry.sitemap );
     }
 
     /**
@@ -532,13 +522,13 @@ public final class SitemapCache
     }
 
     /**
-     * Removes generated sitemaps of the site of the given key beyond {@value #MAX_PER_SITE}: a site is requested through a few hosts,
-     * ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first, then the
+     * Removes generated sitemaps of the site and principals of the given key beyond {@value #MAX_PER_SITE}: a site is requested
+     * through a few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first, then the
      * least recently used. Sitemaps that requests are waiting for are kept.
      */
     private void evictOverflow( final Key key )
     {
-        final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSite( key ) ).collect( Collectors.toList() );
+        final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSiteForSamePrincipals( key ) ).collect( Collectors.toList() );
         site.stream()
             .filter( e -> e.getValue().sitemap != null )
             .sorted( EVICTION_ORDER )
@@ -605,6 +595,11 @@ public final class SitemapCache
             return branch;
         }
 
+        public Set<String> principals()
+        {
+            return principals;
+        }
+
         public SitemapParams params()
         {
             return params;
@@ -638,10 +633,10 @@ public final class SitemapCache
             return repositoryId + " " + branch + " " + params.sitePath();
         }
 
-        boolean isSameSite( final Key other )
+        boolean isSameSiteForSamePrincipals( final Key other )
         {
             return repositoryId.equals( other.repositoryId ) && branch.equals( other.branch ) &&
-                params.sitePath().equals( other.params.sitePath() );
+                params.sitePath().equals( other.params.sitePath() ) && principals.equals( other.principals );
         }
 
         void store( final JsonGenerator json )

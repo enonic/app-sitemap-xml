@@ -4,7 +4,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
@@ -111,28 +110,16 @@ class SitemapBeanTest
     }
 
     @Test
-    void loggedInUserGetsCachedSitemap()
+    void cachesPerUser()
     {
-        final Sitemap cached = write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) );
-        when( cache.cached( any() ) ).thenReturn( Optional.of( cached ) );
-
-        assertThat( asUser( () -> bean().root( scriptValue() ).getStatus() ) ).isEqualTo( 200 );
-
-        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
-        verify( cache, never() ).uncached( any(), any(), any() );
-    }
-
-    @Test
-    void loggedInUserGetsUncachedSitemapWithOwnPermissionsWhenNoneIsCached()
-    {
-        when( cache.uncached( any(), any(), any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
 
         asUser( () -> bean().root( scriptValue() ) );
 
-        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
-        verify( cache ).uncached( any(), authInfo.capture(), any() );
-        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
-        assertThat( authInfo.getValue().isAuthenticated() ).isTrue();
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().principals() ).contains( "user:system:editor" );
+        verify( cache, never() ).uncached( any(), any(), any() );
     }
 
     @Test

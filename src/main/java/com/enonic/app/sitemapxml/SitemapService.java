@@ -13,16 +13,9 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.security.PrincipalKey;
-import com.enonic.xp.security.auth.AuthenticationInfo;
 
 public final class SitemapService
 {
-    private static final Set<String> PUBLIC_PRINCIPALS = AuthenticationInfo.unAuthenticated()
-        .getPrincipals()
-        .stream()
-        .map( PrincipalKey::toString )
-        .collect( Collectors.toUnmodifiableSet() );
-
     private final ContentService contentService;
 
     private final SitemapCache cache;
@@ -37,9 +30,8 @@ public final class SitemapService
     }
 
     /**
-     * Returns the sitemap of the published content. Only anonymous requests (crawlers) get it cached: requests of logged-in users get
-     * the cached one when there is one, otherwise one generated for them that is not kept. Requests on the draft branch (preview) get a
-     * sitemap with the site URL only, not kept either.
+     * Returns the sitemap of the published content visible to the principals of the request, cached for them. Requests on the draft
+     * branch (preview) get a sitemap with the site URL only, which is not kept.
      *
      * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
      *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
@@ -51,7 +43,7 @@ public final class SitemapService
         final Context context = ContextAccessor.current();
         final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
         final SitemapCache.Key key =
-            new SitemapCache.Key( repositoryId, ContentConstants.BRANCH_MASTER.getValue(), PUBLIC_PRINCIPALS, params );
+            new SitemapCache.Key( repositoryId, ContentConstants.BRANCH_MASTER.getValue(), principals( context ), params );
 
         if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
         {
@@ -59,11 +51,12 @@ public final class SitemapService
         }
         final SitemapCache.Source source =
             ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
-        if ( context.getAuthInfo().isAuthenticated() )
-        {
-            return cache.cached( key ).orElseGet( () -> cache.uncached( key, context.getAuthInfo(), source ) );
-        }
         return cache.get( key, !siteUrlFromRequest, context.getAuthInfo(), source );
+    }
+
+    private static Set<String> principals( final Context context )
+    {
+        return context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
     }
 
     private static Instant siteOnly( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )

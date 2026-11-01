@@ -232,17 +232,7 @@ class SitemapCacheTest
         assertThat( SitemapTest.text( sitemap.root() ) ).contains( "https://example.com" );
         assertThat( sitemap.directory().resolve( SitemapCache.ENTRY_FILE ) ).doesNotExist();
         assertThat( retaining.size() ).isZero();
-        assertThat( retaining.cached( KEY ) ).isEmpty();
         awaitUntil( () -> !Files.exists( sitemap.directory() ) );
-    }
-
-    @Test
-    void returnsCachedSitemapOnlyOnceGenerated()
-    {
-        assertThat( cache.cached( KEY ) ).isEmpty();
-        final Sitemap sitemap = cache.get( KEY, false, AUTH_INFO, this::generate );
-        assertThat( cache.cached( KEY ) ).contains( sitemap );
-        assertThat( generated ).hasValue( 1 );
     }
 
     @Test
@@ -416,6 +406,23 @@ class SitemapCacheTest
         cache.get( hostKey( 0 ), false, AUTH_INFO, this::generate );
         assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 3 );
         assertThat( cache.get( key( "other" ), false, AUTH_INFO, this::generate ) ).isSameAs( otherSite );
+    }
+
+    @Test
+    void limitsSitemapsPerSiteAndPrincipals()
+    {
+        final SitemapCache.Key otherUser = new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "user:system:editor" ),
+                                                                 new SitemapParams( "/mysite", "https://example.com:9999", List.of(),
+                                                                                    List.of(), 50_000 ) );
+        final Sitemap kept = cache.get( otherUser, false, AUTH_INFO, this::generate );
+        for ( int i = 0; i <= SitemapCache.MAX_PER_SITE; i++ )
+        {
+            clock.now = clock.now.plusSeconds( 1 );
+            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
+        }
+
+        assertThat( cache.get( otherUser, false, AUTH_INFO, this::generate ) ).isSameAs( kept );
+        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE + 1 );
     }
 
     @Test
