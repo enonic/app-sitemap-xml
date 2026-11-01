@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
+import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -426,7 +427,7 @@ public final class Sitemap
         public void write( final char[] chars, final int offset, final int length )
             throws IOException
         {
-            bytes += utf8Length( java.nio.CharBuffer.wrap( chars, offset, length ) );
+            bytes += utf8Length( CharBuffer.wrap( chars, offset, length ) );
             delegate.write( chars, offset, length );
         }
 
