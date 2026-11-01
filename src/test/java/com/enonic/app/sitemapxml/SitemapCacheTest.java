@@ -170,7 +170,7 @@ class SitemapCacheTest
         assertThat( halted ).containsExactly( true );
         final Sitemap regenerated = cache.get( KEY, true, AUTH_INFO, this::generate );
         assertThat( regenerated ).isNotSameAs( first );
-        assertThat( sitemapDirectories() ).containsExactly( regenerated.directory() );
+        awaitUntil( () -> sitemapDirectories().equals( List.of( regenerated.directory() ) ) );
     }
 
     @Test
