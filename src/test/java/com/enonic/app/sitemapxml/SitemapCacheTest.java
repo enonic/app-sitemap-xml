@@ -426,7 +426,6 @@ class SitemapCacheTest
         assertThat( SitemapTest.text( restored.root() ) ).isEqualTo( content );
         assertThat( restored.size() ).isEqualTo( first.size() );
         assertThat( restored.lastModified() ).isEqualTo( first.lastModified() );
-        assertThat( SitemapTest.text( restored.json() ) ).isEqualTo( SitemapTest.text( first.json() ) );
 
         awaitUntil( () -> generated.get() == 2 );
         awaitIdle();

@@ -37,11 +37,6 @@ public final class SitemapBean
         return respond( params, sitemap -> sitemap.file( number ) );
     }
 
-    public SitemapResponse json( final ScriptValue params )
-    {
-        return respond( params, sitemap -> Optional.of( sitemap.json() ) );
-    }
-
     public SitemapResponse rootGzip( final ScriptValue params )
     {
         return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ) );

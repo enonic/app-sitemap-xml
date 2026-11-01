@@ -34,8 +34,6 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.io.SerializedString;
 import com.google.common.io.ByteSource;
 import com.google.common.io.MoreFiles;
@@ -78,12 +76,8 @@ public final class Sitemap
 
     private final List<Instant> lastModified;
 
-    private final SitemapParams params;
-
-    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified,
-                     final SitemapParams params )
+    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified )
     {
-        this.params = params;
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -154,77 +148,6 @@ public final class Sitemap
     public Optional<ByteSource> fileGzip( final int number )
     {
         return validFile( number ).map( this::gzip );
-    }
-
-    /**
-     * All URLs of the sitemap as a JSON array of {@code {"changefreq", "lastmod", "priority", "loc"}}, built from the stored path-based
-     * entries.
-     */
-    public ByteSource json()
-    {
-        final SitemapRenderer renderer = new SitemapRenderer( params );
-        final String json = jsonArray( out -> {
-            for ( int number = 1; number <= lastModified.size(); number++ )
-            {
-                try (BufferedReader lines = new BufferedReader(
-                    new InputStreamReader( plain( urlsetFileName( number ) ).openStream(), StandardCharsets.UTF_8 ) ))
-                {
-                    String line;
-                    while ( ( line = lines.readLine() ) != null )
-                    {
-                        if ( !line.isEmpty() )
-                        {
-                            writeUrl( out, line, renderer );
-                        }
-                    }
-                }
-            }
-        } );
-        return ByteSource.wrap( json.getBytes( StandardCharsets.UTF_8 ) );
-    }
-
-    private static void writeUrl( final JsonGenerator out, final String urlsetEntry, final SitemapRenderer renderer )
-        throws IOException
-    {
-        String path = "/";
-        String lastmod = null;
-        String changefreq = SitemapParams.DEFAULT_CHANGEFREQ;
-        String priority = SitemapParams.DEFAULT_PRIORITY;
-        try (JsonParser entry = JSON.createParser( urlsetEntry ))
-        {
-            entry.nextToken();
-            while ( entry.nextToken() == JsonToken.FIELD_NAME )
-            {
-                final String field = entry.getCurrentName();
-                entry.nextToken();
-                switch ( field )
-                {
-                    case "path":
-                        path = entry.getText();
-                        break;
-                    case "lastmod":
-                        lastmod = entry.getText();
-                        break;
-                    case "changefreq":
-                        changefreq = entry.getText();
-                        break;
-                    case "priority":
-                        priority = entry.getText();
-                        break;
-                    default:
-                        entry.skipChildren();
-                }
-            }
-        }
-        out.writeStartObject();
-        out.writeStringField( "changefreq", changefreq );
-        if ( lastmod != null )
-        {
-            out.writeStringField( "lastmod", lastmod );
-        }
-        out.writeStringField( "priority", priority );
-        out.writeStringField( "loc", renderer.loc( new SitemapEntry( "/".equals( path ) ? "" : path, "", null ) ) );
-        out.writeEndObject();
     }
 
     public List<Instant> lastModified()
@@ -343,7 +266,7 @@ public final class Sitemap
      *
      * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path parent, final Properties properties, final SitemapParams params )
+    static Sitemap restore( final Path parent, final Properties properties )
     {
         final String name = required( properties, "sitemap.directory" );
         final Path directory = parent.resolve( name );
@@ -366,7 +289,7 @@ public final class Sitemap
                 plainSizes.put( property.substring( "sitemap.bytes.".length() ), Long.parseLong( properties.getProperty( property ) ) );
             }
         }
-        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified, params );
+        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified );
     }
 
     private static String required( final Properties properties, final String name )
@@ -636,7 +559,7 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified, params );
+                return new Sitemap( directory, size, plainSizes, lastModified );
             }
             catch ( IOException e )
             {

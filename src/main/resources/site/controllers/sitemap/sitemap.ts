@@ -54,16 +54,13 @@ export function get(request: Request<{
 	const match = PATH_REGEXP.exec(request.path);
 	const fileNumber = match && match[1] ? parseInt(match[1], 10) : 0;
 	const isGzip = !!(match && match[2]);
-	const isJson = !isGzip && request.headers['Content-Type'] === 'application/json';
 	// Files are stored gzip-compressed, so a plain .xml request that accepts gzip gets the stored file as is.
-	const isEncoded = !isGzip && !isJson && acceptsGzip(request.headers);
-	const result = isJson
-		? bean.json(scriptParams)
-		: isGzip
-			? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootGzip(scriptParams)
-			: isEncoded
-				? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootEncoded(scriptParams)
-				: fileNumber ? bean.file(scriptParams, fileNumber) : bean.root(scriptParams);
+	const isEncoded = !isGzip && acceptsGzip(request.headers);
+	const result = isGzip
+		? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootGzip(scriptParams)
+		: isEncoded
+			? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootEncoded(scriptParams)
+			: fileNumber ? bean.file(scriptParams, fileNumber) : bean.root(scriptParams);
 
 	const status = result.getStatus();
 	if (status === 429) {
@@ -81,10 +78,10 @@ export function get(request: Request<{
 			status,
 		};
 	}
-	if (isJson || isGzip) {
+	if (isGzip) {
 		return {
 			body: result.getBody(),
-			contentType: isJson ? 'application/json; charset=utf-8' : 'application/gzip',
+			contentType: 'application/gzip',
 		};
 	}
 	return {

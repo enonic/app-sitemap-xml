@@ -32,7 +32,6 @@ function response(status: number, body: string | object | null) {
 const bean = {
 	root: jest.fn((_params: unknown) => response(200, '<urlset/>')),
 	file: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, '<urlset n="2"/>') : response(404, null))),
-	json: jest.fn((_params: unknown) => response(200, '[]')),
 	rootGzip: jest.fn((_params: unknown) => response(200, 'gzipped root')),
 	rootEncoded: jest.fn((_params: unknown) => response(200, 'encoded root')),
 	fileGzip: jest.fn((_params: unknown, number: number) => (number === 2 ? response(200, 'gzipped 2') : response(404, null))),
@@ -118,9 +117,6 @@ describe('sitemap controller', () => {
 		expect(get(request('/mysite/sitemap.xml.gz'))).toEqual({body: 'gzipped root', contentType: 'application/gzip'});
 		expect(get(request('/mysite/sitemap-2.xml.gz'))).toEqual({body: 'gzipped 2', contentType: 'application/gzip'});
 		expect(get(request('/mysite/sitemap-3.xml.gz'))).toEqual({body: null, status: 404});
-		expect(get(request('/mysite/sitemap.xml.gz', {'Content-Type': 'application/json'})))
-			.toEqual({body: 'gzipped root', contentType: 'application/gzip'});
-		expect(bean.json).not.toHaveBeenCalled();
 	});
 
 	it('sends stored gzip files with Content-Encoding when the client accepts gzip', async () => {
@@ -136,16 +132,7 @@ describe('sitemap controller', () => {
 			.toEqual({body: '<urlset/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
 		expect(get(request('/mysite/sitemap.xml.gz', {'Accept-Encoding': 'gzip'})))
 			.toEqual({body: 'gzipped root', contentType: 'application/gzip'});
-		expect(get(request('/mysite/sitemap.xml', {'Accept-Encoding': 'gzip', 'Content-Type': 'application/json'})))
-			.toEqual({body: '[]', contentType: 'application/json; charset=utf-8'});
 		expect(bean.rootGzip).toHaveBeenCalledTimes(1);
-	});
-
-	it('serves json when asked for', async () => {
-		const {get} = await import('/site/controllers/sitemap/sitemap');
-
-		expect(get(request('/mysite/sitemap.xml', {'Content-Type': 'application/json'})))
-			.toEqual({body: '[]', contentType: 'application/json; charset=utf-8'});
 	});
 
 	it('answers 429 with Retry-After when too many requests are in progress', async () => {
