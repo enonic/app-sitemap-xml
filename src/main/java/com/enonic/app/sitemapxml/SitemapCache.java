@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -75,6 +76,8 @@ public final class SitemapCache
     private static final String FORMAT = "1";
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
+
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
 
@@ -364,7 +367,8 @@ public final class SitemapCache
 
     /**
      * Reads back the sitemaps kept on disk. Content may have changed since they were generated, so they are generated again when
-     * requested. Files of unfinished generations are deleted, and of two sitemaps with the same key the older one.
+     * requested. Files of unfinished generations are deleted, and of two sitemaps with the same key the older one: directories are
+     * named by version 7 UUIDs, which sort by creation time.
      */
     private void restore()
     {
@@ -375,7 +379,7 @@ public final class SitemapCache
         final List<Path> directories;
         try (Stream<Path> list = Files.list( storage ))
         {
-            directories = list.toList();
+            directories = list.sorted().toList();
         }
         catch ( IOException e )
         {
@@ -391,15 +395,10 @@ public final class SitemapCache
                 Sitemap.delete( directory );
                 continue;
             }
-            final Entry entry = restored.getValue();
-            final Entry other = entries.get( restored.getKey() );
-            if ( other == null || other.lastAccess.isBefore( entry.lastAccess ) )
+            final Entry older = entries.put( restored.getKey(), restored.getValue() );
+            if ( older != null )
             {
-                entries.put( restored.getKey(), entry );
-            }
-            if ( other != null )
-            {
-                Objects.requireNonNull( ( entries.get( restored.getKey() ) == other ? entry : other ).sitemap ).delete();
+                Objects.requireNonNull( older.sitemap ).delete();
             }
         }
         evictOverflow();
@@ -436,6 +435,22 @@ public final class SitemapCache
             LOG.debug( "Could not read sitemap in {}", directory, e );
             return null;
         }
+    }
+
+    /**
+     * A version 7 UUID: its string form sorts by the given time.
+     */
+    static String uuid7( final long epochMilli )
+    {
+        final byte[] random = new byte[10];
+        RANDOM.nextBytes( random );
+        final long msb = epochMilli << 16 | ( random[0] & 0x0FL ) << 8 | random[1] & 0xFFL | 0x7000L;
+        long lsb = 0;
+        for ( int i = 2; i < random.length; i++ )
+        {
+            lsb = lsb << 8 | random[i] & 0xFFL;
+        }
+        return new UUID( msb, lsb & 0x3FFF_FFFF_FFFF_FFFFL | 0x8000_0000_0000_0000L ).toString();
     }
 
     private static void deleteFile( final Path file )
@@ -625,7 +640,7 @@ public final class SitemapCache
                 }
                 final Instant validUntil;
                 final Sitemap sitemap;
-                try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( UUID.randomUUID().toString() ), key.params() ))
+                try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( uuid7( clock.millis() ) ), key.params() ))
                 {
                     validUntil = ContextBuilder.create()
                         .repositoryId( key.repositoryId() )

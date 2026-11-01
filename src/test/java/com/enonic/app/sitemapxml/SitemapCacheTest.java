@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -455,7 +456,7 @@ class SitemapCacheTest
         throws IOException
     {
         final Sitemap newer = cache.get( KEY, false, AUTH_INFO, this::generate );
-        final Path older = Files.createDirectories( storage.resolve( "older" ) );
+        final Path older = Files.createDirectories( storage.resolve( SitemapCache.uuid7( clock.now.minusSeconds( 1 ).toEpochMilli() ) ) );
         try (Stream<Path> files = Files.list( newer.directory() ))
         {
             for ( final Path file : files.toList() )
@@ -463,15 +464,25 @@ class SitemapCacheTest
                 Files.copy( file, older.resolve( file.getFileName() ) );
             }
         }
-        final Path entryFile = older.resolve( SitemapCache.ENTRY_FILE );
-        Files.writeString( entryFile, Files.readString( entryFile ).replace( "lastAccess=2024", "lastAccess=2023" ) );
-        assertThat( entryFile ).content().contains( "lastAccess=2023" );
 
         final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
 
         assertThat( restarted.size() ).isEqualTo( 1 );
         assertThat( sitemapDirectories() ).containsExactly( newer.directory() );
         assertThat( restarted.get( KEY, false, AUTH_INFO, this::generate ).directory() ).isEqualTo( newer.directory() );
+    }
+
+    @Test
+    void namesDirectoriesByTimeOrderedUuids()
+    {
+        final String earlier = SitemapCache.uuid7( 1_700_000_000_000L );
+        final String later = SitemapCache.uuid7( 1_700_000_000_001L );
+
+        assertThat( UUID.fromString( earlier ).version() ).isEqualTo( 7 );
+        assertThat( UUID.fromString( earlier ).variant() ).isEqualTo( 2 );
+        assertThat( earlier ).startsWith( "018bcfe5-6800-7" ).isLessThan( later );
+        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ).directory().getFileName().toString() ).startsWith(
+            SitemapCache.uuid7( clock.now.toEpochMilli() ).substring( 0, 13 ) );
     }
 
     @Test
