@@ -140,8 +140,7 @@ class SitemapServiceTest
     void loggedInUserSharesPublicSitemapOfProjectReadableByEveryone()
     {
         final SitemapParams project = new SitemapParams( "", "", List.of(), List.of() );
-        when( projectService.getRootPermissions( ProjectName.from( "project" ) ) ).thenReturn(
-            AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
+        when( projectService.getPublicRead( ProjectName.from( "project" ) ) ).thenReturn( true );
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( project ) );
 
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,

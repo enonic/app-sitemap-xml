@@ -28,7 +28,6 @@ import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.repository.RepositoryId;
 import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.RoleKeys;
-import com.enonic.xp.security.acl.AccessControlList;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 
@@ -98,14 +97,11 @@ public final class SitemapService
         {
             return authInfo;
         }
-        final AccessControlList permissions =
-            sitePath.isEmpty() ? projectPermissions( context, repositoryId ) : sitePermissions( context, sitePath );
-        return permissions != null && permissions.isAllowedFor( RoleKeys.EVERYONE, Permission.READ )
-            ? AuthenticationInfo.unAuthenticated()
-            : authInfo;
+        final boolean isPublic = sitePath.isEmpty() ? isPublicProject( context, repositoryId ) : isPublicSite( context, sitePath );
+        return isPublic ? AuthenticationInfo.unAuthenticated() : authInfo;
     }
 
-    private @Nullable AccessControlList sitePermissions( final Context context, final String sitePath )
+    private boolean isPublicSite( final Context context, final String sitePath )
     {
         try
         {
@@ -113,27 +109,28 @@ public final class SitemapService
                 .branch( ContentConstants.BRANCH_MASTER )
                 .build()
                 .callWith( () -> contentService.getByPath( ContentPath.from( sitePath ) ) )
-                .getPermissions();
+                .getPermissions()
+                .isAllowedFor( RoleKeys.EVERYONE, Permission.READ );
         }
         catch ( ContentNotFoundException e )
         {
-            return null;
+            return false;
         }
     }
 
-    private @Nullable AccessControlList projectPermissions( final Context context, final RepositoryId repositoryId )
+    private boolean isPublicProject( final Context context, final RepositoryId repositoryId )
     {
         try
         {
             return ContextBuilder.from( context )
                 .authInfo( AuthenticationInfo.copyOf( context.getAuthInfo() ).principals( RoleKeys.ADMIN ).build() )
                 .build()
-                .callWith( () -> projectService.getRootPermissions( ProjectName.from( repositoryId ) ) );
+                .callWith( () -> projectService.getPublicRead( ProjectName.from( repositoryId ) ) );
         }
         catch ( RuntimeException e )
         {
-            LOG.debug( "Could not read permissions of project {}", repositoryId, e );
-            return null;
+            LOG.debug( "Could not read access of project {}", repositoryId, e );
+            return false;
         }
     }
 
