@@ -45,8 +45,8 @@ public final class SitemapService
 
     private final Clock clock;
 
-    public SitemapService( final ContentService contentService, final ProjectService projectService, final PortalUrlService portalUrlService,
-                           final SitemapCache cache, final Clock clock )
+    public SitemapService( final ContentService contentService, final ProjectService projectService,
+                           final PortalUrlService portalUrlService, final SitemapCache cache, final Clock clock )
     {
         this.contentService = contentService;
         this.projectService = projectService;

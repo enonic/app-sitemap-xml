@@ -26,9 +26,10 @@ public final class SitemapBean
     @Override
     public void initialize( final BeanContext context )
     {
-        this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( ProjectService.class ).get(),
-                                           context.getService( PortalUrlService.class ).get(), context.getService( SitemapCache.class ).get(),
-                                           Clock.systemUTC() );
+        this.service = new SitemapService( context.getService( ContentService.class ).get(),
+                                           context.getService( ProjectService.class ).get(),
+                                           context.getService( PortalUrlService.class ).get(),
+                                           context.getService( SitemapCache.class ).get(), Clock.systemUTC() );
     }
 
     public SitemapResponse root( final ScriptValue params )
