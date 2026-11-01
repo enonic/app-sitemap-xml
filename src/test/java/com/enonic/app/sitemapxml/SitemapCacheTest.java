@@ -415,7 +415,8 @@ class SitemapCacheTest
         final Sitemap first = cache.get( key, true, AUTH_INFO, this::generate );
         final String content = SitemapTest.text( first.root() );
 
-        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        // Files of the replaced sitemap are kept a while, for the requests still reading them.
+        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ofMinutes( 1 ), storage );
         assertThat( restarted.size() ).isEqualTo( 1 );
         awaitIdle();
         assertThat( generated ).hasValue( 1 );
