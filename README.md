@@ -34,6 +34,8 @@ Use the `Query playground` in Content Studio to study the Guillotine Schema. You
 
 The `sitemap` field is served from the same cached, published-only sitemap as `sitemap.xml`. `urlset(count: N)` returns the first `N` URLs, at most "Max included items", as paths relative to the site, so the client prefixes them with its own base URL. `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
 
+The app can also be added to a project instead of a site. When the query is not scoped to a site (no `x-guillotine-sitekey` header), the project's configuration of the app is used, and the sitemap lists all published content of the project, with paths relative to the project root. `sitemap.xml` itself is only served for sites, as projects are not rendered by XP.
+
 ```graphql
 query {
   guillotine {

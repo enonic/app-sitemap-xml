@@ -101,6 +101,17 @@ const siteConfig: SitemapXmlSiteConfig = {
 	siteMap: []
 }
 
+const projectConfig: SitemapXmlSiteConfig = {
+	...siteConfig,
+	overrideDomain: 'https://project.example.com'
+};
+
+jest.mock('/lib/xp/project', () => ({
+	get: jest.fn().mockReturnValue({
+		siteConfig: [{applicationKey: 'com.enonic.app.sitemapxml', config: projectConfig}]
+	})
+}), {virtual: true});
+
 const siteContent: Site<SitemapXmlSiteConfig> = {
 	_id: 'siteId',
 	_name: 'siteName',
@@ -270,6 +281,21 @@ describe('guillotine extensions', () => {
 				source: sitemapResolverResult.source,
 			});
 			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
+
+			const projectResult = sitemapResolver({
+				args: {},
+				localContext: {branch: 'master', project: 'project'},
+				source: null
+			});
+			expect(projectResult.source).toEqual({baseUrl: projectConfig.overrideDomain});
+			expect(jest.mocked(run)).toHaveBeenCalledWith({principals: ['role:system.admin']}, expect.any(Function));
+			expect(projectResult.localContext.siteJson).toBe('null');
+			expect(projectResult.localContext.siteConfigJson).toBe(JSON.stringify(projectConfig));
+			expect(urlsetResolver({args: {}, localContext: projectResult.localContext, source: projectResult.source})).toEqual(URLS);
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				sitePath: '',
+				siteUrl: projectConfig.overrideDomain,
+			}), 1000);
 		}); // import
 	}); // it
 }); // guillotine extensions

@@ -24,6 +24,7 @@ dependencies {
 	include "com.enonic.xp:lib-context:${xpVersion}"
 	include "com.enonic.xp:lib-content:${xpVersion}"
 	include "com.enonic.xp:lib-portal:${xpVersion}"
+	include "com.enonic.xp:lib-project:${xpVersion}"
 
 	testImplementation "com.enonic.xp:core-api:${xpVersion}"
 	testImplementation "com.enonic.xp:script-api:${xpVersion}"

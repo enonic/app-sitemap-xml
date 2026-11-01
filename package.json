@@ -6,6 +6,7 @@
     "@enonic-types/lib-context": "^7.14.4",
     "@enonic-types/lib-node": "^7.14.4",
     "@enonic-types/lib-portal": "^7.14.4",
+    "@enonic-types/lib-project": "^7.14.4",
     "@enonic/js-utils": "^1.7.1",
     "@swc/core": "^1.7.14",
     "@types/ms": "^0.7.34",

@@ -149,6 +149,40 @@ class SitemapBeanTest
     }
 
     @Test
+    void loggedInUserSharesPublicSitemapOfProjectReadableByEveryone()
+    {
+        when( contentService.getRootPermissions() ).thenReturn(
+            AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "", "https://example.com", List.of(), List.of(), 10 ) ) );
+
+        asUser( () -> bean().root( projectScriptValue() ) );
+
+        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
+        verify( cache ).get( any(), anyBoolean(), authInfo.capture(), any() );
+        assertThat( authInfo.getValue().isAuthenticated() ).isFalse();
+        verify( contentService, never() ).getByPath( any() );
+    }
+
+    @Test
+    void draftOfProjectListsNothing()
+    {
+        when( cache.uncached( any(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "", "https://example.com", List.of(), List.of(), 10 ) ) );
+        ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "draft" )
+            .build()
+            .callWith( () -> bean().root( projectScriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
+        verify( cache ).uncached( any(), any( AuthenticationInfo.class ), source.capture() );
+        final List<SitemapEntry> entries = new ArrayList<>();
+        assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
+        assertThat( entries ).isEmpty();
+    }
+
+    @Test
     void beanAnswers400ForInvalidRequestUrl()
     {
         final ScriptValue value = mock( ScriptValue.class );
@@ -230,6 +264,13 @@ class SitemapBeanTest
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn(
             Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10 ) );
+        return value;
+    }
+
+    private static ScriptValue projectScriptValue()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( Map.of( "sitePath", "", "siteUrl", "https://example.com", "maxItems", 10 ) );
         return value;
     }
 

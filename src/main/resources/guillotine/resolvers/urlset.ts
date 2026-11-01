@@ -44,10 +44,10 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 		args,
 		localContext,
 	} = env;
-	const site = JSON.parse(localContext.siteJson as string) as Site<SitemapXmlSiteConfig>;
+	const site = JSON.parse(localContext.siteJson as string) as Site<SitemapXmlSiteConfig> | null;
 	const siteConfig = JSON.parse(localContext.siteConfigJson as string) as SitemapXmlSiteConfig;
 	const params = toSitemapParams({
-		sitePath: site._path,
+		sitePath: site?._path || '',
 		siteUrl: siteConfig?.overrideDomain || '',
 		siteConfig: siteConfig || {},
 	});

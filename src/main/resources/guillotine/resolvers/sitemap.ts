@@ -1,4 +1,4 @@
-import type {Site} from '@enonic-types/lib-content';
+import type {Site, SiteConfig} from '@enonic-types/lib-content';
 import type {
 	DataFetcherResult,
 	GraphQL,
@@ -11,11 +11,13 @@ import type {
 import type {SitemapXmlSiteConfig} from '/types';
 
 
+import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {get as getContentByKey} from '/lib/xp/content';
 import {
 	get as getContext,
 	run as runInContext
 } from '/lib/xp/context';
+import {get as getProject} from '/lib/xp/project';
 import {
 	// DEBUG,
 	TRACE,
@@ -43,9 +45,6 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		siteKey // NOTE: Can be undefined when x-guillotine-sitekey is missing
 	} = localContext;
 	TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} siteKey: ${siteKey}`);
-	if (!siteKey) {
-		return null;
-	}
 	const context = getContext();
 	const {
 		authInfo: {
@@ -57,12 +56,14 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || [] // Handle null
 	}, () => {
-		const site = getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey});
+		const site = siteKey ? getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey}) : null;
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
-		const siteConfig = getSiteConfigFromSite({
-			applicationKey: app.name,
-			site: site as Site<SitemapXmlSiteConfig>,
-		});
+		const siteConfig = site
+			? getSiteConfigFromSite({
+				applicationKey: app.name,
+				site: site as Site<SitemapXmlSiteConfig>,
+			})
+			: getProjectConfig(project);
 		if (!siteConfig) {
 			return null;
 		}
@@ -84,3 +85,12 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		});
 	}); // runInContext
 };
+
+function getProjectConfig(project?: string): SitemapXmlSiteConfig | undefined {
+	if (!project) {
+		return undefined;
+	}
+	const projectEntity = runInContext({principals: ['role:system.admin']}, () => getProject({id: project}));
+	const configs = forceArray(projectEntity?.siteConfig || []) as unknown as SiteConfig<SitemapXmlSiteConfig>[];
+	return configs.filter(config => config && config.applicationKey === app.name)[0]?.config;
+}

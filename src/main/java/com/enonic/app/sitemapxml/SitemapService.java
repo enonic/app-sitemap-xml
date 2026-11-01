@@ -8,7 +8,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import com.enonic.xp.content.Content;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.enonic.xp.content.ContentConstants;
 import com.enonic.xp.content.ContentNotFoundException;
 import com.enonic.xp.content.ContentPath;
@@ -18,11 +20,14 @@ import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.RoleKeys;
+import com.enonic.xp.security.acl.AccessControlList;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 
 public final class SitemapService
 {
+    private static final Logger LOG = LoggerFactory.getLogger( SitemapService.class );
+
     private final ContentService contentService;
 
     private final SitemapCache cache;
@@ -38,8 +43,8 @@ public final class SitemapService
 
     /**
      * Returns the sitemap of the published content visible to the principals of the request, cached for them; for a site readable by
-     * everyone, the public sitemap. Requests on the draft
-     * branch (preview) get a sitemap with the site URL only, which is not kept.
+     * everyone, the public sitemap. Without a site path, the sitemap lists the whole project. Requests on the draft branch (preview) get
+     * a sitemap with the site URL only, or nothing for a project, which is not kept.
      *
      * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
      *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
@@ -56,7 +61,8 @@ public final class SitemapService
 
         if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
         {
-            return cache.uncached( key, context.getAuthInfo(), SitemapService::siteOnly );
+            final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
+            return cache.uncached( key, context.getAuthInfo(), draft );
         }
         final SitemapCache.Source source =
             ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
@@ -64,8 +70,8 @@ public final class SitemapService
     }
 
     /**
-     * The principals the sitemap is generated and cached for: anonymous when the site is readable by everyone, so that logged-in users
-     * share the public sitemap, the request's otherwise.
+     * The principals the sitemap is generated and cached for: anonymous when the site, or the project, is readable by everyone, so that
+     * logged-in users share the public sitemap, the request's otherwise.
      */
     private AuthenticationInfo sitemapAuthInfo( final Context context, final String sitePath )
     {
@@ -74,23 +80,53 @@ public final class SitemapService
         {
             return authInfo;
         }
+        final AccessControlList permissions = sitePath.isEmpty() ? projectPermissions( context ) : sitePermissions( context, sitePath );
+        return permissions != null && permissions.isAllowedFor( RoleKeys.EVERYONE, Permission.READ )
+            ? AuthenticationInfo.unAuthenticated()
+            : authInfo;
+    }
+
+    private AccessControlList sitePermissions( final Context context, final String sitePath )
+    {
         try
         {
-            final Content site = ContextBuilder.from( context )
+            return ContextBuilder.from( context )
                 .branch( ContentConstants.BRANCH_MASTER )
                 .build()
-                .callWith( () -> contentService.getByPath( ContentPath.from( sitePath.isEmpty() ? "/" : sitePath ) ) );
-            return site.getPermissions().isAllowedFor( RoleKeys.EVERYONE, Permission.READ ) ? AuthenticationInfo.unAuthenticated() : authInfo;
+                .callWith( () -> contentService.getByPath( ContentPath.from( sitePath ) ) )
+                .getPermissions();
         }
         catch ( ContentNotFoundException e )
         {
-            return authInfo;
+            return null;
+        }
+    }
+
+    private AccessControlList projectPermissions( final Context context )
+    {
+        try
+        {
+            return ContextBuilder.from( context )
+                .branch( ContentConstants.BRANCH_MASTER )
+                .authInfo( AuthenticationInfo.copyOf( context.getAuthInfo() ).principals( RoleKeys.ADMIN ).build() )
+                .build()
+                .callWith( contentService::getRootPermissions );
+        }
+        catch ( RuntimeException e )
+        {
+            LOG.debug( "Could not read permissions of project {}", context.getRepositoryId(), e );
+            return null;
         }
     }
 
     private static Set<String> principals( final AuthenticationInfo authInfo )
     {
         return authInfo.getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
+    }
+
+    private static Instant nothing( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    {
+        return null;
     }
 
     private static Instant siteOnly( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
