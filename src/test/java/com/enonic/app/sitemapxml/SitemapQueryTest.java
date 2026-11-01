@@ -63,9 +63,8 @@ class SitemapQueryTest
         final List<PropertySet> mustNot = sets( bool, "mustNot" );
 
         assertThat( must.get( 0 ).getSet( "in" ).getStrings( "values" ) ).containsExactly( "portal:site" );
-        final List<PropertySet> should = sets( must.get( 1 ).getSet( "boolean" ), "should" );
-        assertThat( should.get( 0 ).getSet( "like" ).getString( "value" ) ).isEqualTo( "/content/mysite/*" );
-        assertThat( should.get( 1 ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite" );
+        assertThat( must.get( 1 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
+        assertThat( must.get( 1 ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite" );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "x.com-enonic-app-metafields.meta-data.blockRobots" );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getBoolean( "value" ) ).isTrue();
         assertThat( mustNot.subList( 1, 4 ) ).extracting( set -> set.getSet( "like" ).getString( "value" ) )

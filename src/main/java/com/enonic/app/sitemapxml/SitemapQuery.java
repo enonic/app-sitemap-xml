@@ -69,6 +69,8 @@ public final class SitemapQuery
 
     private static final String CONTENT_ROOT = "/content";
 
+    private static final String PATH_HIERARCHY = "_path._path";
+
     private static final String BLOCK_ROBOTS_FIELD = "x.com-enonic-app-metafields.meta-data.blockRobots";
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapQuery.class );
@@ -326,11 +328,12 @@ public final class SitemapQuery
         in.addString( "field", "type" );
         params.contentTypeNames().forEach( type -> in.addString( "values", type ) );
 
-        final PropertySet inSite = bool.addSet( "must" ).addSet( "boolean" );
-        like( inSite.addSet( "should" ), "_path", contentRoot + "/*" );
-        final PropertySet isSite = inSite.addSet( "should" ).addSet( "term" );
-        isSite.addString( "field", "_path" );
-        isSite.addString( "value", contentRoot );
+        // The site and everything below it: node paths are also indexed by path hierarchy (_path._path holds every ancestor path), so
+        // this is a single term, which costs the same however large the site is. A wildcard on _path would enumerate every path of the
+        // site in each query.
+        final PropertySet inSite = bool.addSet( "must" ).addSet( "term" );
+        inSite.addString( "field", PATH_HIERARCHY );
+        inSite.addString( "value", contentRoot );
 
         final PropertySet blockRobots = bool.addSet( "mustNot" ).addSet( "term" );
         blockRobots.addString( "field", BLOCK_ROBOTS_FIELD );
