@@ -425,6 +425,30 @@ class SitemapCacheTest
     }
 
     @Test
+    void enforcesLimitAfterBurstOfColdRequests()
+    {
+        final CountDownLatch release = new CountDownLatch( 1 );
+        final SitemapCache.Source slow = ( sink, cancelled ) -> {
+            await( release );
+            return generate( sink, cancelled );
+        };
+        final int requested = 2 * SitemapCache.MAX_PER_SITE + 5;
+        for ( int i = 0; i < requested; i++ )
+        {
+            final SitemapCache.Key key = hostKey( i );
+            requests.submit( () -> cache.get( key, false, AUTH_INFO, slow ) );
+        }
+        awaitUntil( () -> cache.size() == requested );
+
+        release.countDown();
+        awaitUntil( () -> generated.get() == requested );
+        awaitIdle();
+
+        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE );
+        awaitUntil( () -> sitemapDirectories().size() == SitemapCache.MAX_PER_SITE );
+    }
+
+    @Test
     void evictsSitemapsWithPortBeforeThoseWithout()
     {
         final SitemapCache.Key withoutPort = siteKey( "https://example.com" );
@@ -474,6 +498,7 @@ class SitemapCacheTest
         assertThat( restarted.size() ).isEqualTo( 1 );
         awaitIdle();
         assertThat( generated ).hasValue( 1 );
+        clock.now = clock.now.plusSeconds( 3600 );
 
         final Sitemap restored = restarted.get( key, true, AUTH_INFO, this::generate );
         assertThat( restored.directory() ).isEqualTo( first.directory() );
@@ -483,7 +508,9 @@ class SitemapCacheTest
 
         awaitUntil( () -> generated.get() == 2 );
         awaitIdle();
-        assertThat( restarted.get( key, true, AUTH_INFO, this::generate ) ).isNotSameAs( restored );
+        final Sitemap regenerated = restarted.get( key, true, AUTH_INFO, this::generate );
+        assertThat( regenerated ).isNotSameAs( restored );
+        assertThat( regenerated.lastModified() ).isEqualTo( first.lastModified() );
         assertThat( generated ).hasValue( 2 );
     }
 

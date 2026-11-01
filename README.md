@@ -34,7 +34,7 @@ Use the `Query playground` in Content Studio to study the Guillotine Schema. You
 
 The `sitemap` field is served from the same cached, published-only sitemap as `sitemap.xml`, split into the same files (at most 50 000 URLs and 50MB each). URLs are returned as paths relative to the site, so the client prefixes them with its own base URL. `lastmod` is the time the content was last modified; `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
 
-* `files { number lastmod }` lists the files of the sitemap with the newest `lastmod` of each file. Use it to render a sitemap index, or to know how many files to fetch.
+* `files { number lastmod }` lists the files of the sitemap with the time each file last changed. A file keeps its `lastmod` while its content stays the same, so crawlers can skip it. Use it to render a sitemap index, or to know how many files to fetch.
 * `file(number: N) { urlset { ... } }` returns the URLs of file `N`, or `null` when there is no such file. Fetch the files one by one, so a huge sitemap never has to be loaded in one response.
 * `urlset(count: N)` returns the first `N` URLs of the sitemap, or all of them without `count`. Fine for small sites.
 
@@ -128,7 +128,7 @@ By default, the app will use the domain name of the site. If you want to overrid
 
 All published content of the site that matches the mappings is included, there is no limit on the number of items. The limits of the [sitemap protocol](https://www.sitemaps.org/protocol.html) are always obeyed: a sitemap file holds at most 50,000 URLs and 50MB (uncompressed), a sitemap index lists at most 50,000 sitemaps, and URLs longer than 2,048 characters are left out.
 
-When the site has more items than fit in one file, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping.
+When the site has more items than fit in one file, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping. The `<lastmod>` of each file in the index is the time that file last changed: a file whose content is the same as in the previous sitemap keeps its time.
 
 URLs in a sitemap that fits in one file are sorted by path, which compresses better. When the sitemap is split into several files, URLs are sorted newest first, so each file holds a range of modification times and its `lastmod` in the index tells crawlers whether it changed.
 

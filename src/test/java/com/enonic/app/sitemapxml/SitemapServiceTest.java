@@ -222,7 +222,7 @@ class SitemapServiceTest
         final SitemapBean bean = bean();
 
         assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
-            "[{\"number\":1,\"lastmod\":\"2024-01-01T00:00:00Z\"},{\"number\":2}]" );
+            "[{\"number\":1,\"lastmod\":\"2024-06-01T00:00:00Z\"},{\"number\":2,\"lastmod\":\"2024-06-01T00:00:00Z\"}]" );
         assertThat( inContext( () -> bean.guillotineUrlset( scriptValue(), 1 ) ) ).isEqualTo(
             "[{\"path\":\"/a\",\"lastmod\":\"2024-01-01T00:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
         assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 2 ) ) ).isEqualTo(
