@@ -151,7 +151,7 @@ A request for a sitemap that is being generated again gets the previous one righ
 
 Sitemaps are generated one at a time, in the order they are needed. Any number of generations can be queued. Requests for generated sitemaps are always answered at once; when more than 10 requests are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
 
-Generated sitemap files are kept in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per site and host, with the files of its current sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. The 100 most recently used sitemaps are kept; older ones are deleted. The cache is per cluster node.
+Generated sitemap files are kept in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per site and host, with the files of its current sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. The 100 most recently used sitemaps are kept; older ones are deleted. The cache is per cluster node.
 
 ### URLs in the sitemap
 
@@ -195,6 +195,12 @@ To exlude all content that ends with a string use: `*endsWith`
 Check out [Sitemaps XML format](https://www.sitemaps.org/protocol.html) to learn more about how it all works.
 
 ## Upgrade Notes
+
+### 3.0.x to 3.1.0
+
+#### JSON sitemap removed
+
+A request for `sitemap.xml` with the header `Content-Type: application/json` no longer returns the sitemap as JSON; it returns the XML sitemap. For JSON, use the [Guillotine Extension](#headless-integration), which returns the same entries split into the same files.
 
 ### 1.x.x to 2.0.0
 

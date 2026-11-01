@@ -27,7 +27,6 @@ export interface SitemapResponse {
 export interface SitemapBean {
 	root(params: ScriptValue): SitemapResponse
 	file(params: ScriptValue, number: number): SitemapResponse
-	json(params: ScriptValue): SitemapResponse
 	rootGzip(params: ScriptValue): SitemapResponse
 	rootEncoded(params: ScriptValue): SitemapResponse
 	fileGzip(params: ScriptValue, number: number): SitemapResponse

@@ -90,21 +90,6 @@ final class SitemapRenderer
         } );
     }
 
-    void json( final JsonGenerator json, final SitemapEntry entry, final String loc )
-        throws IOException
-    {
-        final ContentTypeSetting setting = params.setting( entry.contentType() );
-        json.writeStartObject();
-        json.writeStringField( "changefreq", setting.changefreq() );
-        if ( entry.lastModified() != null )
-        {
-            json.writeStringField( "lastmod", entry.lastModified().toString() );
-        }
-        json.writeStringField( "priority", setting.priority() );
-        json.writeStringField( "loc", loc );
-        json.writeEndObject();
-    }
-
     /**
      * Writes the path-based entry served through Guillotine. Change frequency and priority are left out when they have default values.
      */

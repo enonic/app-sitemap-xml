@@ -147,7 +147,6 @@ class SitemapServiceTest
         assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
         assertThat( SitemapTest.text( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ) ).contains( "https://example.com/b" );
         assertThat( inContext( () -> bean.file( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
-        assertThat( SitemapTest.text( inContext( () -> bean.json( scriptValue() ) ).getBody() ) ).startsWith( "[{" );
         assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
         assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isNotNull();
         assertThat( inContext( () -> bean.rootEncoded( scriptValue() ) ).getBody() ).isNotNull();

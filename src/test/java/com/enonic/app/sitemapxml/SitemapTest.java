@@ -72,19 +72,6 @@ class SitemapTest
 
         assertThat( sitemap.fileCount() ).isEqualTo( 1 );
         assertThat( text( sitemap.root() ) ).endsWith( "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>" );
-        assertThat( text( sitemap.json() ) ).isEqualTo( "[]" );
-    }
-
-    @Test
-    void json()
-    {
-        final Sitemap sitemap = write( params( "https://example.com" ), 1,
-                                       List.of( new SitemapEntry( "/a\"b", "base:folder", Instant.parse( "2024-02-02T09:01:33Z" ) ),
-                                                new SitemapEntry( "/c", "base:folder", null ) ) );
-
-        assertThat( text( sitemap.json() ) ).isEqualTo(
-            "[{\"changefreq\":\"daily\",\"lastmod\":\"2024-02-02T09:01:33Z\",\"priority\":\"0.8\",\"loc\":\"https://example.com/a%22b\"}," +
-                "{\"changefreq\":\"daily\",\"priority\":\"0.8\",\"loc\":\"https://example.com/c\"}]" );
     }
 
     @Test
@@ -127,7 +114,7 @@ class SitemapTest
 
         assertThat( sitemap.size() ).isEqualTo( 1 );
         assertThat( text( sitemap.root() ) ).contains( "https://example.com/ok" ).doesNotContain( longName );
-        assertThat( text( sitemap.json() ) ).doesNotContain( longName );
+        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( longName );
     }
 
     @Test
@@ -141,7 +128,7 @@ class SitemapTest
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         assertThat( sitemap.size() ).isEqualTo( 6 );
         assertThat( sitemap.file( 4 ) ).isEmpty();
-        assertThat( text( sitemap.json() ) ).doesNotContain( "item-6" );
+        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( "item-6" );
     }
 
     @Test
@@ -254,11 +241,9 @@ class SitemapTest
                                                                                                        "urlset-1.jsonl.gz",
                                                                                                        "urlset-2.jsonl.gz",
                                                                                                        "sitemap-1.xml.gz",
-                                                                                                       "sitemap-2.xml.gz",
-                                                                                                       "sitemap.json.gz" );
+                                                                                                       "sitemap-2.xml.gz" );
         }
-        for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow(),
-                                                sitemap.json() ) )
+        for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow() ) )
         {
             assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
         }

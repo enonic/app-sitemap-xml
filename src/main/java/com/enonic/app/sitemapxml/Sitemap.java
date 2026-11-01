@@ -62,8 +62,6 @@ public final class Sitemap
 
     static final String ROOT_FILE = "sitemap.xml";
 
-    static final String JSON_FILE = "sitemap.json";
-
     static final String PLAIN_INDEX_FILE = "sitemap-index.xml";
 
     static final JsonFactory JSON = new JsonFactory();
@@ -150,11 +148,6 @@ public final class Sitemap
     public Optional<ByteSource> fileGzip( final int number )
     {
         return validFile( number ).map( this::gzip );
-    }
-
-    public ByteSource json()
-    {
-        return plain( JSON_FILE );
     }
 
     public List<@Nullable Instant> lastModified()
@@ -476,10 +469,6 @@ public final class Sitemap
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
-        private final CountingWriter jsonFile;
-
-        private final JsonGenerator json;
-
         private @Nullable CountingWriter file;
 
         private @Nullable CountingWriter urlsetFile;
@@ -502,7 +491,6 @@ public final class Sitemap
 
         private Builder( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
                         final int maxFiles )
-            throws IOException
         {
             this.directory = directory;
             this.params = params;
@@ -511,9 +499,6 @@ public final class Sitemap
             this.maxFileBytes = maxFileBytes;
             this.maxFiles = maxFiles;
             this.indexBytes = utf8Length( INDEX_START ) + utf8Length( INDEX_END );
-            this.jsonFile = open( JSON_FILE );
-            this.json = JSON.createGenerator( jsonFile );
-            this.json.writeStartArray();
         }
 
         public void add( final SitemapEntry entry )
@@ -534,7 +519,6 @@ public final class Sitemap
                 }
                 Objects.requireNonNull( file ).write( url );
                 renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
-                renderer.json( json, entry, loc );
                 fileUrls++;
                 lastModified.set( lastModified.size() - 1, latest( lastModified.getLast(), entry.lastModified() ) );
                 size++;
@@ -549,9 +533,6 @@ public final class Sitemap
         {
             try
             {
-                json.writeEndArray();
-                json.close();
-                plainSizes.put( JSON_FILE, jsonFile.bytes() );
                 closeFile();
                 if ( tooLong > 0 )
                 {
@@ -680,7 +661,7 @@ public final class Sitemap
             {
                 return;
             }
-            for ( final Closeable closeable : new Closeable[]{json, file, urlset} )
+            for ( final Closeable closeable : new Closeable[]{file, urlset} )
             {
                 try
                 {
