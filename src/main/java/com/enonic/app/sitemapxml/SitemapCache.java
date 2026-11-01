@@ -10,7 +10,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,6 +36,12 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
@@ -84,6 +89,8 @@ public final class SitemapCache
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
 
@@ -395,9 +402,9 @@ public final class SitemapCache
         final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
         try
         {
-            final Map<String, Object> description = new LinkedHashMap<>();
+            final ObjectNode description = JsonNodeFactory.instance.objectNode();
             description.put( "format", FORMAT );
-            description.put( "key", key.store() );
+            description.set( "key", key.store() );
             description.put( "background", entry.background );
             description.put( "lastAccess", entry.lastAccess.toString() );
             final Instant validUntil = entry.validUntil;
@@ -405,8 +412,8 @@ public final class SitemapCache
             {
                 description.put( "validUntil", validUntil.toString() );
             }
-            description.put( "sitemap", sitemap.store() );
-            Json.writeObject( description, temporary );
+            description.set( "sitemap", sitemap.store() );
+            MAPPER.writeValue( temporary.toFile(), description );
             Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
         }
         catch ( IOException e )
@@ -465,17 +472,17 @@ public final class SitemapCache
         }
         try
         {
-            final Map<String, ?> description = Json.readObject( file );
-            if ( Json.number( description, "format" ) != FORMAT )
+            final JsonNode description = MAPPER.readTree( file.toFile() );
+            if ( description.required( "format" ).asInt() != FORMAT )
             {
                 return null;
             }
-            final Key key = Key.restore( Json.object( description.get( "key" ) ) );
-            final Entry entry = new Entry( Instant.parse( Json.string( description, "lastAccess" ) ) );
-            entry.background = Json.bool( description, "background" );
-            final String validUntil = Json.optionalString( description, "validUntil" );
-            entry.validUntil = validUntil == null ? null : Instant.parse( validUntil );
-            final Sitemap sitemap = Sitemap.restore( directory, Json.object( description.get( "sitemap" ) ) );
+            final Key key = Key.restore( description.required( "key" ) );
+            final Entry entry = new Entry( Instant.parse( description.required( "lastAccess" ).asText() ) );
+            entry.background = description.required( "background" ).asBoolean();
+            final JsonNode validUntil = description.get( "validUntil" );
+            entry.validUntil = validUntil == null ? null : Instant.parse( validUntil.asText() );
+            final Sitemap sitemap = Sitemap.restore( directory, description.required( "sitemap" ) );
             entry.sitemap = sitemap;
             entry.ready.complete( sitemap );
             return Map.entry( key, entry );
@@ -633,44 +640,53 @@ public final class SitemapCache
                 params.sitePath().equals( other.params.sitePath() ) && principals.equals( other.principals );
         }
 
-        Map<String, Object> store()
+        ObjectNode store()
         {
-            final List<Map<String, Object>> contentTypes = new ArrayList<>();
-            for ( final ContentTypeSetting setting : params.contentTypes() )
-            {
-                final Map<String, Object> item = new LinkedHashMap<>();
-                item.put( "contentType", setting.contentType() );
-                item.put( "changefreq", setting.changefreq() );
-                item.put( "priority", setting.priority() );
-                contentTypes.add( item );
-            }
-            final Map<String, Object> key = new LinkedHashMap<>();
+            final ObjectNode key = JsonNodeFactory.instance.objectNode();
             key.put( "repository", repositoryId );
             key.put( "branch", branch );
-            key.put( "principals", new ArrayList<>( new TreeSet<>( principals ) ) );
+            final ArrayNode principals = key.putArray( "principals" );
+            new TreeSet<>( this.principals ).forEach( principals::add );
             key.put( "sitePath", params.sitePath() );
             key.put( "siteUrl", params.siteUrl() );
-            key.put( "contentTypes", contentTypes );
-            key.put( "ignorePatterns", params.ignorePatterns() );
+            final ArrayNode contentTypes = key.putArray( "contentTypes" );
+            for ( final ContentTypeSetting setting : params.contentTypes() )
+            {
+                contentTypes.addObject()
+                    .put( "contentType", setting.contentType() )
+                    .put( "changefreq", setting.changefreq() )
+                    .put( "priority", setting.priority() );
+            }
+            final ArrayNode ignorePatterns = key.putArray( "ignorePatterns" );
+            params.ignorePatterns().forEach( ignorePatterns::add );
             key.put( "maxItems", params.maxItems() );
             return key;
         }
 
-        static Key restore( final Map<String, ?> key )
+        static Key restore( final JsonNode key )
         {
             final List<ContentTypeSetting> contentTypes = new ArrayList<>();
-            for ( final Object item : Json.list( key, "contentTypes" ) )
+            for ( final JsonNode setting : key.required( "contentTypes" ) )
             {
-                final Map<String, ?> setting = Json.object( item );
-                contentTypes.add( new ContentTypeSetting( Json.string( setting, "contentType" ), Json.string( setting, "changefreq" ),
-                                                          Json.string( setting, "priority" ) ) );
+                contentTypes.add( new ContentTypeSetting( setting.required( "contentType" ).asText(),
+                                                          setting.required( "changefreq" ).asText(),
+                                                          setting.required( "priority" ).asText() ) );
             }
             final SitemapParams params =
-                new SitemapParams( Json.string( key, "sitePath" ), Json.string( key, "siteUrl" ), contentTypes,
-                                   Json.strings( key, "ignorePatterns" ),
-                                   (int) Json.number( key, "maxItems" ) );
-            return new Key( Json.string( key, "repository" ), Json.string( key, "branch" ),
-                            Set.copyOf( Json.strings( key, "principals" ) ), params );
+                new SitemapParams( key.required( "sitePath" ).asText(), key.required( "siteUrl" ).asText(), contentTypes,
+                                   strings( key.required( "ignorePatterns" ) ), key.required( "maxItems" ).asInt() );
+            return new Key( key.required( "repository" ).asText(), key.required( "branch" ).asText(),
+                            Set.copyOf( strings( key.required( "principals" ) ) ), params );
+        }
+
+        private static List<String> strings( final JsonNode array )
+        {
+            final List<String> strings = new ArrayList<>();
+            for ( final JsonNode item : array )
+            {
+                strings.add( item.asText() );
+            }
+            return strings;
         }
     }
 

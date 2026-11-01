@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,6 +36,10 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.io.SerializedString;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.io.ByteSource;
 import com.google.common.io.MoreFiles;
 
@@ -251,24 +254,23 @@ public final class Sitemap
     /**
      * Describes the sitemap, for {@link #restore} to read the sitemap back from its directory.
      */
-    Map<String, Object> store()
+    ObjectNode store()
     {
-        final List<Map<String, Object>> files = new ArrayList<>();
+        final ObjectNode description = JsonNodeFactory.instance.objectNode();
+        description.put( "size", size );
+        final ArrayNode files = description.putArray( "files" );
         for ( int i = 0; i < lastModified.size(); i++ )
         {
-            final Map<String, Object> file = new LinkedHashMap<>();
+            final ObjectNode file = files.addObject();
             final Instant lastmod = lastModified.get( i );
             if ( lastmod != null )
             {
                 file.put( "lastmod", lastmod.toString() );
             }
             file.put( "digest", digests.get( i ) );
-            files.add( file );
         }
-        final Map<String, Object> description = new LinkedHashMap<>();
-        description.put( "size", size );
-        description.put( "files", files );
-        description.put( "bytes", new TreeMap<>( plainSizes ) );
+        final ObjectNode bytes = description.putObject( "bytes" );
+        new TreeMap<>( plainSizes ).forEach( bytes::put );
         return description;
     }
 
@@ -277,7 +279,7 @@ public final class Sitemap
      *
      * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path directory, final Map<String, ?> description )
+    static Sitemap restore( final Path directory, final JsonNode description )
     {
         if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
         {
@@ -285,19 +287,18 @@ public final class Sitemap
         }
         final List<Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
-        for ( final Object file : Json.list( description, "files" ) )
+        for ( final JsonNode file : description.required( "files" ) )
         {
-            final String lastmod = Json.optionalString( Json.object( file ), "lastmod" );
-            lastModified.add( lastmod == null ? null : Instant.parse( lastmod ) );
-            digests.add( Json.string( Json.object( file ), "digest" ) );
+            final JsonNode lastmod = file.get( "lastmod" );
+            lastModified.add( lastmod == null ? null : Instant.parse( lastmod.asText() ) );
+            digests.add( file.required( "digest" ).asText() );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
-        final Map<String, ?> bytes = Json.object( description.get( "bytes" ) );
-        for ( final String name : bytes.keySet() )
+        for ( final Map.Entry<String, JsonNode> file : description.required( "bytes" ).properties() )
         {
-            plainSizes.put( name, Json.number( bytes, name ) );
+            plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        return new Sitemap( directory, (int) Json.number( description, "size" ), plainSizes, lastModified, digests );
+        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests );
     }
 
     Path directory()
