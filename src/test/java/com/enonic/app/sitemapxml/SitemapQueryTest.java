@@ -1,6 +1,8 @@
 package com.enonic.app.sitemapxml;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -8,6 +10,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +18,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.enonic.xp.aggregation.Aggregation;
+import com.enonic.xp.aggregation.Aggregations;
+import com.enonic.xp.aggregation.Buckets;
+import com.enonic.xp.aggregation.DateHistogramBucket;
 import com.enonic.xp.content.Content;
 import com.enonic.xp.content.ContentId;
 import com.enonic.xp.content.ContentIds;
@@ -28,7 +35,10 @@ import com.enonic.xp.content.GetContentByIdsParams;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
-import com.enonic.xp.node.NodeQuery;
+import com.enonic.xp.query.aggregation.AggregationQuery;
+import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
+import com.enonic.xp.query.filter.Filter;
+import com.enonic.xp.query.filter.RangeFilter;
 import com.enonic.xp.schema.content.ContentTypeName;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,7 +59,7 @@ class SitemapQueryTest
     @Test
     void dsl()
     {
-        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of( "/skip/", "*/foo", "bar" ), 50_000 );
+        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of( "/skip/", "*/foo", "bar" ), 10 );
 
         final PropertySet bool = new SitemapQuery( contentService, params, NOW ).dsl().getSet( "boolean" );
         final List<PropertySet> must = sets( bool, "must" );
@@ -87,9 +97,107 @@ class SitemapQueryTest
         verify( contentService, times( 2 ) ).getByIds( any( GetContentByIdsParams.class ) );
 
         final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
-        verify( contentService ).find( query.capture() );
-        assertThat( query.getValue().getQueryExpr().getOrderList() ).extracting( Object::toString ).containsExactly( "modifiedtime DESC" );
-        assertThat( query.getValue().getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
+        verify( contentService, times( 2 ) ).find( query.capture() );
+        final ContentQuery overview = query.getAllValues().get( 0 );
+        assertThat( overview.getSize() ).isZero();
+        assertThat( overview.getAggregationQueries() ).hasSize( 1 );
+        final ContentQuery fetch = query.getAllValues().get( 1 );
+        assertThat( fetch.getQueryFilters().getSize() ).isZero();
+        assertThat( fetch.getQueryExpr().getOrderList() ).extracting( Object::toString ).containsExactly( "_path ASC" );
+        assertThat( fetch.getSize() ).isEqualTo( SitemapQuery.PAGE_SIZE );
+    }
+
+    @Test
+    void singleFileIsReadByPathPageByPage()
+    {
+        final List<Content> page = IntStream.range( 0, SitemapQuery.PAGE_SIZE ).mapToObj( i -> content( "c" + i, "/mysite/Item-" + i ) ).collect( Collectors.toList() );
+        final Content rest = content( "rest", "/mysite/zz" );
+        answerGetByIds( Stream.concat( page.stream(), Stream.of( rest ) ).collect( Collectors.toList() ) );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            if ( query.getSize() == 0 )
+            {
+                return overview( Sitemap.MAX_URLS_PER_FILE );
+            }
+            return query.getQueryFilters().isEmpty() ? result( page ) : result( List.of( rest ) );
+        } );
+
+        final List<SitemapEntry> entries = new ArrayList<>();
+        draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
+
+        assertThat( entries ).hasSize( SitemapQuery.PAGE_SIZE + 1 );
+        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
+        verify( contentService, times( 3 ) ).find( query.capture() );
+        final ContentQuery second = query.getAllValues().get( 2 );
+        assertThat( second.getSize() ).isEqualTo( SitemapQuery.PAGE_SIZE );
+        assertThat( second.getQueryExpr().getOrderList() ).extracting( Object::toString ).containsExactly( "_path ASC" );
+        final RangeFilter after = (RangeFilter) second.getQueryFilters().iterator().next();
+        assertThat( after.getFieldName() ).isEqualTo( "_path" );
+        assertThat( after.getFrom().asString() ).isEqualTo( "/content/mysite/item-" + ( SitemapQuery.PAGE_SIZE - 1 ) );
+        assertThat( after.isIncludeLower() ).isFalse();
+    }
+
+    @Test
+    void largeSitemapIsReadNewestFirstInTimeRanges()
+    {
+        final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
+        final Instant hour = day.minus( Duration.ofDays( 2 ) );
+        final Instant second = Instant.parse( "2024-01-01T10:20:30Z" );
+        final List<String> requests = new ArrayList<>();
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            final String interval = interval( query );
+            final String range = range( query );
+            requests.add( ( interval != null ? interval : query.getSize() + " " + query.getQueryExpr().getOrderList() ) + " " + range );
+            if ( interval == null && query.getQueryFilters().getSize() > 1 )
+            {
+                throw new IllegalStateException( "Only one page expected" );
+            }
+            if ( interval == null )
+            {
+                // One content per range query, named after its range.
+                final Content content = content( "c" + requests.size(), "/mysite/" + range.replace( ':', '-' ).replace( ' ', '_' ) );
+                answerGetByIds( List.of( content ) );
+                return result( List.of( content ) );
+            }
+            switch ( interval )
+            {
+                case "1d":
+                    return overview( 71_000, bucket( day, 6_000 ), bucket( day.minus( Duration.ofDays( 1 ) ), 7_000 ),
+                                     bucket( day.minus( Duration.ofDays( 2 ) ), 25_000 ),
+                                     bucket( second.truncatedTo( ChronoUnit.DAYS ), 30_000 ),
+                                     bucket( second.minus( Duration.ofDays( 1 ) ).truncatedTo( ChronoUnit.DAYS ), 3_000 ) );
+                case "1h":
+                    return range.startsWith( hour.toString() )
+                        ? overview( 25_000, bucket( hour, 9_000 ), bucket( hour.plus( Duration.ofHours( 1 ) ), 8_000 ),
+                                    bucket( hour.plus( Duration.ofHours( 5 ) ), 8_000 ) )
+                        : overview( 30_000, bucket( second.truncatedTo( ChronoUnit.HOURS ), 30_000 ) );
+                case "1m":
+                    return overview( 30_000, bucket( second.truncatedTo( ChronoUnit.MINUTES ), 30_000 ) );
+                default:
+                    return overview( 30_000, bucket( second, 30_000 ) );
+            }
+        } );
+
+        final List<SitemapEntry> entries = new ArrayList<>();
+        draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
+
+        final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC] ";
+        // All ranges are planned first, then read newest first.
+        assertThat( requests ).containsExactly( "1d -",
+                                                "1h 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
+                                                "1h 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
+                                                "1m 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
+                                                "1s 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
+                                                "1ms 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
+                                                desc + "2024-05-01T00:00:00Z 2024-05-02T00:00:00Z",
+                                                desc + "2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
+                                                desc + "2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
+                                                desc + "2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
+                                                desc + "2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
+                                                SitemapQuery.PAGE_SIZE + " [_path ASC] 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z",
+                                                desc + "2023-12-31T00:00:00Z 2024-01-01T00:00:00Z" );
+        assertThat( entries ).hasSize( 7 );
     }
 
     @Test
@@ -110,19 +218,27 @@ class SitemapQueryTest
     }
 
     @Test
-    void limitsToMaxItems()
+    void readsNewestMaxItemsWhenThereAreMore()
     {
-        final List<Content> contents = List.of( content( "a", "/mysite/a" ), content( "b", "/mysite/b" ) );
-        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
-        answerGetByIds( contents );
+        final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
+        final List<Content> newest = List.of( content( "a", "/mysite/a" ), content( "b", "/mysite/b" ) );
+        final List<Content> older = List.of( content( "c", "/mysite/c" ) );
+        answerGetByIds( Stream.concat( newest.stream(), older.stream() ).collect( Collectors.toList() ) );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            if ( query.getSize() == 0 )
+            {
+                return overview( 3, bucket( day, 2 ), bucket( day.minus( Duration.ofDays( 1 ) ), 1 ) );
+            }
+            // Both days fit in one range, read newest first.
+            return result( Stream.concat( newest.stream(), older.stream() ).collect( Collectors.toList() ) );
+        } );
 
         final List<SitemapEntry> entries = new ArrayList<>();
-        draft( () -> new SitemapQuery( contentService, params( 1 ), NOW ).execute( entries::add, () -> false ) );
+        draft( () -> new SitemapQuery( contentService, params( 2 ), NOW ).execute( entries::add, () -> false ) );
 
-        assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "/a" );
-        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
-        verify( contentService ).find( query.capture() );
-        assertThat( query.getValue().getSize() ).isEqualTo( 1 );
+        assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "/a", "/b" );
+        verify( contentService, times( 2 ) ).find( any( ContentQuery.class ) );
     }
 
     @Test
@@ -164,6 +280,44 @@ class SitemapQueryTest
         assertThat( SitemapQuery.ignorePath( "/content/s", "/a/" ) ).isEqualTo( "/content/s/a" );
         assertThat( SitemapQuery.ignorePath( "/content/s", "a*" ) ).isEqualTo( "/content/s/a*" );
         assertThat( SitemapQuery.ignorePath( "/content/s", "*a" ) ).isEqualTo( "*a" );
+    }
+
+    private static String interval( final ContentQuery query )
+    {
+        for ( final AggregationQuery aggregation : query.getAggregationQueries() )
+        {
+            return ( (DateHistogramAggregationQuery) aggregation ).getInterval();
+        }
+        return null;
+    }
+
+    private static String range( final ContentQuery query )
+    {
+        for ( final Filter filter : query.getQueryFilters() )
+        {
+            final RangeFilter range = (RangeFilter) filter;
+            return range.getFrom().asInstant() + " " + range.getTo().asInstant();
+        }
+        return "-";
+    }
+
+    private static DateHistogramBucket bucket( final Instant key, final long count )
+    {
+        return DateHistogramBucket.create().keyAsInstant( key ).key( key.toString() ).docCount( count ).build();
+    }
+
+    private static FindContentIdsByQueryResult overview( final long total, final DateHistogramBucket... buckets )
+    {
+        final Buckets.Builder timeline = Buckets.create();
+        for ( final DateHistogramBucket bucket : buckets )
+        {
+            timeline.add( bucket );
+        }
+        return FindContentIdsByQueryResult.create()
+            .contents( ContentIds.empty() )
+            .totalHits( total )
+            .aggregations( Aggregations.from( Aggregation.bucketAggregation( SitemapQuery.TIMELINE ).buckets( timeline.build() ).build() ) )
+            .build();
     }
 
     private static List<PropertySet> sets( final PropertySet parent, final String name )
