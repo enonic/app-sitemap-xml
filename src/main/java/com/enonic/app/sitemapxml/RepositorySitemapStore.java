@@ -90,6 +90,8 @@ final class RepositorySitemapStore
 
     private final RepositoryService repositoryService;
 
+    private volatile boolean initialized;
+
     RepositorySitemapStore( final NodeService nodeService, final RepositoryService repositoryService )
     {
         this.nodeService = nodeService;
@@ -99,9 +101,9 @@ final class RepositorySitemapStore
     /**
      * Creates the repository unless it exists. Cluster nodes starting at the same time may both try.
      */
-    void initialize()
+    private void initialize()
     {
-        call( () -> {
+        context().callWith( () -> {
             if ( repositoryService.get( REPOSITORY ) == null )
             {
                 try
@@ -416,8 +418,19 @@ final class RepositorySitemapStore
         return new NodePath( "/" + id );
     }
 
-    private static <T> T call( final Callable<T> callable )
+    private <T> T call( final Callable<T> callable )
     {
+        if ( !initialized )
+        {
+            synchronized ( this )
+            {
+                if ( !initialized )
+                {
+                    initialize();
+                    initialized = true;
+                }
+            }
+        }
         return context().callWith( callable );
     }
 
