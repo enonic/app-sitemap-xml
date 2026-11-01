@@ -130,7 +130,7 @@ All published content of the site that matches the mappings is included, there i
 
 When the site has more items than fit in one file, `sitemap.xml` becomes a [sitemap index](https://www.sitemaps.org/protocol.html#index) that points to `sitemap-1.xml`, `sitemap-2.xml`, etc. Those files are served by the same controller mapping. The `<lastmod>` of each file in the index is the time that file last changed: a file whose content is the same as in the previous sitemap keeps its time.
 
-URLs in a sitemap that fits in one file are sorted by path, which compresses better. When the sitemap is split into several files, URLs are sorted newest first, so each file holds a range of modification times and its `lastmod` in the index tells crawlers whether it changed.
+URLs in a sitemap that fits in one file are sorted by path, which compresses better. When the sitemap is split into several files, URLs are sorted by the time the content was created, oldest first: new content is added to the last file and edited content stays in its file, so the other files keep their content and their `lastmod` in the index, and crawlers can skip them.
 
 ### Gzip
 

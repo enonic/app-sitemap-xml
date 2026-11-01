@@ -75,7 +75,7 @@ class SitemapQueryTest
     }
 
     @Test
-    void streamsContentsLoadedInBatchesNewestFirst()
+    void streamsContentsLoadedInBatches()
     {
         final int count = SitemapQuery.FETCH_BATCH_SIZE + 5;
         final List<Content> contents = new ArrayList<>(
@@ -138,7 +138,7 @@ class SitemapQueryTest
     }
 
     @Test
-    void largeSitemapIsReadNewestFirstInSlices()
+    void largeSitemapIsReadInCreationOrderInSlices()
     {
         final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
         final Instant hour = day.minus( Duration.ofDays( 2 ) );
@@ -158,19 +158,19 @@ class SitemapQueryTest
             }
             switch ( histogram )
             {
-                case "modifiedtime 1d":
+                case "createdtime 1d":
                     return overview( 71_000, bucket( day, 6_000 ), bucket( day.minus( Duration.ofDays( 1 ) ), 7_000 ),
                                      bucket( day.minus( Duration.ofDays( 2 ) ), 25_000 ), bucket( second.truncatedTo( ChronoUnit.DAYS ), 30_000 ),
                                      bucket( second.minus( Duration.ofDays( 1 ) ).truncatedTo( ChronoUnit.DAYS ), 3_000 ) );
-                case "modifiedtime 1h":
+                case "createdtime 1h":
                     return filters.contains( hour.toString() )
                         ? overview( 25_000, bucket( hour, 9_000 ), bucket( hour.plus( Duration.ofHours( 1 ) ), 8_000 ),
                                     bucket( hour.plus( Duration.ofHours( 5 ) ), 8_000 ) )
                         : overview( 30_000, bucket( second.truncatedTo( ChronoUnit.HOURS ), 30_000 ) );
-                case "modifiedtime 1m":
+                case "createdtime 1m":
                     return overview( 30_000, bucket( second.truncatedTo( ChronoUnit.MINUTES ), 30_000 ) );
-                case "modifiedtime 1s":
-                case "modifiedtime 1ms":
+                case "createdtime 1s":
+                case "createdtime 1ms":
                     return overview( 30_000, bucket( second, 30_000 ) );
                 case "_ts 1d":
                     return overview( 30_000, bucket( stored.minus( Duration.ofDays( 2 ) ), 10_000 ), bucket( stored, 10_000 ),
@@ -183,24 +183,24 @@ class SitemapQueryTest
         final List<SitemapEntry> entries = new ArrayList<>();
         draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
 
-        final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC] ";
-        final String ms = "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
-        assertThat( requests ).containsExactly( "modifiedtime 1d -",
-                                                "modifiedtime 1h modifiedtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
-                                                "modifiedtime 1h modifiedtime 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
-                                                "modifiedtime 1m modifiedtime 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
-                                                "modifiedtime 1s modifiedtime 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
-                                                "modifiedtime 1ms modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
+        final String asc = SitemapQuery.PAGE_SIZE + " [createdtime ASC, _path ASC] ";
+        final String ms = "createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
+        assertThat( requests ).containsExactly( "createdtime 1d -",
+                                                "createdtime 1h createdtime 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
+                                                "createdtime 1m createdtime 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
+                                                "createdtime 1s createdtime 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
+                                                "createdtime 1ms createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
                                                 "_ts 1d " + ms,
-                                                desc + "modifiedtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z",
-                                                desc + "modifiedtime 2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
-                                                desc + "modifiedtime 2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
-                                                desc + "modifiedtime 2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
-                                                desc + "modifiedtime 2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
-                                                desc + ms + " & _ts 2024-01-03T00:00:00Z 2024-01-04T00:00:00Z",
-                                                desc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z",
-                                                desc + ms + " & _ts 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
-                                                desc + "modifiedtime 2023-12-31T00:00:00Z 2024-01-01T00:00:00Z" );
+                                                "createdtime 1h createdtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
+                                                asc + "createdtime 2023-12-31T00:00:00Z 2024-01-01T00:00:00Z",
+                                                asc + ms + " & _ts 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
+                                                asc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z",
+                                                asc + ms + " & _ts 2024-01-03T00:00:00Z 2024-01-04T00:00:00Z",
+                                                asc + "createdtime 2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
+                                                asc + "createdtime 2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
+                                                asc + "createdtime 2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
+                                                asc + "createdtime 2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
+                                                asc + "createdtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z" );
         assertThat( entries ).hasSize( 9 );
     }
 
@@ -225,7 +225,7 @@ class SitemapQueryTest
         assertThat( reads ).hasSize( 1 );
         assertThat( reads.get( 0 ).getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
         assertThat( filters( reads.get( 0 ) ) ).isEqualTo(
-            "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z & _ts 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z" );
+            "createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z & _ts 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z" );
     }
 
     @Test

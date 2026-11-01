@@ -81,15 +81,17 @@ public final class SitemapQuery
 
     private static final IndexPath PATH = IndexPath.from( "_path" );
 
-    private static final IndexPath MODIFIED_TIME = IndexPath.from( "modifiedTime" );
+    private static final IndexPath CREATED_TIME = IndexPath.from( "createdTime" );
 
     /**
-     * Time the node version was stored, also on publish: practically unique per content, so it splits contents sharing a modification
-     * time.
+     * Time the node version was stored, also on publish: practically unique per content, so it splits contents sharing a creation time.
      */
     private static final IndexPath TIMESTAMP = IndexPath.from( "_ts" );
 
-    static final List<IndexPath> DIMENSIONS = List.of( MODIFIED_TIME, TIMESTAMP );
+    static final List<IndexPath> DIMENSIONS = List.of( CREATED_TIME, TIMESTAMP );
+
+    private static final List<OrderExpr> CREATION_ORDER =
+        List.of( FieldOrderExpr.create( CREATED_TIME, OrderExpr.Direction.ASC ), FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) );
 
     private static final IndexPath PUBLISH_FROM = IndexPath.from( "publish.from" );
 
@@ -115,10 +117,11 @@ public final class SitemapQuery
     /**
      * Streams the entries of the sitemap to the given consumer.
      * <p>
-     * A sitemap that fits in one file is read sorted by path, which compresses better. A larger one is read newest first, in slices of at
-     * most {@value #PAGE_SIZE} contents: one query with a date histogram of the modification times plans the slices, busy times are split
-     * by finer intervals down to milliseconds, then by the time the contents were stored. Each slice is read with range filters, so each
-     * query only touches its own contents.
+     * A sitemap that fits in one file is read sorted by path, which compresses better. A larger one is read in the order the contents were
+     * created, oldest first: new contents are added to the last file and edited ones stay in place, so the other files keep their content
+     * and their modification time in the sitemap index. It is read in slices of at most {@value #PAGE_SIZE} contents: one query with a
+     * date histogram of the creation times plans the slices, busy times are split by finer intervals down to milliseconds, then by the
+     * time the contents were stored. Each slice is read with range filters, so each query only touches its own contents.
      *
      * @param cancelled checked between batches, the query stops with a {@link CancellationException} once it returns true
      * @return when the sitemap must be generated again because scheduled content goes online or offline, or null
@@ -138,8 +141,8 @@ public final class SitemapQuery
             LOG.debug( "Sitemap of {}: {} contents read in {} slices", params.sitePath(), total, slices.size() );
             for ( final Slice slice : slices )
             {
-                emit( find( slice.filters(), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ),
-                            slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE ), sink, cancelled );
+                emit( find( slice.filters(), CREATION_ORDER, slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE ), sink,
+                      cancelled );
             }
         }
 
@@ -150,9 +153,9 @@ public final class SitemapQuery
     }
 
     /**
-     * Adds the slices of the histogram buckets in the result, newest first. Consecutive buckets are merged into one slice while it holds
+     * Adds the slices of the histogram buckets in the result, oldest first. Consecutive buckets are merged into one slice while it holds
      * at most {@value #PAGE_SIZE} contents. A bucket holding more is split by the next finer interval, then by the next dimension. A
-     * bucket that cannot be split further (more than {@value #PAGE_SIZE} contents modified and stored in the same millisecond) is read in
+     * bucket that cannot be split further (more than {@value #PAGE_SIZE} contents created and stored in the same millisecond) is read in
      * one scrolled query.
      */
     private void addSlices( final FindContentIdsByQueryResult result, final int dimension, final int level, final List<Filter> outer,
@@ -165,7 +168,7 @@ public final class SitemapQuery
         {
             timeline.getBuckets().forEach( bucket -> buckets.add( (DateHistogramBucket) bucket ) );
         }
-        buckets.sort( Comparator.comparing( DateHistogramBucket::getKeyAsInstant ).reversed() );
+        buckets.sort( Comparator.comparing( DateHistogramBucket::getKeyAsInstant ) );
 
         Instant pendingFrom = null;
         Instant pendingTo = null;
@@ -198,7 +201,7 @@ public final class SitemapQuery
             }
             else if ( pendingFrom != null && pendingCount + count <= PAGE_SIZE )
             {
-                pendingFrom = from;
+                pendingTo = to;
                 pendingCount += count;
             }
             else
@@ -259,7 +262,7 @@ public final class SitemapQuery
         {
             final List<Filter> filters =
                 after == null ? List.of() : List.of( RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
-            final List<ContentId> ids = find( filters, FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ), PAGE_SIZE );
+            final List<ContentId> ids = find( filters, List.of( FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) ), PAGE_SIZE );
             final String last = emit( ids, sink, cancelled );
             if ( ids.size() < PAGE_SIZE || last == null )
             {
@@ -269,7 +272,7 @@ public final class SitemapQuery
         }
     }
 
-    private List<ContentId> find( final List<Filter> filters, final OrderExpr order, final int size )
+    private List<ContentId> find( final List<Filter> filters, final List<OrderExpr> order, final int size )
     {
         final ContentQuery.Builder query = ContentQuery.create().queryExpr( QueryExpr.from( DslExpr.from( dsl() ), order ) ).size( size );
         filters.forEach( query::queryFilter );
