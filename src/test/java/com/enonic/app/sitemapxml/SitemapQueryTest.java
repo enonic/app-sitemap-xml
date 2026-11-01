@@ -75,11 +75,11 @@ class SitemapQueryTest
         assertThat( mustNot.get( 0 ).getSet( "term" ).getBoolean( "value" ) ).isTrue();
         assertThat( mustNot.subList( 1, 3 ) ).extracting( set -> set.getSet( "term" ).getString( "field" ) + " " + set.getSet( "term" ).getString( "value" ) )
             .containsExactly( "_path /content/mysite/skip", "_path /content/mysite/bar" );
-        final PropertySet children = mustNot.get( 3 ).getSet( "boolean" );
-        assertThat( children.getSet( "must" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
-        assertThat( children.getSet( "must" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
-        assertThat( children.getSet( "mustNot" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path" );
-        assertThat( children.getSet( "mustNot" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
+        final PropertySet descendants = mustNot.get( 3 ).getSet( "boolean" );
+        assertThat( descendants.getSet( "must" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
+        assertThat( descendants.getSet( "must" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
+        assertThat( descendants.getSet( "mustNot" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path" );
+        assertThat( descendants.getSet( "mustNot" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
     }
 
     @Test
@@ -89,8 +89,8 @@ class SitemapQueryTest
         assertThat( SitemapQuery.glob( "*/foo" ).matcher( "/content/s/a/foobar" ).matches() ).isFalse();
         assertThat( SitemapQuery.glob( "/content/s/a?c" ).matcher( "/content/s/abc" ).matches() ).isTrue();
         assertThat( SitemapQuery.glob( "/content/s/a.c" ).matcher( "/content/s/abc" ).matches() ).isFalse();
-        assertThat( SitemapQuery.isChildren( "/content/s/a/*" ) ).isTrue();
-        assertThat( SitemapQuery.isChildren( "/content/s/a*/*" ) ).isFalse();
+        assertThat( SitemapQuery.isDescendants( "/content/s/a/*" ) ).isTrue();
+        assertThat( SitemapQuery.isDescendants( "/content/s/a*/*" ) ).isFalse();
         assertThat( SitemapQuery.isExact( "/content/s/a" ) ).isTrue();
     }
 
