@@ -247,7 +247,6 @@ public final class Sitemap
      */
     void store( final Properties properties )
     {
-        properties.setProperty( "sitemap.directory", directory.getFileName().toString() );
         properties.setProperty( "sitemap.size", Integer.toString( size ) );
         properties.setProperty( "sitemap.files", Integer.toString( lastModified.size() ) );
         for ( int i = 0; i < lastModified.size(); i++ )
@@ -262,15 +261,13 @@ public final class Sitemap
     }
 
     /**
-     * Reads back a sitemap that {@link #store} described, from its directory in the given parent directory.
+     * Reads back a sitemap that {@link #store} described from its directory.
      *
      * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path parent, final Properties properties )
+    static Sitemap restore( final Path directory, final Properties properties )
     {
-        final String name = required( properties, "sitemap.directory" );
-        final Path directory = parent.resolve( name );
-        if ( !directory.getParent().equals( parent ) || !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
+        if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
         {
             throw new IllegalArgumentException( "No sitemap in " + directory );
         }

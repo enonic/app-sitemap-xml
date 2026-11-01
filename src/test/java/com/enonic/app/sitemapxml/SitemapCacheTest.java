@@ -401,7 +401,7 @@ class SitemapCacheTest
             clock.now = clock.now.plusSeconds( 1 );
             cache.get( key( "repo" + i ), false, AUTH_INFO, this::generate );
         }
-        awaitUntil( () -> !Files.exists( second.directory().getParent() ) );
+        awaitUntil( () -> !Files.exists( second.directory() ) );
         assertThat( sitemapDirectories() ).hasSize( SitemapCache.MAX_ENTRIES );
     }
 
@@ -438,7 +438,7 @@ class SitemapCacheTest
         throws IOException
     {
         final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
-        final Path unfinished = Files.createDirectories( first.directory().resolveSibling( "unfinished" ) );
+        final Path unfinished = Files.createDirectories( storage.resolve( "unfinished" ) );
         final Path stale = Files.createDirectories( storage.resolve( "stale" ) );
         Files.writeString( Files.createDirectories( storage.resolve( "broken" ) ).resolve( SitemapCache.ENTRY_FILE ), "format=1" );
 
@@ -449,6 +449,30 @@ class SitemapCacheTest
         assertThat( stale ).doesNotExist();
         assertThat( storage.resolve( "broken" ) ).doesNotExist();
         assertThat( sitemapDirectories() ).containsExactly( first.directory() );
+    }
+
+    @Test
+    void keepsNewerOfTwoSitemapsWithSameKeyOnStart()
+        throws IOException
+    {
+        final Sitemap newer = cache.get( KEY, false, AUTH_INFO, this::generate );
+        final Path older = Files.createDirectories( storage.resolve( "older" ) );
+        try (Stream<Path> files = Files.list( newer.directory() ))
+        {
+            for ( final Path file : files.collect( Collectors.toList() ) )
+            {
+                Files.copy( file, older.resolve( file.getFileName() ) );
+            }
+        }
+        final Path entryFile = older.resolve( SitemapCache.ENTRY_FILE );
+        Files.writeString( entryFile, Files.readString( entryFile ).replace( "lastAccess=2024", "lastAccess=2023" ) );
+        assertThat( entryFile ).content().contains( "lastAccess=2023" );
+
+        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+
+        assertThat( restarted.size() ).isEqualTo( 1 );
+        assertThat( sitemapDirectories() ).containsExactly( newer.directory() );
+        assertThat( restarted.get( KEY, false, AUTH_INFO, this::generate ).directory() ).isEqualTo( newer.directory() );
     }
 
     @Test
@@ -468,7 +492,7 @@ class SitemapCacheTest
         assertThatThrownBy( () -> waiting.get( 5, TimeUnit.SECONDS ) ).isInstanceOf( ExecutionException.class )
             .hasCauseInstanceOf( CancellationException.class );
         assertThat( first.directory() ).isDirectory();
-        assertThat( first.directory().resolveSibling( SitemapCache.ENTRY_FILE ) ).isRegularFile();
+        assertThat( first.directory().resolve( SitemapCache.ENTRY_FILE ) ).isRegularFile();
     }
 
     private Instant generate( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
@@ -483,14 +507,11 @@ class SitemapCacheTest
         return validUntil;
     }
 
-    /**
-     * Directories of the sitemaps kept for all entries.
-     */
     private List<Path> sitemapDirectories()
     {
-        try (Stream<Path> paths = Files.walk( storage, 2 ))
+        try (Stream<Path> paths = Files.list( storage ))
         {
-            return paths.filter( path -> path.getNameCount() == storage.getNameCount() + 2 && Files.isDirectory( path ) ).collect( Collectors.toList() );
+            return paths.filter( Files::isDirectory ).collect( Collectors.toList() );
         }
         catch ( IOException e )
         {
