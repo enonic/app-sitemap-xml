@@ -33,20 +33,34 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
     }
 
     /**
-     * The same params with the host of the site URL in lower case. Host names are case-insensitive, and a site URL taken from the
-     * request has the host as the client sent it.
+     * The same params for a site URL taken from the request: its scheme must be {@code http} or {@code https} and it must have no user
+     * info. The host is lower-cased, since host names are case-insensitive and the request has the host as the client sent it; query
+     * and fragment are left out.
+     *
+     * @throws InvalidSiteUrlException when the site URL cannot be a sitemap's
      */
-    public SitemapParams withLowerCaseHost()
+    public SitemapParams forRequestSiteUrl()
     {
-        final int start = hostStart( siteUrl );
-        if ( start < 0 )
+        final int scheme = siteUrl.indexOf( "://" );
+        final String protocol = scheme < 0 ? "" : siteUrl.substring( 0, scheme );
+        if ( !"http".equals( protocol ) && !"https".equals( protocol ) )
         {
-            return this;
+            throw new InvalidSiteUrlException( siteUrl );
         }
+        final int start = scheme + 3;
         final int end = authorityEnd( siteUrl, start );
-        final String host = siteUrl.substring( start, end );
-        final String lowerCase = host.toLowerCase( Locale.ROOT );
-        return lowerCase.equals( host ) ? this : new SitemapParams( sitePath, siteUrl.substring( 0, start ) + lowerCase + siteUrl.substring( end ), contentTypes, ignorePatterns );
+        final String authority = siteUrl.substring( start, end );
+        if ( authority.isEmpty() || authority.contains( "@" ) )
+        {
+            throw new InvalidSiteUrlException( siteUrl );
+        }
+        int pathEnd = end;
+        while ( pathEnd < siteUrl.length() && siteUrl.charAt( pathEnd ) != '?' && siteUrl.charAt( pathEnd ) != '#' )
+        {
+            pathEnd++;
+        }
+        final String url = protocol + "://" + authority.toLowerCase( Locale.ROOT ) + siteUrl.substring( end, pathEnd );
+        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns );
     }
 
     /**

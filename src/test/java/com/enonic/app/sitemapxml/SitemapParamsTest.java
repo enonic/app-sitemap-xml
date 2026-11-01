@@ -6,29 +6,34 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SitemapParamsTest
 {
     @Test
-    void lowerCasesHostOnly()
+    void takesRequestSiteUrlOfHttpAndHttpsOnly()
     {
-        assertThat( new SitemapParams( "/s", "https://WWW.Example.COM:8443/My%20Site?Q=A#F", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo(
-            "https://www.example.com:8443/My%20Site?Q=A#F" );
-        assertThat( new SitemapParams( "/s", "https://User:Pass@Example.COM", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo(
-            "https://User:Pass@example.com" );
-        assertThat( new SitemapParams( "/s", "http://[ABCD::1]:8080/A", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo( "http://[abcd::1]:8080/A" );
-        assertThat( new SitemapParams( "/s", "/Relative/Path", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo( "/Relative/Path" );
+        assertThat( site( "https://WWW.Example.COM:8443/My%20Site?Q=A#F" ).forRequestSiteUrl().siteUrl() ).isEqualTo(
+            "https://www.example.com:8443/My%20Site" );
+        assertThat( site( "http://[ABCD::1]:8080/A#F" ).forRequestSiteUrl().siteUrl() ).isEqualTo( "http://[abcd::1]:8080/A" );
+        final SitemapParams plain = site( "https://example.com" );
+        assertThat( plain.forRequestSiteUrl() ).isSameAs( plain );
+        for ( final String url : List.of( "ftp://example.com", "HTTPS://example.com", "Http://example.com", "https://user@example.com",
+                                          "https://user:pass@example.com/site", "https:///site", "/relative", "example.com" ) )
+        {
+            assertThatThrownBy( () -> site( url ).forRequestSiteUrl() ).as( url ).isInstanceOf( InvalidSiteUrlException.class );
+        }
     }
 
     @Test
     void detectsExplicitPort()
     {
-        assertThat( new SitemapParams( "/s", "https://example.com:8443/site", List.of(), List.of() ).hasExplicitPort() ).isTrue();
-        assertThat( new SitemapParams( "/s", "http://[::1]:8080", List.of(), List.of() ).hasExplicitPort() ).isTrue();
-        assertThat( new SitemapParams( "/s", "https://example.com/a:b", List.of(), List.of() ).hasExplicitPort() ).isFalse();
-        assertThat( new SitemapParams( "/s", "http://[::1]/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
-        assertThat( new SitemapParams( "/s", "https://user:pass@example.com/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
-        assertThat( new SitemapParams( "/s", "/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
+        assertThat( site( "https://example.com:8443/site" ).hasExplicitPort() ).isTrue();
+        assertThat( site( "http://[::1]:8080" ).hasExplicitPort() ).isTrue();
+        assertThat( site( "https://example.com/a:b" ).hasExplicitPort() ).isFalse();
+        assertThat( site( "http://[::1]/site" ).hasExplicitPort() ).isFalse();
+        assertThat( site( "https://user:pass@example.com/site" ).hasExplicitPort() ).isFalse();
+        assertThat( site( "/site" ).hasExplicitPort() ).isFalse();
     }
 
     @Test
@@ -66,5 +71,10 @@ class SitemapParamsTest
         assertThat( params ).isEqualTo( new SitemapParams( "/mysite", "https://example.com",
                                                            List.of( new ContentTypeSetting( "base:folder", "daily", "0.3" ) ),
                                                            List.of( "*/foo" ) ) );
+    }
+
+    private static SitemapParams site( final String siteUrl )
+    {
+        return new SitemapParams( "/s", siteUrl, List.of(), List.of() );
     }
 }

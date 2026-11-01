@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
@@ -17,11 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.enonic.xp.app.ApplicationKey;
 import com.enonic.xp.branch.Branch;
-import com.enonic.xp.content.ContentIds;
 import com.enonic.xp.content.ContentPath;
-import com.enonic.xp.content.ContentQuery;
 import com.enonic.xp.content.ContentService;
-import com.enonic.xp.content.FindContentIdsByQueryResult;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.portal.url.PortalScope;
@@ -30,6 +28,9 @@ import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
+import com.enonic.xp.security.IdProviderKey;
+import com.enonic.xp.security.PrincipalKey;
+import com.enonic.xp.security.User;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 import com.enonic.xp.site.SiteConfig;
 import com.enonic.xp.site.SiteConfigs;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -79,25 +81,55 @@ class SitemapServiceTest
     }
 
     @Test
-    void readsPublishedContentWhenRequestedFromDraft()
+    void draftGetsOnlyTheSiteWithoutCaching()
     {
-        ContextBuilder.create()
-            .repositoryId( "com.enonic.cms.project" )
-            .branch( "draft" )
-            .build()
-            .callWith( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
-        verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), source.capture() );
+        verify( cache ).uncached( key.capture(), any( AuthenticationInfo.class ), source.capture() );
+        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
-        assertThat( key.getValue().repositoryId() ).isEqualTo( "com.enonic.cms.project" );
-
-        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn(
-            FindContentIdsByQueryResult.create().contents( ContentIds.empty() ).totalHits( 0 ).build() );
         final List<SitemapEntry> entries = new ArrayList<>();
-        assertThat( inContext( () -> source.getValue().write( entries::add, () -> false ) ) ).isNull();
-        assertThat( entries ).isEmpty();
+        assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
+        assertThat( entries ).containsExactly( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
+    }
+
+    @Test
+    void loggedInUserGetsCachedSitemap()
+    {
+        final Sitemap cached = write( PARAMS );
+        when( cache.cached( any() ) ).thenReturn( Optional.of( cached ) );
+
+        assertThat( asUser( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) ) ).isEqualTo( cached );
+
+        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
+        verify( cache, never() ).uncached( any(), any(), any() );
+    }
+
+    @Test
+    void loggedInUserGetsUncachedSitemapWithOwnPermissionsWhenNoneIsCached()
+    {
+        when( cache.uncached( any(), any(), any() ) ).thenReturn( write( PARAMS ) );
+
+        asUser( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+
+        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
+        verify( cache ).uncached( any(), authInfo.capture(), any() );
+        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
+        assertThat( authInfo.getValue().isAuthenticated() ).isTrue();
+    }
+
+    @Test
+    void beanAnswers400ForInvalidRequestUrl()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( Map.of( "sitePath", "/mysite", "siteUrl", "ftp://example.com", "siteUrlFromRequest", true ) );
+
+        final SitemapResponse response = inContext( () -> bean().root( value ) );
+
+        assertThat( response.getStatus() ).isEqualTo( 400 );
+        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
     }
 
     @Test
@@ -238,5 +270,25 @@ class SitemapServiceTest
     private static <T> T inContext( final Supplier<T> supplier )
     {
         return ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "master" ).build().callWith( supplier::get );
+    }
+
+    private Sitemap write( final SitemapParams params )
+    {
+        return SitemapTest.write( temp.resolve( "w" + System.nanoTime() ), params, List.of(), 10, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES );
+    }
+
+    private static <T> T asUser( final Supplier<T> supplier )
+    {
+        final User user = User.create()
+            .key( PrincipalKey.ofUser( IdProviderKey.system(), "editor" ) )
+            .login( "editor" )
+            .displayName( "Editor" )
+            .build();
+        return ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "master" )
+            .authInfo( AuthenticationInfo.create().user( user ).build() )
+            .build()
+            .callWith( supplier::get );
     }
 }

@@ -215,6 +215,36 @@ class SitemapCacheTest
     }
 
     @Test
+    void generatesUncachedSitemapInCallingThreadAndDeletesItLater()
+    {
+        final SitemapCache retaining = new SitemapCache( executor, clock, Duration.ZERO, Duration.ofMillis( 200 ), storage );
+        final Thread caller = Thread.currentThread();
+        final List<String> seen = new ArrayList<>();
+
+        final Sitemap sitemap = retaining.uncached( KEY, AUTH_INFO, ( sink, cancelled ) -> {
+            seen.add( ( Thread.currentThread() == caller ) + " " + ContextAccessor.current().getRepositoryId() + " " +
+                          ContextAccessor.current().getBranch() );
+            return generate( sink, cancelled );
+        } );
+
+        assertThat( seen ).containsExactly( "true com.enonic.cms.project master" );
+        assertThat( SitemapTest.text( sitemap.root() ) ).contains( "https://example.com" );
+        assertThat( sitemap.directory().resolve( SitemapCache.ENTRY_FILE ) ).doesNotExist();
+        assertThat( retaining.size() ).isZero();
+        assertThat( retaining.cached( KEY ) ).isEmpty();
+        awaitUntil( () -> !Files.exists( sitemap.directory() ) );
+    }
+
+    @Test
+    void returnsCachedSitemapOnlyOnceGenerated()
+    {
+        assertThat( cache.cached( KEY ) ).isEmpty();
+        final Sitemap sitemap = cache.get( KEY, false, AUTH_INFO, this::generate );
+        assertThat( cache.cached( KEY ) ).contains( sitemap );
+        assertThat( generated ).hasValue( 1 );
+    }
+
+    @Test
     void repositoryAndPermissionEventsInvalidate()
     {
         final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );

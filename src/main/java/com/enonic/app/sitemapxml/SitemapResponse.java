@@ -28,6 +28,11 @@ public final class SitemapResponse
         return new SitemapResponse( 404, null );
     }
 
+    static SitemapResponse badRequest()
+    {
+        return new SitemapResponse( 400, null );
+    }
+
     static SitemapResponse tooManyRequests()
     {
         return new SitemapResponse( 429, null );

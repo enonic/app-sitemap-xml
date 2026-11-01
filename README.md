@@ -140,7 +140,11 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 ## Caching and background generation
 
-The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
+The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
+
+* Only anonymous requests (crawlers) get the sitemap cached. A logged-in user gets the cached sitemap when there is one; otherwise one is generated for the request, with the user's permissions, and not kept.
+* In preview (`draft` branch), the sitemap lists the site URL only, and is not kept.
+* A site URL taken from the request must be `http` or `https` (lower case) without user info; other requests get `400 Bad Request`. Query and fragment are left out.
 
 A generated sitemap is served until a newer one of the same site has been generated and replaces it, also after content changed and after XP or the app is restarted. How it is generated again when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
 
