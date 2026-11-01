@@ -388,6 +388,21 @@ class SitemapCacheTest
     }
 
     @Test
+    void evictsSitemapsWithPortBeforeThoseWithout()
+    {
+        final SitemapCache.Key withoutPort = siteKey( "https://example.com" );
+        final Sitemap kept = cache.get( withoutPort, false, AUTH_INFO, this::generate );
+        for ( int i = 0; i < 2 * SitemapCache.MAX_PER_SITE; i++ )
+        {
+            clock.now = clock.now.plusSeconds( 1 );
+            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
+        }
+
+        assertThat( cache.get( withoutPort, false, AUTH_INFO, this::generate ) ).isSameAs( kept );
+        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE );
+    }
+
+    @Test
     void deletesFilesOfReplacedAndEvictedSitemaps()
     {
         final Sitemap first = cache.get( KEY, true, AUTH_INFO, this::generate );
@@ -401,7 +416,7 @@ class SitemapCacheTest
         for ( int i = 0; i < SitemapCache.MAX_PER_SITE; i++ )
         {
             clock.now = clock.now.plusSeconds( 1 );
-            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
+            cache.get( siteKey( "https://host" + i + ".example.com" ), false, AUTH_INFO, this::generate );
         }
         awaitUntil( () -> !Files.exists( second.directory() ) );
         assertThat( sitemapDirectories() ).hasSize( SitemapCache.MAX_PER_SITE );
@@ -556,10 +571,15 @@ class SitemapCacheTest
         }
     }
 
-    private static SitemapCache.Key hostKey( final int port )
+    private static SitemapCache.Key siteKey( final String siteUrl )
     {
         return new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ),
-                                     new SitemapParams( "/mysite", "https://example.com:" + ( 8000 + port ), List.of(), List.of() ) );
+                                     new SitemapParams( "/mysite", siteUrl, List.of(), List.of() ) );
+    }
+
+    private static SitemapCache.Key hostKey( final int port )
+    {
+        return siteKey( "https://example.com:" + ( 8000 + port ) );
     }
 
     private static SitemapCache.Key key( final String repo )

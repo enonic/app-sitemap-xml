@@ -109,6 +109,19 @@ class SitemapServiceTest
     }
 
     @Test
+    void lowerCasesHostOfRequestUrl()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+
+        inContext( () -> new SitemapService( contentService, portalUrlService, cache, Clock.systemUTC() ).sitemap(
+            PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), eq( false ), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
+    }
+
+    @Test
     void usesRequestUrlWhenBaseUrlCannotBeResolved()
     {
         when( portalUrlService.portalScope( any() ) ).thenThrow( new IllegalStateException( "boom" ) );

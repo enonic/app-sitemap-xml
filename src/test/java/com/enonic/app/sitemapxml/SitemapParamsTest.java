@@ -10,6 +10,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SitemapParamsTest
 {
     @Test
+    void lowerCasesHostOnly()
+    {
+        assertThat( new SitemapParams( "/s", "https://WWW.Example.COM:8443/My%20Site?Q=A#F", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo(
+            "https://www.example.com:8443/My%20Site?Q=A#F" );
+        assertThat( new SitemapParams( "/s", "https://User:Pass@Example.COM", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo(
+            "https://User:Pass@example.com" );
+        assertThat( new SitemapParams( "/s", "http://[ABCD::1]:8080/A", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo( "http://[abcd::1]:8080/A" );
+        assertThat( new SitemapParams( "/s", "/Relative/Path", List.of(), List.of() ).withLowerCaseHost().siteUrl() ).isEqualTo( "/Relative/Path" );
+    }
+
+    @Test
+    void detectsExplicitPort()
+    {
+        assertThat( new SitemapParams( "/s", "https://example.com:8443/site", List.of(), List.of() ).hasExplicitPort() ).isTrue();
+        assertThat( new SitemapParams( "/s", "http://[::1]:8080", List.of(), List.of() ).hasExplicitPort() ).isTrue();
+        assertThat( new SitemapParams( "/s", "https://example.com/a:b", List.of(), List.of() ).hasExplicitPort() ).isFalse();
+        assertThat( new SitemapParams( "/s", "http://[::1]/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
+        assertThat( new SitemapParams( "/s", "https://user:pass@example.com/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
+        assertThat( new SitemapParams( "/s", "/site", List.of(), List.of() ).hasExplicitPort() ).isFalse();
+    }
+
+    @Test
     void addsSiteContentTypeAndDefaults()
     {
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",

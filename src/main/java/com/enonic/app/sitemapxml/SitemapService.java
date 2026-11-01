@@ -55,7 +55,8 @@ public final class SitemapService
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
         final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
-        final SitemapParams params = baseUrl.map( requested::withSiteUrl ).orElse( requested );
+        final SitemapParams params =
+            baseUrl.map( requested::withSiteUrl ).orElseGet( () -> siteUrlFromRequest ? requested.withLowerCaseHost() : requested );
 
         final boolean background = !siteUrlFromRequest || baseUrl.isPresent();
 
