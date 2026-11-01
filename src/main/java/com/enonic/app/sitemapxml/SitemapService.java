@@ -31,8 +31,9 @@ public final class SitemapService
      *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
      *                           background when content changes.
      */
-    public Sitemap sitemap( final SitemapParams params, final boolean siteUrlFromRequest )
+    public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
+        final SitemapParams params = siteUrlFromRequest ? requested.withLowerCaseHost() : requested;
         final Context context = ContextAccessor.current();
         final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
         final String branch = ContentConstants.BRANCH_MASTER.getValue();

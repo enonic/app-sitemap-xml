@@ -137,6 +137,23 @@ class SitemapBeanTest
         assertThat( entries ).isEmpty();
     }
 
+    @Test
+    void lowerCasesHostOfRequestUrl()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://WWW.Example.COM:8443/My%20Site", "maxItems", 10, "siteUrlFromRequest",
+                    true ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
+
+        inContext( () -> bean().root( value ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), eq( false ), any( AuthenticationInfo.class ), any() );
+        assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
+    }
+
     private Sitemap write( final SitemapParams params, final int urlsPerFile, final List<SitemapEntry> entries )
     {
         return SitemapTest.write( temp.resolve( "s" + System.nanoTime() ), params, entries, urlsPerFile, Sitemap.MAX_FILE_BYTES,

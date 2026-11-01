@@ -9,6 +9,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,6 +63,10 @@ public final class SitemapCache
     implements EventListener
 {
     static final int MAX_PER_SITE = 10;
+
+    private static final Comparator<Map.Entry<Key, Entry>> EVICTION_ORDER =
+        Comparator.<Map.Entry<Key, Entry>, Boolean>comparing( e -> !e.getKey().params().hasExplicitPort() )
+            .thenComparing( e -> e.getValue().lastAccess );
 
     static final int MAX_WAITING = 10;
 
@@ -496,16 +501,16 @@ public final class SitemapCache
     }
 
     /**
-     * Removes the least recently used generated sitemaps of the site of the given key beyond {@value #MAX_PER_SITE}: a site is
-     * requested through a few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps that requests are
-     * waiting for are kept.
+     * Removes generated sitemaps of the site of the given key beyond {@value #MAX_PER_SITE}: a site is requested through a few hosts,
+     * ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first, then the
+     * least recently used. Sitemaps that requests are waiting for are kept.
      */
     private void evictOverflow( final Key key )
     {
         final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSite( key ) ).collect( Collectors.toList() );
         site.stream()
             .filter( e -> e.getValue().sitemap != null )
-            .sorted( Map.Entry.comparingByValue( ( a, b ) -> a.lastAccess.compareTo( b.lastAccess ) ) )
+            .sorted( EVICTION_ORDER )
             .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
             .collect( Collectors.toList() )
             .forEach( e -> remove( e.getKey(), e.getValue() ) );
