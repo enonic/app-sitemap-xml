@@ -142,7 +142,7 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
 
-* Only anonymous requests (crawlers) get the sitemap cached. A logged-in user gets the cached sitemap when there is one; otherwise one is generated for the request, with the user's permissions, and not kept.
+* The sitemap lists the content the requesting user can read, and is cached per user; anonymous requests (crawlers) share one.
 * In preview (`draft` branch), the sitemap lists the site URL only, and is not kept.
 * A site URL taken from the request must be `http` or `https` (lower case) without user info; other requests get `400 Bad Request`. Query and fragment are left out.
 
@@ -155,7 +155,7 @@ A request for a sitemap that is being generated again gets the previous one righ
 
 Sitemaps are generated one at a time, in the order they are needed. Any number of generations can be queued. Requests for generated sitemaps are always answered at once; when more than 10 requests are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
 
-Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapxml`, next to XP's own image cache (one directory per generated sitemap, with an `entry.json` describing it, written once the sitemap is complete). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently used. A Base URL makes the sitemap the same for every host. The cache is per cluster node.
+Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapxml`, next to XP's own image cache (one directory per generated sitemap, with an `entry.json` describing it, written once the sitemap is complete). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently used. A Base URL makes the sitemap the same for every host. The cache is per cluster node.
 
 ### URLs in the sitemap
 
