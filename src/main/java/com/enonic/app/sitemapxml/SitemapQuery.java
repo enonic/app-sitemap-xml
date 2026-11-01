@@ -42,7 +42,6 @@ import com.enonic.xp.query.expr.FieldOrderExpr;
 import com.enonic.xp.query.expr.OrderExpr;
 import com.enonic.xp.query.expr.QueryExpr;
 import com.enonic.xp.query.filter.Filter;
-import com.enonic.xp.query.filter.Filters;
 import com.enonic.xp.query.filter.RangeFilter;
 
 /**

@@ -313,7 +313,7 @@ class SitemapTest
         assertThat( split.fileETag( 1, false ) ).isNotEqualTo( split.fileETag( 2, false ) ).isEqualTo( again.fileETag( 1, false ) );
         assertThat( split.fileETag( 4, false ) ).isEmpty();
 
-        final Sitemap restored = Sitemap.restore( split.directory(), split.store() );
+        final Sitemap restored = Sitemap.restore( Sitemap.FileSource.directory( split.directory() ), split.store() );
         assertThat( restored.rootETag( false ) ).isEqualTo( split.rootETag( false ) );
         assertThat( restored.rootGzipETag() ).isEqualTo( split.rootGzipETag() );
         assertThat( restored.fileETag( 3, true ) ).isEqualTo( split.fileETag( 3, true ) );

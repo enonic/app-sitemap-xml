@@ -1,0 +1,86 @@
+package com.enonic.app.sitemapxml;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Where generated sitemaps are kept, shared by all cluster nodes. A sitemap is stored under the id of its key; storing it again replaces
+ * it. Besides the sitemap, the stored state tells whether its content changed after it was generated ({@link Stored#obsolete()}),
+ * whether a cluster node is generating it ({@link Stored#generating()}) and when it was last requested ({@link Stored#accessed()}).
+ * None of these is locked: two nodes may occasionally generate the same sitemap, which costs work but gives the same result.
+ */
+interface SitemapStore
+{
+    @Nullable Stored load( String id );
+
+    /**
+     * Records that the given member starts generating a sitemap that was never stored.
+     *
+     * @return false when the sitemap exists already: another member stored or started it
+     */
+    boolean claimNew( String id, SitemapCache.Key key, boolean background, String member, Instant now );
+
+    /**
+     * Records that the given member starts generating the stored sitemap again.
+     *
+     * @return false when another member started generating it less than {@code stale} ago
+     */
+    boolean claim( Stored stored, String member, Instant now, Duration stale );
+
+    /**
+     * Stores the generated sitemap, replacing the previous one, and clears its state.
+     *
+     * @param startedAt when the generation started: the sitemap includes the content changes up to then
+     * @return the stored sitemap, with its files read from the store
+     */
+    Stored save( String id, SitemapCache.Key key, boolean background, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
+                 Instant now );
+
+    /**
+     * Ends a generation of the given member that did not store a sitemap.
+     */
+    void release( String id, String member );
+
+    /**
+     * Marks the version that was loaded as obsolete: a version stored since is not.
+     */
+    void markObsolete( Stored stored, Instant now );
+
+    void touch( Stored stored, Instant now );
+
+    /**
+     * The sitemaps of the given repository, of the given branch only if not null.
+     */
+    List<Stored> find( String repositoryId, @Nullable String branch );
+
+    /**
+     * The sitemaps of the same site for the same principals as the given key, in other host names, ports and schemes.
+     */
+    List<Stored> ofSite( SitemapCache.Key key );
+
+    void delete( String id );
+
+    /**
+     * @param version     the stored version this was loaded from
+     * @param sitemap     null while the first generation is running
+     * @param startedAt   when the generation of the sitemap started, null while the first generation is running
+     * @param generatedAt when the sitemap was stored, null while the first generation is running
+     */
+    record Stored(String id, String version, SitemapCache.Key key, boolean background, @Nullable Sitemap sitemap,
+                  @Nullable Instant validUntil, @Nullable Instant startedAt, @Nullable Instant generatedAt, @Nullable Instant obsolete,
+                  @Nullable Generating generating, @Nullable Instant accessed)
+    {
+        Instant lastAccess()
+        {
+            final Instant time = accessed != null ? accessed : generatedAt;
+            return time != null ? time : Instant.EPOCH;
+        }
+    }
+
+    record Generating(String member, Instant since)
+    {
+    }
+}

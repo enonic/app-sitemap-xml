@@ -147,26 +147,36 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 ### Conditional requests
 
-Every sitemap file is sent with an `ETag`: the SHA-256 digest of its uncompressed content, and a weak `W/"…-gzip"` tag when it is sent gzip-compressed. A request with a matching `If-None-Match` (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
+Every sitemap file is sent with an `ETag`: the SHA-256 digest of its uncompressed content, and a weak `W/"…-gzip"` tag when it is sent gzip-compressed. A request with a matching `If-None-Match` (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. All cluster nodes serve the same stored files, so they send the same tags. `Last-Modified` is not sent.
 
 ## Caching and background generation
 
-The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
+The sitemap lists published content only: it is generated from the `master` branch. It is generated in Java, through the content API, and written while the content is read, so it is never held in memory.
 
-* The sitemap lists the content the requesting user can read, and is cached per user; anonymous requests (crawlers) share one. When the site itself is readable by everyone, logged-in users get that public sitemap too.
+* The sitemap lists the content the requesting user can read, and is cached per user; anonymous requests (crawlers) share one. When the site itself, or the project, is readable by everyone, logged-in users get that public sitemap too.
 * In preview (`draft` branch), the sitemap lists the site URL only, and is not kept.
 * A site URL taken from the request must be `http` or `https` (lower case) without user info; other requests get `400 Bad Request`. Query and fragment are left out.
 
-A generated sitemap is served until a newer one of the same site has been generated and replaces it, also after content changed and after XP or the app is restarted. How it is generated again when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
+### Storage, shared by the cluster
 
-* With a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are generated again on their next request instead.
-* Without a `Base URL`, the URLs depend on the host of the request: the sitemap is generated again on its next request.
+Generated sitemaps are kept in the transient repository `com.enonic.app.sitemapxml`, created by the app: one node per sitemap, with the sitemap files as attachments, stored gzip-compressed only. A transient repository is left out of dumps and snapshots, and its old versions are vacuumed early. Its files are in XP's blob store, which all cluster nodes share, so a sitemap is generated once for the whole cluster and every node serves the same files. `.xml.gz` requests stream the stored files as they are, so do plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly.
 
-A request for a sitemap that is being generated again gets the previous one right away. Only the first request for a sitemap waits for it to be generated.
+A generated sitemap is served until a newer one replaces it, also after content changed and after XP or the app is restarted. Replacing it creates a new version of its node: requests still reading the previous files keep reading them. Whether a sitemap's content changed since it was generated, whether a node is generating it, and when it was last requested are attributes of its current version.
 
-Sitemaps of a project are generated one at a time, in the order they are needed; different projects generate in parallel. Any number of generations can be queued. Requests for generated sitemaps are always answered at once; when more than 10 requests are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
+### Generating again
 
-Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapxml`, next to XP's own image cache (one directory per generated sitemap, with an `entry.json` describing it, written once the sitemap is complete). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently used. A Base URL makes the sitemap the same for every host. The cache is per cluster node.
+When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move or delete), only the cluster node where it changed reacts: it marks the sitemaps of the project as obsolete, and:
+
+* with a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: generates the sitemap again a few seconds after the change. A generation still running when content changes again is halted and started over. Sitemaps not requested for an hour are generated again on their next request instead;
+* without a `Base URL`, the URLs depend on the host of the request: the sitemap is generated again on its next request, by whichever node gets it.
+
+Sitemaps are also generated again when scheduled content goes online or offline (`Online from` / `Online to`), and on their first request when they were generated before the cluster started, as content may have changed while no node was running.
+
+Before generating, a node claims the sitemap; another node does not generate a sitemap that is claimed, unless the claim is older than 10 minutes (its node may have stopped). Nothing is locked: two nodes may occasionally generate the same sitemap, which costs work but gives the same result. Generations run as tasks, so they show in XP's task list. On a node, sitemaps of a project are generated one at a time; different projects in parallel.
+
+A request for a sitemap that is being generated again gets the previous one right away. Only the first request for a sitemap waits for it to be generated, on whichever node generates it. When more than 10 requests on a node are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
+
+Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently requested. A Base URL makes the sitemap the same for every host.
 
 ### URLs in the sitemap
 

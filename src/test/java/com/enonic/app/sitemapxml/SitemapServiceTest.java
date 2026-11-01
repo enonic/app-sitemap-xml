@@ -106,7 +106,7 @@ class SitemapServiceTest
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
         verify( cache ).uncached( key.capture(), any( AuthenticationInfo.class ), source.capture() );
-        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
+        verify( cache, never() ).get( any(), anyBoolean() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
         final List<SitemapEntry> entries = new ArrayList<>();
         assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
@@ -118,12 +118,12 @@ class SitemapServiceTest
     {
         final Content site = site( AccessControlList.empty() );
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( PARAMS ) );
+        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
 
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), anyBoolean() );
         assertThat( key.getValue().principals() ).contains( "user:system:editor" );
         verify( cache, never() ).uncached( any(), any(), any() );
     }
@@ -134,14 +134,12 @@ class SitemapServiceTest
         final Content site =
             site( AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( PARAMS ) );
+        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
 
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
-        verify( cache ).get( key.capture(), anyBoolean(), authInfo.capture(), any() );
-        assertThat( authInfo.getValue().isAuthenticated() ).isFalse();
+        verify( cache ).get( key.capture(), anyBoolean() );
         assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
                                                                              RoleKeys.EVERYONE.toString() );
     }
@@ -151,14 +149,15 @@ class SitemapServiceTest
     {
         final SitemapParams project = new SitemapParams( "", "", List.of(), List.of() );
         when( projectService.getPublicRead( ProjectName.from( "project" ) ) ).thenReturn( true );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( project ) );
+        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( project ) );
 
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
                                                                                                                                 false ) );
 
-        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
-        verify( cache ).get( any(), anyBoolean(), authInfo.capture(), any() );
-        assertThat( authInfo.getValue().isAuthenticated() ).isFalse();
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture(), anyBoolean() );
+        assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
+                                                                             RoleKeys.EVERYONE.toString() );
         verify( contentService, never() ).getByPath( any() );
     }
 
@@ -189,7 +188,7 @@ class SitemapServiceTest
         final SitemapResponse response = inContext( () -> bean().root( value ) );
 
         assertThat( response.getStatus() ).isEqualTo( 400 );
-        verify( cache, never() ).get( any(), anyBoolean(), any(), any() );
+        verify( cache, never() ).get( any(), anyBoolean() );
     }
 
     @Test
@@ -209,7 +208,7 @@ class SitemapServiceTest
             PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( false ), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), eq( false ) );
         assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
     }
 
@@ -230,7 +229,7 @@ class SitemapServiceTest
     @Test
     void beanAnswers429WhenBusy()
     {
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenThrow( new SitemapBusyException() );
+        when( cache.get( any(), anyBoolean() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
@@ -244,7 +243,7 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+        when( cache.get( any(), anyBoolean() ) ).thenReturn(
             SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 1,
                                Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
@@ -263,7 +262,7 @@ class SitemapServiceTest
     void beanAnswers304WhenEntityTagMatches()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+        when( cache.get( any(), anyBoolean() ) ).thenReturn(
             SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 10,
                                Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
@@ -288,7 +287,7 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
                                                     new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+        when( cache.get( any(), anyBoolean() ) ).thenReturn(
             SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of() ), entries, 1,
                                Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
@@ -302,7 +301,7 @@ class SitemapServiceTest
         assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 3 ) ) ).isNull();
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache, atLeastOnce() ).get( key.capture(), eq( true ), any( AuthenticationInfo.class ), any() );
+        verify( cache, atLeastOnce() ).get( key.capture(), eq( true ) );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
@@ -311,7 +310,7 @@ class SitemapServiceTest
         inContext(
             () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( background ), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), eq( background ) );
         return key.getValue();
     }
 

@@ -1,71 +1,84 @@
 package com.enonic.app.sitemapxml;
 
-import java.io.IOException;
-import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.security.SecureRandom;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.stream.Stream;
 
 import org.jspecify.annotations.Nullable;
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.event.EventListener;
 import com.enonic.xp.home.HomeDir;
+import com.enonic.xp.node.NodeService;
+import com.enonic.xp.repository.RepositoryService;
+import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.shared.SharedMap;
+import com.enonic.xp.shared.SharedMapService;
+import com.enonic.xp.task.SubmitLocalTaskParams;
+import com.enonic.xp.task.TaskService;
 
 /**
- * Generated sitemaps. A sitemap is served until a newer one of the same site replaces it, also when its content changed in the
- * meantime and across restarts: its files and a description of them are kept on disk.
+ * Generated sitemaps, kept in a {@link SitemapStore} shared by all cluster nodes. A sitemap is served until a newer one of the same key
+ * replaces it, also when its content changed in the meantime and across restarts. Each node keeps what it read from the store in memory,
+ * and reads it again when another node stores a newer version.
  * <p>
- * Sitemaps of a project are generated one at a time, in the order they are requested; different projects generate in parallel. There
- * is no limit on how many generations are queued, but when more than {@value #MAX_WAITING} requests are already waiting for sitemaps
- * that are not generated yet, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps are always
- * answered right away.
+ * Sitemaps are generated in local tasks, so they show in XP's task list. Sitemaps of a project are generated one at a time on a node;
+ * different projects in parallel. Before generating, a node claims the sitemap in the store; a sitemap another node is generating is not
+ * generated again, unless that generation is older than {@link #STALE_GENERATION}. When more than {@value #MAX_WAITING} requests are
+ * already waiting for sitemaps that were never generated, further such requests get {@link SitemapBusyException}. Requests for generated
+ * sitemaps are always answered right away.
  * <p>
- * A sitemap whose URLs do not depend on the request (the site has a Base URL) is generated again in the background a few seconds after
- * its content changes, unless it was not requested for {@link #IDLE_TIMEOUT}. Other sitemaps, and all sitemaps kept from before a restart,
- * are generated again when they are next requested; the request gets the previous sitemap. A generation still running when the content
- * changes again is halted and started over.
+ * When content changes, only the node where it changed reacts: it marks the sitemaps of the project as obsolete, and generates again those
+ * whose URLs do not depend on the request ("Base URL", or Guillotine) a few seconds later, unless they were not requested for
+ * {@link #IDLE_TIMEOUT}. Other sitemaps are generated again on their next request, by whichever node gets it. A generation still running
+ * when the content changes again is halted and started over. Sitemaps generated before the cluster started are generated again on their
+ * next request, since content may have changed while no node was running.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
 public final class SitemapCache
@@ -73,92 +86,111 @@ public final class SitemapCache
 {
     static final int MAX_PER_SITE = 10;
 
-    private static final Comparator<Map.Entry<Key, Entry>> EVICTION_ORDER =
-        Comparator.<Map.Entry<Key, Entry>, Boolean>comparing( e -> !e.getKey().params().hasExplicitPort() )
-            .thenComparing( e -> e.getValue().lastAccess );
-
     static final int MAX_WAITING = 10;
 
     static final Duration REGENERATION_DELAY = Duration.ofSeconds( 5 );
 
     static final Duration IDLE_TIMEOUT = Duration.ofHours( 1 );
 
+    static final Duration STALE_GENERATION = Duration.ofMinutes( 10 );
+
+    static final Duration TOUCH_INTERVAL = Duration.ofMinutes( 10 );
+
     static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
 
     static final Duration STOP_TIMEOUT = Duration.ofSeconds( 30 );
 
-    static final Duration GENERATOR_KEEP_ALIVE = Duration.ofMinutes( 1 );
+    static final String TASK_PREFIX = "com.enonic.app.sitemapxml:";
 
-    static final String ENTRY_FILE = "entry.json";
-
-    private static final int FORMAT = 1;
+    private static final Comparator<SitemapStore.Stored> EVICTION_ORDER =
+        Comparator.<SitemapStore.Stored, Boolean>comparing( stored -> !stored.key().params().hasExplicitPort() )
+            .thenComparing( SitemapStore.Stored::lastAccess );
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
-
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final ConcurrentMap<Key, Entry> entries = new ConcurrentHashMap<>();
 
+    private final ConcurrentMap<String, Key> keys = new ConcurrentHashMap<>();
+
+    private final ConcurrentMap<String, Semaphore> projects = new ConcurrentHashMap<>();
+
     private final Semaphore waiting = new Semaphore( MAX_WAITING );
+
+    private final Set<Generation> running = ConcurrentHashMap.newKeySet();
+
+    private final SitemapStore store;
+
+    private final Function<Key, Source> sources;
+
+    private final Tasks tasks;
 
     private final ScheduledExecutorService scheduler;
 
-    private final Function<String, ExecutorService> generatorFactory;
-
-    private final ConcurrentMap<String, ExecutorService> generators = new ConcurrentHashMap<>();
-
-    private volatile boolean stopped;
-
     private final Clock clock;
+
+    private final Instant clusterStarted;
 
     private final Duration regenerationDelay;
 
     private final Duration fileRetention;
 
-    private final Path storage;
+    private final Path temp;
 
-    public SitemapCache()
+    private final String member = UUID.randomUUID().toString();
+
+    private volatile boolean stopped;
+
+    @Activate
+    public SitemapCache( @Reference final NodeService nodeService, @Reference final RepositoryService repositoryService,
+                         @Reference final ContentService contentService, @Reference final TaskService taskService,
+                         @Reference final SharedMapService sharedMapService )
     {
-        this( Executors.newSingleThreadScheduledExecutor( runnable -> {
-            final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
-            thread.setDaemon( true );
-            return thread;
-        } ), SitemapCache::newGenerator, Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
+        this( new RepositorySitemapStore( nodeService, repositoryService ), query( contentService ), Tasks.of( taskService ),
+              Executors.newSingleThreadScheduledExecutor( runnable -> {
+                  final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
+                  thread.setDaemon( true );
+                  return thread;
+              } ), Clock.systemUTC(), clusterStarted( sharedMapService ), REGENERATION_DELAY, FILE_RETENTION,
+              HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
     }
 
-    SitemapCache( final ScheduledExecutorService scheduler, final Function<String, ExecutorService> generatorFactory, final Clock clock,
-                  final Duration regenerationDelay, final Duration fileRetention, final Path storage )
+    private static Function<Key, Source> query( final ContentService contentService )
     {
+        return key -> ( sink, cancelled ) -> new SitemapQuery( contentService, key.params(), Instant.now() ).execute( sink, cancelled );
+    }
+
+    SitemapCache( final SitemapStore store, final Function<Key, Source> sources, final Tasks tasks,
+                  final ScheduledExecutorService scheduler, final Clock clock, final Instant clusterStarted,
+                  final Duration regenerationDelay, final Duration fileRetention, final Path temp )
+    {
+        this.store = store;
+        this.sources = sources;
+        this.tasks = tasks;
         this.scheduler = scheduler;
-        this.generatorFactory = generatorFactory;
         this.clock = clock;
+        this.clusterStarted = clusterStarted;
         this.regenerationDelay = regenerationDelay;
         this.fileRetention = fileRetention;
-        this.storage = storage;
-        restore();
+        this.temp = temp;
+        Sitemap.delete( temp );
     }
 
     /**
-     * A single generator thread for the given repository: sitemaps of a project are generated one at a time, those of different
-     * projects in parallel. The thread ends when idle.
+     * When the first node of the cluster that is running now started: sitemaps generated before were generated while changes may have
+     * gone unnoticed. Kept in a shared map, which lives as long as any cluster node does.
      */
-    static ExecutorService newGenerator( final String repositoryId )
+    private static Instant clusterStarted( final SharedMapService sharedMapService )
     {
-        final ThreadPoolExecutor executor =
-            new ThreadPoolExecutor( 1, 1, GENERATOR_KEEP_ALIVE.toMillis(), TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), runnable -> {
-                final Thread thread = new Thread( runnable, "sitemapxml-generator-" + repositoryId );
-                thread.setDaemon( true );
-                return thread;
-            } );
-        executor.allowCoreThreadTimeOut( true );
-        return executor;
+        final String now = Instant.now().toString();
+        final SharedMap<String, String> map = sharedMapService.getSharedMap( "com.enonic.app.sitemapxml" );
+        final String started = map.modify( "started", value -> value != null ? value : now );
+        return Instant.parse( started != null ? started : now );
     }
 
     /**
-     * Stops generating, and waits for running generations to halt, so that a new instance finds no generation writing to disk.
-     * Generated sitemaps stay on disk, to be served after a restart.
+     * Stops generating, and waits for running generations to halt. Generated sitemaps stay in the store.
      */
     @Deactivate
     public void deactivate()
@@ -173,18 +205,16 @@ public final class SitemapCache
             }
             entry.ready.completeExceptionally( new CancellationException( "Sitemaps stopped" ) );
         }
-        entries.clear();
         scheduler.shutdownNow();
-        generators.values().forEach( ExecutorService::shutdownNow );
         final long deadline = System.nanoTime() + STOP_TIMEOUT.toNanos();
         try
         {
-            for ( final ExecutorService executor : Stream.concat( Stream.of( scheduler ), generators.values().stream() ).toList() )
+            for ( final Generation generation : List.copyOf( running ) )
             {
-                if ( !executor.awaitTermination( deadline - System.nanoTime(), TimeUnit.NANOSECONDS ) )
+                if ( !generation.finished.await( deadline - System.nanoTime(), TimeUnit.NANOSECONDS ) )
                 {
                     LOG.warn( "Sitemap generation still running after {}", STOP_TIMEOUT );
-                    return;
+                    break;
                 }
             }
         }
@@ -192,50 +222,51 @@ public final class SitemapCache
         {
             Thread.currentThread().interrupt();
         }
+        entries.clear();
+        keys.clear();
+        Sitemap.delete( temp );
     }
 
     /**
-     * Returns the sitemap of the given key, generating it first when there is none yet.
+     * Returns the sitemap of the given key, generating it first when it was never generated.
      *
      * @param background whether the sitemap may be generated again in the background: its URLs do not depend on the request
-     * @param authInfo   the generation runs with these principals
-     * @param source     writes the entries of the sitemap
-     * @throws SitemapBusyException when the sitemap is not generated yet and too many requests are already waiting
+     * @throws SitemapBusyException when the sitemap was never generated and too many requests are already waiting
      */
-    public Sitemap get( final Key key, final boolean background, final AuthenticationInfo authInfo, final Source source )
+    public Sitemap get( final Key key, final boolean background )
     {
         while ( true )
         {
             final Instant now = clock.instant();
-            final Entry entry = entries.computeIfAbsent( key, k -> new Entry( now ) );
-            entry.lastAccess = now;
+            final Entry entry = entry( key );
             entry.background = background;
-            if ( entry.source == null )
+            final SitemapStore.Stored stored = current( key, entry );
+            if ( stored != null && stored.sitemap() != null )
             {
-                entry.authInfo = authInfo;
-                entry.source = source;
-            }
-
-            final Sitemap current = entry.sitemap;
-            if ( current != null )
-            {
-                final Generation queued = entry.generation;
-                if ( entry.isOutdated( now ) && ( queued == null || !queued.startsWithin( regenerationDelay ) ) )
+                touch( entry, stored, now );
+                if ( shouldRegenerate( entry, stored, now ) )
                 {
                     generate( key, entry, Duration.ZERO, false );
                 }
-                return current;
+                return stored.sitemap();
             }
 
-            evictOverflow( key );
-            generate( key, entry, Duration.ZERO, false );
+            if ( stored == null || stored.generating() == null ||
+                !stored.generating().since().plus( STALE_GENERATION ).isAfter( now ) )
+            {
+                generate( key, entry, Duration.ZERO, false );
+            }
             if ( !waiting.tryAcquire() )
             {
                 throw new SitemapBusyException();
             }
             try
             {
-                return await( entry.ready );
+                final Sitemap sitemap = await( entry );
+                if ( sitemap != null )
+                {
+                    return sitemap;
+                }
             }
             finally
             {
@@ -245,13 +276,13 @@ public final class SitemapCache
     }
 
     /**
-     * Generates a sitemap in the calling thread without keeping it: its files are deleted once requests are done reading them.
+     * Generates a sitemap in the calling thread without storing it: its files are deleted once requests are done reading them.
      *
      * @param authInfo the generation runs with these principals
      */
     public Sitemap uncached( final Key key, final AuthenticationInfo authInfo, final Source source )
     {
-        try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( uuid7( clock.millis() ) ), key.params() ))
+        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( UUID.randomUUID().toString() ), key.params() ))
         {
             ContextBuilder.create()
                 .repositoryId( key.repositoryId() )
@@ -260,29 +291,17 @@ public final class SitemapCache
                 .build()
                 .callWith( () -> source.write( builder::add, () -> false ) );
             final Sitemap sitemap = builder.build( null, clock.instant() );
-            retire( sitemap );
+            try
+            {
+                final Runnable delete = sitemap::delete;
+                scheduler.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
+            }
+            catch ( RejectedExecutionException e )
+            {
+                sitemap.delete();
+            }
             return sitemap;
         }
-    }
-
-    public void invalidate( final String repositoryId, final String branch )
-    {
-        entries.forEach( ( key, entry ) -> {
-            if ( key.repositoryId().equals( repositoryId ) && key.branch().equals( branch ) )
-            {
-                invalidate( key, entry );
-            }
-        } );
-    }
-
-    public void invalidate( final String repositoryId )
-    {
-        entries.forEach( ( key, entry ) -> {
-            if ( key.repositoryId().equals( repositoryId ) )
-            {
-                invalidate( key, entry );
-            }
-        } );
     }
 
     int size()
@@ -295,10 +314,16 @@ public final class SitemapCache
         return MAX_WAITING - waiting.availablePermits();
     }
 
+    String member()
+    {
+        return member;
+    }
+
     @Override
     public void onEvent( final Event event )
     {
         final String type = event.getType();
+        final Set<List<String>> changed = new LinkedHashSet<>();
         if ( type.startsWith( "node." ) )
         {
             if ( event.getData().get( "nodes" ) instanceof List<?> nodes )
@@ -308,35 +333,180 @@ public final class SitemapCache
                     if ( node instanceof Map<?, ?> map && map.get( "repo" ) instanceof String repo &&
                         map.get( "branch" ) instanceof String branch )
                     {
-                        invalidate( repo, branch );
+                        if ( repo.equals( RepositorySitemapStore.REPOSITORY.toString() ) )
+                        {
+                            if ( !event.isLocalOrigin() && map.get( "path" ) instanceof String path )
+                            {
+                                storedElsewhere( path.substring( path.lastIndexOf( '/' ) + 1 ), type );
+                            }
+                        }
+                        else
+                        {
+                            changed.add( List.of( repo, branch ) );
+                        }
                     }
                 }
             }
-            else if ( event.getData().get( "repo" ) instanceof String repo && event.getData().get( "branch" ) instanceof String branch )
-            {
-                invalidate( repo, branch );
-            }
         }
-        else if ( type.startsWith( "repository." ) && event.getData().get( "id" ) instanceof String repo )
+        else if ( type.startsWith( "repository." ) && event.getData().get( "id" ) instanceof String repo &&
+            !repo.equals( RepositorySitemapStore.REPOSITORY.toString() ) )
         {
-            invalidate( repo );
+            changed.add( List.of( repo ) );
+        }
+        final Instant now = clock.instant();
+        changed.forEach(
+            change -> contentChanged( change.get( 0 ), change.size() > 1 ? change.get( 1 ) : null, event.isLocalOrigin(), now ) );
+    }
+
+    private Entry entry( final Key key )
+    {
+        return entries.computeIfAbsent( key, k -> {
+            keys.put( k.id(), k );
+            return new Entry();
+        } );
+    }
+
+    /**
+     * The stored sitemap of the key as this node knows it, read from the store the first time and after another node stored it.
+     */
+    private SitemapStore.@Nullable Stored current( final Key key, final Entry entry )
+    {
+        if ( entry.loaded )
+        {
+            return entry.stored;
+        }
+        synchronized ( entry )
+        {
+            if ( !entry.loaded )
+            {
+                final SitemapStore.Stored stored = store.load( key.id() );
+                entry.stored = stored;
+                entry.sitemapChanges = entry.changes;
+                entry.idleWhenChanged = false;
+                entry.loaded = true;
+                if ( stored != null && stored.sitemap() != null )
+                {
+                    entry.ready.complete( stored.sitemap() );
+                }
+            }
+            return entry.stored;
         }
     }
 
-    private void invalidate( final Key key, final Entry entry )
+    /**
+     * Whether a request for the stored sitemap should start generating it again. A sitemap generated again in the background is left to
+     * the node where its content changed, unless it was generated before the cluster started, was not requested for
+     * {@link #IDLE_TIMEOUT} when its content changed, or that node failed to generate it.
+     */
+    private boolean shouldRegenerate( final Entry entry, final SitemapStore.Stored stored, final Instant now )
     {
-        synchronized ( entry )
+        final Generation queued = entry.generation;
+        if ( queued != null && queued.startsWithin( regenerationDelay ) )
         {
-            entry.changes++;
+            return false;
         }
-        if ( entry.sitemap == null )
+        final Instant validUntil = stored.validUntil();
+        final Instant generatedAt = stored.generatedAt();
+        if ( validUntil != null && !now.isBefore( validUntil ) || generatedAt != null && generatedAt.isBefore( clusterStarted ) )
         {
-            generate( key, entry, Duration.ZERO, true );
+            return true;
         }
-        else if ( entry.generation != null ||
-            entry.background && entry.source != null && !entry.lastAccess.plus( IDLE_TIMEOUT ).isBefore( clock.instant() ) )
+        final Instant obsolete = stored.obsolete();
+        if ( stored.background() )
         {
-            generate( key, entry, regenerationDelay, true );
+            return entry.idleWhenChanged && entry.sitemapChanges != entry.changes || obsolete != null &&
+                ( !stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( obsolete ) ||
+                    obsolete.plus( regenerationDelay ).plus( STALE_GENERATION ).isBefore( now ) );
+        }
+        return obsolete != null || entry.sitemapChanges != entry.changes;
+    }
+
+    private static Instant lastAccess( final Entry entry )
+    {
+        final SitemapStore.Stored stored = entry.stored;
+        final Instant accessed = stored == null ? Instant.EPOCH : stored.lastAccess();
+        final Instant requested = entry.requested;
+        return requested != null && requested.isAfter( accessed ) ? requested : accessed;
+    }
+
+    private void touch( final Entry entry, final SitemapStore.Stored stored, final Instant now )
+    {
+        entry.requested = now;
+        final Instant touched = entry.touched;
+        if ( touched != null && touched.plus( TOUCH_INTERVAL ).isAfter( now ) )
+        {
+            return;
+        }
+        entry.touched = now;
+        execute( () -> store.touch( stored, now ) );
+    }
+
+    /**
+     * Another node stored, replaced or deleted a sitemap: read it again when it is next requested, or now if requests are waiting for it.
+     */
+    private void storedElsewhere( final String id, final String type )
+    {
+        final Key key = keys.get( id );
+        final Entry entry = key == null ? null : entries.get( key );
+        if ( entry == null )
+        {
+            return;
+        }
+        if ( type.equals( "node.deleted" ) )
+        {
+            remove( key, entry );
+            return;
+        }
+        entry.loaded = false;
+        if ( !entry.ready.isDone() )
+        {
+            execute( () -> current( key, entry ) );
+        }
+    }
+
+    /**
+     * Content changed in the repository, and branch if not null. All nodes take note for the sitemaps they know; the node where it changed
+     * marks all sitemaps of the project as obsolete in the store and generates those in the background that are generated so.
+     */
+    private void contentChanged( final String repositoryId, final @Nullable String branch, final boolean localOrigin,
+                                 final Instant changedAt )
+    {
+        final Set<Key> restarted = ConcurrentHashMap.newKeySet();
+        entries.forEach( ( key, entry ) -> {
+            if ( key.repositoryId().equals( repositoryId ) && ( branch == null || key.branch().equals( branch ) ) )
+            {
+                synchronized ( entry )
+                {
+                    entry.changes++;
+                    entry.idleWhenChanged |= lastAccess( entry ).plus( IDLE_TIMEOUT ).isBefore( changedAt );
+                }
+                if ( entry.generation != null )
+                {
+                    generate( key, entry, regenerationDelay, true );
+                    restarted.add( key );
+                }
+            }
+        } );
+        if ( localOrigin )
+        {
+            execute( () -> {
+                for ( final SitemapStore.Stored stored : store.find( repositoryId, branch ) )
+                {
+                    final Instant startedAt = stored.startedAt();
+                    if ( startedAt != null && startedAt.isAfter( changedAt ) )
+                    {
+                        continue;
+                    }
+                    store.markObsolete( stored, changedAt );
+                    if ( stored.background() && stored.sitemap() != null && !restarted.contains( stored.key() ) &&
+                        stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( changedAt ) )
+                    {
+                        final Entry entry = entry( stored.key() );
+                        entry.background = true;
+                        generate( stored.key(), entry, regenerationDelay, true );
+                    }
+                }
+            } );
         }
     }
 
@@ -358,7 +528,7 @@ public final class SitemapCache
                 }
                 current.cancel();
             }
-            if ( entry.source == null )
+            if ( stopped )
             {
                 return;
             }
@@ -368,11 +538,11 @@ public final class SitemapCache
             {
                 if ( delay.isNegative() || delay.isZero() )
                 {
-                    generator( key ).execute( generation );
+                    generation.submit();
                 }
                 else
                 {
-                    generation.future = scheduler.schedule( generation::start, delay.toMillis(), TimeUnit.MILLISECONDS );
+                    generation.future = scheduler.schedule( generation::submit, delay.toMillis(), TimeUnit.MILLISECONDS );
                 }
             }
             catch ( RejectedExecutionException e )
@@ -383,217 +553,104 @@ public final class SitemapCache
         }
     }
 
-    private ExecutorService generator( final Key key )
-    {
-        if ( stopped )
-        {
-            throw new RejectedExecutionException( "Sitemaps stopped" );
-        }
-        return generators.computeIfAbsent( key.repositoryId(), generatorFactory );
-    }
-
     private void remove( final Key key, final Entry entry )
     {
         if ( entries.remove( key, entry ) )
         {
-            final Sitemap sitemap;
+            keys.remove( key.id(), key );
             synchronized ( entry )
             {
-                entry.removed = true;
                 final Generation generation = entry.generation;
                 if ( generation != null )
                 {
                     generation.cancel();
                     entry.generation = null;
                 }
-                sitemap = entry.sitemap;
             }
             entry.ready.completeExceptionally( new CancellationException( "Sitemap removed" ) );
-            if ( sitemap != null )
-            {
-                retire( sitemap );
-            }
             LOG.debug( "Removed sitemap {}", key );
         }
     }
 
     /**
-     * Stops the sitemap from being restored after a restart, and deletes its files later: requests may still be reading them.
-     */
-    private void retire( final Sitemap sitemap )
-    {
-        deleteFile( sitemap.directory().resolve( ENTRY_FILE ) );
-        try
-        {
-            final Runnable delete = sitemap::delete;
-            scheduler.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
-        }
-        catch ( RejectedExecutionException e )
-        {
-            sitemap.delete();
-        }
-    }
-
-    /**
-     * Writes the key and the description of the sitemap next to its files. The file appears at once and complete, so a sitemap
-     * directory without it is an unfinished generation.
-     */
-    private static void persist( final Key key, final Entry entry, final Sitemap sitemap )
-    {
-        final Path file = sitemap.directory().resolve( ENTRY_FILE );
-        final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
-        try
-        {
-            final ObjectNode description = JsonNodeFactory.instance.objectNode();
-            description.put( "format", FORMAT );
-            description.set( "key", key.store() );
-            description.put( "background", entry.background );
-            description.put( "lastAccess", entry.lastAccess.toString() );
-            final Instant validUntil = entry.validUntil;
-            if ( validUntil != null )
-            {
-                description.put( "validUntil", validUntil.toString() );
-            }
-            description.set( "sitemap", sitemap.store() );
-            MAPPER.writeValue( temporary.toFile(), description );
-            Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
-        }
-        catch ( IOException e )
-        {
-            LOG.warn( "Could not store sitemap {} on disk, it is served until restart", key, e );
-            deleteFile( temporary );
-        }
-    }
-
-    /**
-     * Reads back the sitemaps kept on disk. Content may have changed since they were generated, so they are generated again when
-     * requested. Files of unfinished generations are deleted, and of two sitemaps with the same key the older one: directories are
-     * named by version 7 UUIDs, which sort by creation time.
-     */
-    private void restore()
-    {
-        if ( !Files.isDirectory( storage ) )
-        {
-            return;
-        }
-        final List<Path> directories;
-        try (Stream<Path> list = Files.list( storage ))
-        {
-            directories = list.sorted().toList();
-        }
-        catch ( IOException e )
-        {
-            LOG.warn( "Could not read sitemaps in {}", storage, e );
-            return;
-        }
-
-        for ( final Path directory : directories )
-        {
-            final Map.Entry<Key, Entry> restored = restore( directory );
-            if ( restored == null )
-            {
-                Sitemap.delete( directory );
-                continue;
-            }
-            final Entry older = entries.put( restored.getKey(), restored.getValue() );
-            if ( older != null )
-            {
-                Objects.requireNonNull( older.sitemap ).delete();
-            }
-        }
-        List.copyOf( entries.keySet() ).forEach( this::evictOverflow );
-        LOG.debug( "Restored {} sitemaps", entries.size() );
-    }
-
-    private static Map.@Nullable Entry<Key, Entry> restore( final Path directory )
-    {
-        final Path file = directory.resolve( ENTRY_FILE );
-        if ( !Files.isRegularFile( file ) )
-        {
-            return null;
-        }
-        try
-        {
-            final JsonNode description = MAPPER.readTree( file.toFile() );
-            if ( description.required( "format" ).asInt() != FORMAT )
-            {
-                return null;
-            }
-            final Key key = Key.restore( description.required( "key" ) );
-            final Entry entry = new Entry( Instant.parse( description.required( "lastAccess" ).asText() ) );
-            entry.background = description.required( "background" ).asBoolean();
-            final JsonNode validUntil = description.get( "validUntil" );
-            entry.validUntil = validUntil == null ? null : Instant.parse( validUntil.asText() );
-            final Sitemap sitemap = Sitemap.restore( directory, description.required( "sitemap" ) );
-            entry.sitemap = sitemap;
-            entry.ready.complete( sitemap );
-            return Map.entry( key, entry );
-        }
-        catch ( IOException | RuntimeException e )
-        {
-            LOG.debug( "Could not read sitemap in {}", directory, e );
-            return null;
-        }
-    }
-
-    /**
-     * A version 7 UUID: its string form sorts by the given time.
-     */
-    static String uuid7( final long epochMilli )
-    {
-        final byte[] random = new byte[10];
-        RANDOM.nextBytes( random );
-        final long msb = epochMilli << 16 | ( random[0] & 0x0FL ) << 8 | random[1] & 0xFFL | 0x7000L;
-        long lsb = 0;
-        for ( int i = 2; i < random.length; i++ )
-        {
-            lsb = lsb << 8 | random[i] & 0xFFL;
-        }
-        return new UUID( msb, lsb & 0x3FFF_FFFF_FFFF_FFFFL | 0x8000_0000_0000_0000L ).toString();
-    }
-
-    private static void deleteFile( final Path file )
-    {
-        try
-        {
-            Files.deleteIfExists( file );
-        }
-        catch ( IOException e )
-        {
-            LOG.debug( "Could not delete {}", file, e );
-        }
-    }
-
-    /**
-     * Removes generated sitemaps of the site and principals of the given key beyond {@value #MAX_PER_SITE}: a site is requested
-     * through a few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first, then the
-     * least recently used. Sitemaps that requests are waiting for are kept.
+     * Deletes stored sitemaps of the site and principals of the given key beyond {@value #MAX_PER_SITE}: a site is requested through a
+     * few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first,
+     * then the least recently requested.
      */
     private void evictOverflow( final Key key )
     {
-        final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSiteForSamePrincipals( key ) ).toList();
+        final List<SitemapStore.Stored> site = store.ofSite( key );
         site.stream()
-            .filter( e -> e.getValue().sitemap != null )
+            .filter( stored -> stored.sitemap() != null )
             .sorted( EVICTION_ORDER )
             .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
             .toList()
-            .forEach( e -> remove( e.getKey(), e.getValue() ) );
+            .forEach( stored -> {
+                store.delete( stored.id() );
+                final Entry entry = entries.get( stored.key() );
+                if ( entry != null )
+                {
+                    remove( stored.key(), entry );
+                }
+            } );
     }
 
-    private static Sitemap await( final CompletableFuture<Sitemap> future )
+    private void execute( final Runnable runnable )
     {
         try
         {
-            return future.join();
+            scheduler.execute( () -> {
+                try
+                {
+                    runnable.run();
+                }
+                catch ( RuntimeException e )
+                {
+                    LOG.warn( "Could not update sitemaps", e );
+                }
+            } );
         }
-        catch ( CompletionException e )
+        catch ( RejectedExecutionException e )
+        {
+            LOG.debug( "Sitemaps stopped", e );
+        }
+    }
+
+    /**
+     * Waits for the entry's sitemap, generated here or by another node. Returns null when the generation another node claimed did not
+     * finish in time: it is then claimed again.
+     */
+    private @Nullable Sitemap await( final Entry entry )
+    {
+        try
+        {
+            return entry.ready.get( STALE_GENERATION.toMillis(), TimeUnit.MILLISECONDS );
+        }
+        catch ( TimeoutException e )
+        {
+            entry.loaded = false;
+            return null;
+        }
+        catch ( ExecutionException e )
         {
             if ( e.getCause() instanceof RuntimeException cause )
             {
                 throw cause;
             }
-            throw e;
+            throw new CompletionException( e.getCause() );
         }
+        catch ( InterruptedException e )
+        {
+            Thread.currentThread().interrupt();
+            throw new CancellationException( "Interrupted" );
+        }
+    }
+
+    private static AuthenticationInfo authInfo( final Key key )
+    {
+        return AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() )
+            .principals( key.principals().stream().map( PrincipalKey::from ).toList() )
+            .build();
     }
 
     /**
@@ -610,6 +667,23 @@ public final class SitemapCache
         @Nullable Instant write( Consumer<SitemapEntry> sink, BooleanSupplier cancelled );
     }
 
+    /**
+     * Runs generations as local tasks.
+     */
+    interface Tasks
+    {
+        void submit( String name, String description, Runnable work );
+
+        static Tasks of( final TaskService taskService )
+        {
+            return ( name, description, work ) -> taskService.submitLocalTask( SubmitLocalTaskParams.create()
+                                                                                   .name( name )
+                                                                                   .description( description )
+                                                                                   .runnableTask( ( id, progress ) -> work.run() )
+                                                                                   .build() );
+        }
+    }
+
     public record Key(String repositoryId, String branch, Set<String> principals, SitemapParams params)
     {
         public Key
@@ -617,10 +691,20 @@ public final class SitemapCache
             principals = Set.copyOf( principals );
         }
 
-        boolean isSameSiteForSamePrincipals( final Key other )
+        /**
+         * A digest of the key, naming its sitemap in the store.
+         */
+        String id()
         {
-            return repositoryId.equals( other.repositoryId ) && branch.equals( other.branch ) &&
-                params.sitePath().equals( other.params.sitePath() ) && principals.equals( other.principals );
+            try
+            {
+                final byte[] json = MAPPER.writeValueAsString( store() ).getBytes( StandardCharsets.UTF_8 );
+                return HexFormat.of().formatHex( MessageDigest.getInstance( "SHA-256" ).digest( json ) );
+            }
+            catch ( JsonProcessingException | NoSuchAlgorithmException e )
+            {
+                throw new IllegalStateException( e );
+            }
         }
 
         ObjectNode store()
@@ -687,6 +771,8 @@ public final class SitemapCache
 
         volatile boolean cancelled;
 
+        final CountDownLatch finished = new CountDownLatch( 1 );
+
         /**
          * Changes of the content the generation includes.
          */
@@ -704,16 +790,14 @@ public final class SitemapCache
             return due - System.nanoTime() <= delay.toNanos();
         }
 
-        void start()
+        void submit()
         {
-            try
+            if ( stopped )
             {
-                generator( key ).execute( this );
+                return;
             }
-            catch ( RejectedExecutionException e )
-            {
-                LOG.debug( "Generation of sitemap {} not started", key, e );
-            }
+            tasks.submit( TASK_PREFIX + key.id(), "Sitemap of " + key.repositoryId() + " " +
+                ( key.params().sitePath().isEmpty() ? "/" : key.params().sitePath() ) + " " + key.params().siteUrl(), this );
         }
 
         void cancel()
@@ -729,80 +813,130 @@ public final class SitemapCache
         @Override
         public void run()
         {
-            synchronized ( entry )
-            {
-                if ( cancelled || entry.generation != this )
-                {
-                    return;
-                }
-                started = true;
-                changes = entry.changes;
-            }
-            final Source source = entry.source;
-            final AuthenticationInfo authInfo = entry.authInfo;
             try
             {
-                if ( source == null || authInfo == null )
+                synchronized ( entry )
+                {
+                    if ( cancelled || stopped || entry.generation != this )
+                    {
+                        return;
+                    }
+                    started = true;
+                    changes = entry.changes;
+                    running.add( this );
+                }
+                final Semaphore project = projects.computeIfAbsent( key.repositoryId(), repository -> new Semaphore( 1, true ) );
+                project.acquireUninterruptibly();
+                try
+                {
+                    write();
+                }
+                finally
+                {
+                    project.release();
+                }
+            }
+            finally
+            {
+                running.remove( this );
+                finished.countDown();
+            }
+        }
+
+        private void write()
+        {
+            final String id = key.id();
+            final Instant now = clock.instant();
+            final Instant startedAt = now;
+            final SitemapStore.Stored previous = cancelled ? null : store.load( id );
+            final boolean claimed = !cancelled && ( previous == null
+                ? store.claimNew( id, key, entry.background, member, now )
+                : store.claim( previous, member, now, STALE_GENERATION ) );
+            if ( !claimed )
+            {
+                done();
+                LOG.debug( "Sitemap {} is generated elsewhere", key );
+                return;
+            }
+            try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( UUID.randomUUID().toString() ), key.params() ))
+            {
+                final Instant validUntil = ContextBuilder.create()
+                    .repositoryId( key.repositoryId() )
+                    .branch( key.branch() )
+                    .authInfo( authInfo( key ) )
+                    .build()
+                    .callWith( () -> sources.apply( key ).write( builder::add, () -> cancelled ) );
+                if ( cancelled )
                 {
                     throw new CancellationException();
                 }
-                final Instant validUntil;
-                final Sitemap sitemap;
-                try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( uuid7( clock.millis() ) ), key.params() ))
+                final Sitemap local = builder.build( previous == null ? null : previous.sitemap(), clock.instant() );
+                final SitemapStore.Stored stored;
+                try
                 {
-                    validUntil = ContextBuilder.create()
-                        .repositoryId( key.repositoryId() )
-                        .branch( key.branch() )
-                        .authInfo( authInfo )
-                        .build()
-                        .callWith( () -> source.write( builder::add, () -> cancelled ) );
-                    if ( cancelled )
-                    {
-                        throw new CancellationException();
-                    }
-                    sitemap = builder.build( entry.sitemap, clock.instant() );
+                    stored = store.save( id, key, entry.background, local, validUntil, startedAt, clock.instant() );
                 }
-                publish( sitemap, validUntil );
+                finally
+                {
+                    local.delete();
+                }
+                publish( stored );
             }
             catch ( CancellationException e )
             {
+                release( id );
+                done();
                 LOG.debug( "Generation of sitemap {} halted", key );
             }
             catch ( RuntimeException e )
             {
+                release( id );
                 failed( e );
             }
         }
 
-        private void publish( final Sitemap sitemap, final @Nullable Instant validUntil )
+        private void release( final String id )
         {
-            final Sitemap previous;
+            try
+            {
+                store.release( id, member );
+            }
+            catch ( RuntimeException e )
+            {
+                LOG.debug( "Could not release sitemap {}", key, e );
+            }
+        }
+
+        private void done()
+        {
             synchronized ( entry )
             {
                 if ( entry.generation == this )
                 {
                     entry.generation = null;
                 }
-                if ( cancelled || entry.removed )
-                {
-                    sitemap.delete();
-                    return;
-                }
-                previous = entry.sitemap;
-                entry.validUntil = validUntil;
-                entry.sitemap = sitemap;
-                entry.sitemapChanges = changes;
-                persist( key, entry, sitemap );
             }
-            entry.ready.complete( sitemap );
-            if ( previous != null )
+        }
+
+        private void publish( final SitemapStore.Stored stored )
+        {
+            synchronized ( entry )
             {
-                retire( previous );
+                if ( entry.generation == this )
+                {
+                    entry.generation = null;
+                }
+                entry.stored = stored;
+                entry.loaded = true;
+                entry.sitemapChanges = changes;
+                entry.idleWhenChanged = false;
             }
+            entry.ready.complete( stored.sitemap() );
             evictOverflow( key );
             LOG.debug( "Generated sitemap {}", key );
 
-            if ( entry.background && validUntil != null )
+            final Instant validUntil = stored.validUntil();
+            if ( stored.background() && validUntil != null )
             {
                 generate( key, entry, Duration.between( clock.instant(), validUntil ), false );
             }
@@ -810,17 +944,12 @@ public final class SitemapCache
 
         private void failed( final RuntimeException e )
         {
-            synchronized ( entry )
+            done();
+            final SitemapStore.Stored stored = entry.stored;
+            if ( stored == null || stored.sitemap() == null )
             {
-                if ( entry.generation == this )
-                {
-                    entry.generation = null;
-                }
-            }
-            if ( entry.sitemap == null )
-            {
-                entries.remove( key, entry );
                 entry.ready.completeExceptionally( e );
+                remove( key, entry );
             }
             else
             {
@@ -833,41 +962,29 @@ public final class SitemapCache
     {
         final CompletableFuture<Sitemap> ready = new CompletableFuture<>();
 
-        /**
-         * Source and principals of the latest request: entries restored from disk have none until requested.
-         */
-        volatile @Nullable Source source;
-
-        volatile @Nullable AuthenticationInfo authInfo;
-
         volatile boolean background;
+
+        volatile boolean loaded;
+
+        volatile SitemapStore.@Nullable Stored stored;
 
         volatile @Nullable Generation generation;
 
-        volatile @Nullable Sitemap sitemap;
+        volatile @Nullable Instant touched;
 
-        volatile @Nullable Instant validUntil;
-
-        volatile Instant lastAccess;
+        volatile @Nullable Instant requested;
 
         /**
-         * Number of changes of the content, and the number the sitemap includes: unknown for sitemaps restored from disk.
+         * Whether a background sitemap was not requested for {@link #IDLE_TIMEOUT} when its content changed: the node where it changed
+         * leaves it to the next request.
+         */
+        volatile boolean idleWhenChanged;
+
+        /**
+         * Number of changes of the content seen by this node, and the number the stored sitemap includes.
          */
         volatile long changes;
 
-        volatile long sitemapChanges = -1;
-
-        volatile boolean removed;
-
-        Entry( final Instant now )
-        {
-            this.lastAccess = now;
-        }
-
-        boolean isOutdated( final Instant now )
-        {
-            final Instant until = validUntil;
-            return sitemapChanges != changes || until != null && !now.isBefore( until );
-        }
+        volatile long sitemapChanges;
     }
 }

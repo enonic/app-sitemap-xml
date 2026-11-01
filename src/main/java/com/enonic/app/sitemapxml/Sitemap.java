@@ -52,7 +52,8 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
 import static com.enonic.app.sitemapxml.SitemapRenderer.utf8Length;
 
 /**
- * A generated sitemap. Its files are kept on disk, gzip-compressed only, and decompressed on the fly when served plain.
+ * A generated sitemap. Its files are kept gzip-compressed only, and decompressed on the fly when served plain. They are written to a
+ * local directory, and then stored as attachments of a node, see {@link RepositorySitemapStore}.
  */
 public final class Sitemap
 {
@@ -74,7 +75,9 @@ public final class Sitemap
 
     private static final Logger LOG = LoggerFactory.getLogger( Sitemap.class );
 
-    private final Path directory;
+    private final FileSource files;
+
+    private final @Nullable Path directory;
 
     private final int size;
 
@@ -86,11 +89,12 @@ public final class Sitemap
 
     private final Map<String, String> indexDigests;
 
-    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<@Nullable Instant> lastModified,
-                     final List<String> digests, final Map<String, String> indexDigests )
+    private Sitemap( final FileSource files, final @Nullable Path directory, final int size, final Map<String, Long> plainSizes,
+                     final List<@Nullable Instant> lastModified, final List<String> digests, final Map<String, String> indexDigests )
     {
         this.digests = List.copyOf( digests );
         this.indexDigests = Map.copyOf( indexDigests );
+        this.files = files;
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -270,9 +274,38 @@ public final class Sitemap
         return out.toString();
     }
 
+    /**
+     * Deletes the local directory the sitemap was written to, if any.
+     */
     public void delete()
     {
-        delete( directory );
+        if ( directory != null )
+        {
+            delete( directory );
+        }
+    }
+
+    @Nullable Path directory()
+    {
+        return directory;
+    }
+
+    /**
+     * The same sitemap, read from the given files.
+     */
+    Sitemap withFiles( final FileSource files )
+    {
+        return new Sitemap( files, null, size, plainSizes, lastModified, digests, indexDigests );
+    }
+
+    /**
+     * The gzip-compressed files of the sitemap by name, without the {@code .gz} extension.
+     */
+    Map<String, ByteSource> storedFiles()
+    {
+        final Map<String, ByteSource> stored = new TreeMap<>();
+        plainSizes.keySet().forEach( name -> stored.put( name, gzip( name ) ) );
+        return stored;
     }
 
     /**
@@ -301,16 +334,12 @@ public final class Sitemap
     }
 
     /**
-     * Reads back a sitemap that {@link #store} described from its directory.
+     * Reads back a sitemap that {@link #store} described, with its files from the given source.
      *
-     * @throws IllegalArgumentException when the description is incomplete or the files are missing
+     * @throws IllegalArgumentException when the description is incomplete
      */
-    static Sitemap restore( final Path directory, final JsonNode description )
+    static Sitemap restore( final FileSource files, final JsonNode description )
     {
-        if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
-        {
-            throw new IllegalArgumentException( "No sitemap in " + directory );
-        }
         final List<@Nullable Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
         for ( final JsonNode file : description.required( "files" ) )
@@ -333,12 +362,7 @@ public final class Sitemap
                 indexDigests.put( file.getKey(), file.getValue().asText() );
             }
         }
-        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests, indexDigests );
-    }
-
-    Path directory()
-    {
-        return directory;
+        return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, lastModified, digests, indexDigests );
     }
 
     static String fileName( final int number )
@@ -397,7 +421,7 @@ public final class Sitemap
 
     private ByteSource gzip( final String fileName )
     {
-        return MoreFiles.asByteSource( directory.resolve( fileName + GZIP_EXTENSION ) );
+        return files.gzipped( fileName );
     }
 
     private ByteSource plain( final String fileName )
@@ -421,6 +445,20 @@ public final class Sitemap
         catch ( IOException e )
         {
             LOG.warn( "Could not delete sitemap files in {}", directory, e );
+        }
+    }
+
+    /**
+     * Gives the gzip-compressed content of a sitemap file by name, without the {@code .gz} extension.
+     */
+    @FunctionalInterface
+    interface FileSource
+    {
+        ByteSource gzipped( String name );
+
+        static FileSource directory( final Path directory )
+        {
+            return name -> MoreFiles.asByteSource( directory.resolve( name + GZIP_EXTENSION ) );
         }
     }
 
@@ -650,7 +688,7 @@ public final class Sitemap
                 if ( empty )
                 {
                     built = true;
-                    return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
+                    return local();
                 }
                 if ( lastModified.size() == 1 )
                 {
@@ -663,12 +701,17 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
+                return local();
             }
             catch ( IOException e )
             {
                 throw new UncheckedIOException( e );
             }
+        }
+
+        private Sitemap local()
+        {
+            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, indexDigests );
         }
 
         private boolean unchanged( final @Nullable Sitemap previous, final int index )

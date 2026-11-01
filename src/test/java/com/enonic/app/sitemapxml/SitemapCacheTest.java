@@ -1,6 +1,7 @@
 package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -13,7 +14,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -22,14 +22,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -48,620 +46,483 @@ class SitemapCacheTest
     private static final SitemapCache.Key KEY =
         new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ), PARAMS );
 
-    private static final AuthenticationInfo AUTH_INFO = AuthenticationInfo.unAuthenticated();
+    private static final Instant CLUSTER_STARTED = Instant.parse( "2024-01-01T00:00:00Z" );
+
+    private final InMemorySitemapStore store = new InMemorySitemapStore();
 
     private final AtomicInteger generated = new AtomicInteger();
 
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final AtomicReference<SitemapCache.Source> source = new AtomicReference<>( this::generate );
+
+    private final MutableClock clock = new MutableClock( CLUSTER_STARTED.plusSeconds( 60 ) );
 
     private final ExecutorService requests = Executors.newCachedThreadPool();
 
-    private final MutableClock clock = new MutableClock( Instant.parse( "2024-01-01T00:00:00Z" ) );
+    private final List<ExecutorService> executors = Collections.synchronizedList( new ArrayList<>() );
+
+    private final List<SitemapCache> nodes = Collections.synchronizedList( new ArrayList<>() );
 
     @TempDir
-    private Path storage;
-
-    private SitemapCache cache;
-
-    @BeforeEach
-    void setUp()
-    {
-        cache = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
-    }
+    private Path temp;
 
     @AfterEach
     void shutdown()
         throws InterruptedException
     {
+        nodes.forEach( SitemapCache::deactivate );
         requests.shutdownNow();
-        executor.shutdownNow();
-        assertThat( executor.awaitTermination( 5, TimeUnit.SECONDS ) ).isTrue();
+        for ( final ExecutorService executor : executors )
+        {
+            executor.shutdownNow();
+            assertThat( executor.awaitTermination( 5, TimeUnit.SECONDS ) ).isTrue();
+        }
         assertThat( requests.awaitTermination( 5, TimeUnit.SECONDS ) ).isTrue();
     }
 
     @Test
-    void generatesOnceAndServesFromCache()
+    void generatesOnceAndServesFromStore()
     {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
+        final Node node = node();
 
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isSameAs( first );
+        final Sitemap first = node.cache.get( KEY, false );
+
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
         assertThat( first.size() ).isEqualTo( 1 );
         assertThat( generated ).hasValue( 1 );
+        final SitemapStore.Stored stored = store.load( KEY.id() );
+        assertThat( stored.generatedAt() ).isEqualTo( clock.instant() );
+        assertThat( stored.generating() ).isNull();
     }
 
     @Test
-    void generatesInContextOfKey()
+    void generatesWithPrincipalsOfKeyInItsRepository()
     {
         final List<String> seen = new ArrayList<>();
-        final AuthenticationInfo authInfo =
-            AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() ).principals( PrincipalKey.ofAnonymous() ).build();
-
-        cache.get( KEY, false, authInfo, ( sink, cancelled ) -> {
+        source.set( ( sink, cancelled ) -> {
             seen.add( ContextAccessor.current().getRepositoryId() + " " + ContextAccessor.current().getBranch() + " " +
                           ContextAccessor.current().getAuthInfo().getPrincipals() );
             return generate( sink, cancelled );
         } );
 
-        assertThat( seen ).containsExactly( "com.enonic.cms.project master " + authInfo.getPrincipals() );
+        node().cache.get( KEY, false );
+
+        assertThat( seen ).containsExactly(
+            "com.enonic.cms.project master " + List.of( PrincipalKey.ofAnonymous(), PrincipalKey.from( "role:system.everyone" ) ) );
+    }
+
+    @Test
+    void otherNodeServesStoredSitemapWithoutGeneratingIt()
+    {
+        node().cache.get( KEY, true );
+
+        final Sitemap served = node().cache.get( KEY, true );
+
+        assertThat( generated ).hasValue( 1 );
+        assertThat( text( served ) ).contains( "https://example.com/1" );
     }
 
     @Test
     void requestBoundSitemapIsServedAfterChangeWhileGeneratedAgainOnNextRequest()
     {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
+        final Node node = node();
+        final Sitemap first = node.cache.get( KEY, false );
 
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.other", "master" ) );
-        cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "draft" ) );
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isSameAs( first );
-        awaitIdle();
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.other", "master", true ) );
+        node.cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "draft", true ) );
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        awaitIdle();
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isSameAs( first );
-        awaitUntil( () -> cache.get( KEY, false, AUTH_INFO, this::generate ) != first );
-        awaitIdle();
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        node.awaitIdle();
         assertThat( generated ).hasValue( 2 );
+        assertThat( text( node.cache.get( KEY, false ) ) ).contains( "https://example.com/2" );
     }
 
     @Test
-    void backgroundSitemapIsRegeneratedAfterGracePeriodWhilePreviousIsServed()
+    void onlyNodeWhereContentChangedGeneratesBackgroundSitemapsAgain()
     {
-        final SitemapCache delayed = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ofMillis( 300 ), Duration.ZERO, storage );
-        final Sitemap first = delayed.get( KEY, true, AUTH_INFO, this::generate );
+        final Node origin = node();
+        final Node other = node();
+        origin.cache.get( KEY, true );
+        final Sitemap served = other.cache.get( KEY, true );
 
-        delayed.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        delayed.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        assertThat( delayed.get( KEY, true, AUTH_INFO, this::generate ) ).isSameAs( first );
-        assertThat( generated ).hasValue( 1 );
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        awaitUntil( () -> generated.get() == 2 );
+        origin.awaitIdle();
+        other.awaitIdle();
+        assertThat( other.cache.get( KEY, true ) ).isSameAs( served );
+        assertThat( generated ).hasValue( 2 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
 
-        awaitUntil( () -> delayed.get( KEY, true, AUTH_INFO, this::generate ) != first );
-        awaitIdle();
+        other.cache.onEvent( storedEvent( "node.updated", KEY.id() ) );
+        assertThat( text( other.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+        other.awaitIdle();
         assertThat( generated ).hasValue( 2 );
     }
 
     @Test
-    void haltsRunningBackgroundGenerationWhenContentChangesAgain()
+    void nodeWhereContentChangedMarksSitemapsObsoleteForAllNodes()
+    {
+        final Node first = node();
+        first.cache.get( KEY, false );
+
+        final Node origin = node();
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        origin.awaitIdle();
+        assertThat( store.load( KEY.id() ).obsolete() ).isEqualTo( clock.instant() );
+        assertThat( generated ).hasValue( 1 );
+
+        final Node fresh = node();
+        fresh.cache.get( KEY, false );
+        awaitUntil( () -> generated.get() == 2 );
+        fresh.awaitIdle();
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+    }
+
+    @Test
+    void doesNotGenerateWhatAnotherNodeIsGenerating()
+    {
+        node().cache.get( KEY, false );
+        store.markObsolete( store.load( KEY.id() ), clock.instant() );
+        assertThat( store.claim( store.load( KEY.id() ), "other", clock.instant(), SitemapCache.STALE_GENERATION ) ).isTrue();
+
+        final Node node = node();
+        node.cache.get( KEY, false );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 1 );
+
+        clock.advance( SitemapCache.STALE_GENERATION.plusSeconds( 1 ) );
+        node.cache.get( KEY, false );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 2 );
+        assertThat( store.load( KEY.id() ).generating() ).isNull();
+    }
+
+    @Test
+    void waitsForFirstGenerationOnAnotherNode()
         throws Exception
     {
+        assertThat( store.claimNew( KEY.id(), KEY, false, "other", clock.instant() ) ).isTrue();
+        final Node node = node();
+
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        awaitUntil( () -> node.cache.waiting() == 1 );
+        node.awaitIdle();
+        assertThat( waiting ).isNotDone();
+        assertThat( generated ).hasValue( 0 );
+
+        store.save( KEY.id(), KEY, false, SitemapTest.write( temp.resolve( "other" ), PARAMS,
+                                                             List.of( new SitemapEntry( "/elsewhere", SitemapParams.SITE_CONTENT_TYPE, null ) ), 10,
+                                                             Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ), null, clock.instant(),
+                    clock.instant() );
+        node.cache.onEvent( storedEvent( "node.updated", KEY.id() ) );
+
+        assertThat( text( waiting.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/elsewhere" );
+        assertThat( generated ).hasValue( 0 );
+    }
+
+    @Test
+    void haltsRunningGenerationWhenContentChangesAgain()
+    {
+        final Node node = node();
+        node.cache.get( KEY, true );
         final CountDownLatch started = new CountDownLatch( 1 );
-        final CountDownLatch release = new CountDownLatch( 1 );
-        final List<Boolean> halted = Collections.synchronizedList( new ArrayList<>() );
-        final AtomicInteger runs = new AtomicInteger();
-        final Sitemap first = cache.get( KEY, true, AUTH_INFO, ( sink, cancelled ) -> {
-            if ( runs.incrementAndGet() == 2 )
-            {
-                started.countDown();
-                await( release );
-                halted.add( cancelled.getAsBoolean() );
-            }
-            return generate( sink, cancelled );
+        final CountDownLatch halted = new CountDownLatch( 1 );
+        source.set( ( sink, cancelled ) -> {
+            started.countDown();
+            awaitUntil( cancelled );
+            halted.countDown();
+            source.set( this::generate );
+            return null;
         } );
 
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        assertThat( started.await( 5, TimeUnit.SECONDS ) ).isTrue();
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        assertThat( cache.get( KEY, true, AUTH_INFO, this::generate ) ).isSameAs( first );
-        release.countDown();
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        await( started );
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        await( halted );
 
-        awaitUntil( () -> runs.get() == 3 );
-        awaitIdle();
-        assertThat( halted ).containsExactly( true );
-        final Sitemap regenerated = cache.get( KEY, true, AUTH_INFO, this::generate );
-        assertThat( regenerated ).isNotSameAs( first );
-        awaitUntil( () -> sitemapDirectories().equals( List.of( regenerated.directory() ) ) );
-    }
-
-    @Test
-    void restartsGenerationThatRequestsWaitForWhenContentChanges()
-        throws Exception
-    {
-        final CountDownLatch started = new CountDownLatch( 1 );
-        final CountDownLatch release = new CountDownLatch( 1 );
-        final AtomicInteger runs = new AtomicInteger();
-        final SitemapCache.Source source = ( sink, cancelled ) -> {
-            if ( runs.incrementAndGet() == 1 )
-            {
-                started.countDown();
-                await( release );
-            }
-            sink.accept( new SitemapEntry( "/run-" + runs.get(), SitemapParams.SITE_CONTENT_TYPE, null ) );
-            return null;
-        };
-
-        final Future<Sitemap> waiting = requests.submit( () -> cache.get( KEY, false, AUTH_INFO, source ) );
-        started.await( 5, TimeUnit.SECONDS );
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        release.countDown();
-
-        assertThat( SitemapTest.text( waiting.get( 5, TimeUnit.SECONDS ).root() ) ).contains( "/run-2<" );
-        assertThat( runs ).hasValue( 2 );
+        awaitUntil( () -> generated.get() == 2 );
+        node.awaitIdle();
+        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+        assertThat( store.load( KEY.id() ).generating() ).isNull();
     }
 
     @Test
     void idleBackgroundSitemapIsGeneratedAgainOnNextRequestInstead()
     {
-        final Sitemap first = cache.get( KEY, true, AUTH_INFO, this::generate );
-        clock.now = clock.now.plus( SitemapCache.IDLE_TIMEOUT ).plusSeconds( 1 );
+        final Node node = node();
+        final Sitemap first = node.cache.get( KEY, true );
+        clock.advance( SitemapCache.IDLE_TIMEOUT.plusSeconds( 1 ) );
 
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        awaitIdle();
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
-        assertThat( cache.get( KEY, true, AUTH_INFO, this::generate ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY, true ) ).isSameAs( first );
         awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test
-    void generatesUncachedSitemapInCallingThreadAndDeletesItLater()
+    void sitemapGeneratedBeforeClusterStartedIsGeneratedAgainOnRequest()
     {
-        final SitemapCache retaining = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ofMillis( 200 ), storage );
-        final Thread caller = Thread.currentThread();
-        final List<String> seen = new ArrayList<>();
+        clock.set( CLUSTER_STARTED.minusSeconds( 60 ) );
+        node().cache.get( KEY, true );
+        clock.set( CLUSTER_STARTED.plusSeconds( 60 ) );
 
-        final Sitemap sitemap = retaining.uncached( KEY, AUTH_INFO, ( sink, cancelled ) -> {
-            seen.add( ( Thread.currentThread() == caller ) + " " + ContextAccessor.current().getRepositoryId() + " " +
-                          ContextAccessor.current().getBranch() );
-            return generate( sink, cancelled );
-        } );
-
-        assertThat( seen ).containsExactly( "true com.enonic.cms.project master" );
-        assertThat( SitemapTest.text( sitemap.root() ) ).contains( "https://example.com" );
-        assertThat( sitemap.directory().resolve( SitemapCache.ENTRY_FILE ) ).doesNotExist();
-        assertThat( retaining.size() ).isZero();
-        awaitUntil( () -> !Files.exists( sitemap.directory() ) );
-    }
-
-    @Test
-    void repositoryAndPermissionEventsInvalidate()
-    {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
-        cache.onEvent( Event.create( "repository.deleted" ).value( "id", "com.enonic.cms.project" ).build() );
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isSameAs( first );
+        final Node node = node();
+        node.cache.get( KEY, true );
         awaitUntil( () -> generated.get() == 2 );
-        awaitIdle();
+        node.awaitIdle();
 
-        final Sitemap second = cache.get( KEY, false, AUTH_INFO, this::generate );
-        cache.onEvent( Event.create( "node.permissionsUpdated" )
-                           .value( "id", "1" )
-                           .value( "repo", "com.enonic.cms.project" )
-                           .value( "branch", "master" )
-                           .build() );
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isSameAs( second );
-        awaitUntil( () -> generated.get() == 3 );
-    }
-
-    @Test
-    void requestBoundSitemapIsGeneratedAgainWhenScheduledContentChanges()
-    {
-        final Instant validUntil = clock.now.plusSeconds( 3600 );
-        final AtomicInteger runs = new AtomicInteger();
-        cache.get( KEY, false, AUTH_INFO, ( sink, cancelled ) -> generate( runs.incrementAndGet() == 1 ? validUntil : null ) );
-
-        clock.now = validUntil.minusSeconds( 1 );
-        cache.get( KEY, false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( 1 );
-
-        clock.now = validUntil;
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
-        awaitUntil( () -> generated.get() == 2 );
-        awaitIdle();
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ) ).isNotSameAs( first );
+        node.cache.get( KEY, true );
+        node.awaitIdle();
         assertThat( generated ).hasValue( 2 );
     }
 
     @Test
-    void backgroundSitemapIsGeneratedAgainWhenScheduledContentChanges()
+    void sitemapIsGeneratedAgainWhenScheduledContentChanges()
     {
-        final AtomicInteger runs = new AtomicInteger();
-        final Sitemap first =
-            cache.get( KEY, true, AUTH_INFO, ( sink, cancelled ) -> generate( runs.incrementAndGet() == 1 ? clock.now.minusMillis( 1 ) : null ) );
+        final Node node = node();
+        source.set( ( sink, cancelled ) -> {
+            source.set( this::generate );
+            generate( sink, cancelled );
+            return clock.instant().plusSeconds( 3600 );
+        } );
+        final Sitemap first = node.cache.get( KEY, false );
+        assertThat( store.load( KEY.id() ).validUntil() ).isEqualTo( clock.instant().plusSeconds( 3600 ) );
 
+        clock.advance( Duration.ofSeconds( 3600 ) );
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
         awaitUntil( () -> generated.get() == 2 );
-        awaitIdle();
-        assertThat( cache.get( KEY, true, AUTH_INFO, this::generate ) ).isNotSameAs( first );
     }
 
     @Test
-    void expiredBackgroundSitemapIsServedWhileGeneratedAgain()
+    void failedFirstGenerationIsNotStored()
     {
-        final Instant validUntil = clock.now.plusSeconds( 3600 );
-        final AtomicInteger runs = new AtomicInteger();
-        final Sitemap first =
-            cache.get( KEY, true, AUTH_INFO, ( sink, cancelled ) -> generate( runs.incrementAndGet() == 1 ? validUntil : null ) );
-        clock.now = validUntil;
-
-        assertThat( cache.get( KEY, true, AUTH_INFO, this::generate ) ).isSameAs( first );
-        awaitUntil( () -> generated.get() >= 2 );
-    }
-
-    @Test
-    void failedFirstGenerationIsNotCached()
-    {
-        assertThatThrownBy( () -> cache.get( KEY, false, AUTH_INFO, ( sink, cancelled ) -> {
+        final Node node = node();
+        source.set( ( sink, cancelled ) -> {
             throw new IllegalStateException( "boom" );
-        } ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "boom" );
-
-        final Sitemap sitemap = cache.get( KEY, false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( 1 );
-        assertThat( sitemapDirectories() ).containsExactly( sitemap.directory() );
-    }
-
-    @Test
-    void failedRegenerationKeepsPreviousSitemap()
-    {
-        final AtomicInteger runs = new AtomicInteger();
-        final Sitemap first = cache.get( KEY, true, AUTH_INFO, ( sink, cancelled ) -> {
-            if ( runs.incrementAndGet() > 1 )
-            {
-                throw new IllegalStateException( "boom" );
-            }
-            return generate( sink, cancelled );
         } );
 
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        awaitUntil( () -> runs.get() == 2 );
-        awaitIdle();
+        assertThatThrownBy( () -> node.cache.get( KEY, false ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "boom" );
+        assertThat( store.load( KEY.id() ) ).isNull();
 
-        assertThat( cache.get( KEY, true, AUTH_INFO, this::generate ) ).isSameAs( first );
+        source.set( this::generate );
+        assertThat( node.cache.get( KEY, false ).size() ).isEqualTo( 1 );
     }
 
     @Test
-    void requestsForSameSitemapShareOneGeneration()
-        throws Exception
+    void failedRegenerationKeepsPreviousSitemapAndReleasesClaim()
     {
-        final CountDownLatch release = new CountDownLatch( 1 );
-        final List<Future<Sitemap>> results = new ArrayList<>();
-        for ( int i = 0; i < 5; i++ )
-        {
-            results.add( requests.submit( () -> cache.get( KEY, false, AUTH_INFO, ( sink, cancelled ) -> {
-                await( release );
-                return generate( sink, cancelled );
-            } ) ) );
-        }
-        awaitUntil( () -> cache.waiting() == 5 );
-        release.countDown();
+        final Node node = node();
+        final Sitemap first = node.cache.get( KEY, false );
+        source.set( ( sink, cancelled ) -> {
+            throw new IllegalStateException( "boom" );
+        } );
 
-        for ( final Future<Sitemap> result : results )
-        {
-            assertThat( result.get( 5, TimeUnit.SECONDS ) ).isSameAs( results.getFirst().get() );
-        }
-        assertThat( generated ).hasValue( 1 );
-    }
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        node.awaitIdle();
 
-    @Test
-    void generatesSitemapsOfDifferentProjectsInParallel()
-        throws Exception
-    {
-        final SitemapCache parallel = new SitemapCache( executor, SitemapCache::newGenerator, clock, Duration.ZERO, Duration.ZERO, storage );
-        try
-        {
-            final CountDownLatch blocked = new CountDownLatch( 1 );
-            final CountDownLatch release = new CountDownLatch( 1 );
-            final Future<Sitemap> slow =
-                requests.submit( () -> parallel.get( key( "com.enonic.cms.slow" ), false, AUTH_INFO, ( sink, cancelled ) -> {
-                    blocked.countDown();
-                    await( release );
-                    return generate( sink, cancelled );
-                } ) );
-            assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
-
-            assertThat( parallel.get( key( "com.enonic.cms.fast" ), false, AUTH_INFO, this::generate ).size() ).isEqualTo( 1 );
-
-            release.countDown();
-            assertThat( slow.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
-        }
-        finally
-        {
-            parallel.deactivate();
-        }
+        assertThat( store.load( KEY.id() ).sitemap() ).isNotNull();
+        assertThat( store.load( KEY.id() ).generating() ).isNull();
+        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
     }
 
     @Test
     void queuesAllGenerationsAndThrottlesOnlyWaitingRequests()
         throws Exception
     {
-        final Sitemap ready = cache.get( key( "ready" ), false, AUTH_INFO, this::generate );
+        final Node node = node();
         final CountDownLatch release = new CountDownLatch( 1 );
-        final AtomicInteger running = new AtomicInteger();
-        final AtomicInteger maxRunning = new AtomicInteger();
-        final SitemapCache.Source slow = ( sink, cancelled ) -> {
-            maxRunning.accumulateAndGet( running.incrementAndGet(), Math::max );
+        source.set( ( sink, cancelled ) -> {
             await( release );
-            running.decrementAndGet();
             return generate( sink, cancelled );
-        };
+        } );
 
         final List<Future<Sitemap>> waiting = new ArrayList<>();
         for ( int i = 0; i < SitemapCache.MAX_WAITING; i++ )
         {
-            final SitemapCache.Key key = key( "repo" + i );
-            waiting.add( requests.submit( () -> cache.get( key, false, AUTH_INFO, slow ) ) );
+            final SitemapCache.Key key = key( "/site-" + i );
+            waiting.add( requests.submit( () -> node.cache.get( key, false ) ) );
         }
-        awaitUntil( () -> cache.waiting() == SitemapCache.MAX_WAITING );
+        awaitUntil( () -> node.cache.waiting() == SitemapCache.MAX_WAITING );
 
-        assertThatThrownBy( () -> cache.get( key( "extra" ), false, AUTH_INFO, slow ) ).isInstanceOf( SitemapBusyException.class );
-        assertThat( cache.get( key( "ready" ), false, AUTH_INFO, this::generate ) ).isSameAs( ready );
+        assertThatThrownBy( () -> node.cache.get( key( "/one-too-many" ), false ) ).isInstanceOf( SitemapBusyException.class );
 
         release.countDown();
-        for ( final Future<Sitemap> result : waiting )
+        for ( final Future<Sitemap> future : waiting )
         {
-            assertThat( result.get( 5, TimeUnit.SECONDS ) ).isNotNull();
+            assertThat( future.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
         }
-        awaitUntil( () -> generated.get() == SitemapCache.MAX_WAITING + 2 );
-        assertThat( maxRunning ).hasValue( 1 );
-
-        cache.get( key( "extra" ), false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( SitemapCache.MAX_WAITING + 2 );
+        awaitUntil( () -> store.load( key( "/one-too-many" ).id() ) != null && store.load( key( "/one-too-many" ).id() ).sitemap() != null );
+        assertThat( node.cache.get( key( "/one-too-many" ), false ).size() ).isEqualTo( 1 );
     }
 
     @Test
-    void evictsLeastRecentlyUsedOfSiteWhenFull()
+    void evictsSitemapsOfSiteBeyondLimitWithPortsFirstThenLeastRecentlyRequested()
     {
-        final Sitemap otherSite = cache.get( key( "other" ), false, AUTH_INFO, this::generate );
-        for ( int i = 0; i <= SitemapCache.MAX_PER_SITE; i++ )
-        {
-            clock.now = clock.now.plusSeconds( 1 );
-            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
-        }
-
-        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE + 1 );
-        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 2 );
-        cache.get( hostKey( SitemapCache.MAX_PER_SITE ), false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 2 );
-        cache.get( hostKey( 0 ), false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 3 );
-        assertThat( cache.get( key( "other" ), false, AUTH_INFO, this::generate ) ).isSameAs( otherSite );
-    }
-
-    @Test
-    void limitsSitemapsPerSiteAndPrincipals()
-    {
-        final SitemapCache.Key otherUser = new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "user:system:editor" ),
-                                                                 new SitemapParams( "/mysite", "https://example.com:9999", List.of(),
-                                                                                    List.of() ) );
-        final Sitemap kept = cache.get( otherUser, false, AUTH_INFO, this::generate );
-        for ( int i = 0; i <= SitemapCache.MAX_PER_SITE; i++ )
-        {
-            clock.now = clock.now.plusSeconds( 1 );
-            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
-        }
-
-        assertThat( cache.get( otherUser, false, AUTH_INFO, this::generate ) ).isSameAs( kept );
-        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE + 1 );
-    }
-
-    @Test
-    void enforcesLimitAfterBurstOfColdRequests()
-    {
-        final CountDownLatch release = new CountDownLatch( 1 );
-        final SitemapCache.Source slow = ( sink, cancelled ) -> {
-            await( release );
-            return generate( sink, cancelled );
-        };
-        final int requested = 2 * SitemapCache.MAX_PER_SITE + 5;
-        for ( int i = 0; i < requested; i++ )
-        {
-            final SitemapCache.Key key = hostKey( i );
-            requests.submit( () -> cache.get( key, false, AUTH_INFO, slow ) );
-        }
-        awaitUntil( () -> cache.size() == requested );
-
-        release.countDown();
-        awaitUntil( () -> generated.get() == requested );
-        awaitIdle();
-
-        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE );
-        awaitUntil( () -> sitemapDirectories().size() == SitemapCache.MAX_PER_SITE );
-    }
-
-    @Test
-    void evictsSitemapsWithPortBeforeThoseWithout()
-    {
+        final Node node = node();
         final SitemapCache.Key withoutPort = siteKey( "https://example.com" );
-        final Sitemap kept = cache.get( withoutPort, false, AUTH_INFO, this::generate );
-        for ( int i = 0; i < 2 * SitemapCache.MAX_PER_SITE; i++ )
+        node.cache.get( withoutPort, false );
+        for ( int port = 0; port < SitemapCache.MAX_PER_SITE; port++ )
         {
-            clock.now = clock.now.plusSeconds( 1 );
-            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
+            clock.advance( Duration.ofSeconds( 1 ) );
+            node.cache.get( hostKey( port ), false );
         }
+        node.awaitIdle();
 
-        assertThat( cache.get( withoutPort, false, AUTH_INFO, this::generate ) ).isSameAs( kept );
-        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE );
+        assertThat( store.ofSite( withoutPort ) ).hasSize( SitemapCache.MAX_PER_SITE );
+        assertThat( store.load( withoutPort.id() ) ).isNotNull();
+        assertThat( store.load( hostKey( 0 ).id() ) ).isNull();
+        assertThat( store.load( hostKey( 1 ).id() ) ).isNotNull();
+
+        final SitemapCache.Key otherUser = new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "user:system:editor" ),
+                                                                 withoutPort.params() );
+        node.cache.get( otherUser, false );
+        node.awaitIdle();
+        assertThat( store.ofSite( withoutPort ) ).hasSize( SitemapCache.MAX_PER_SITE );
     }
 
     @Test
-    void deletesFilesOfReplacedAndEvictedSitemaps()
-    {
-        final Sitemap first = cache.get( KEY, true, AUTH_INFO, this::generate );
-        assertThat( first.directory() ).startsWith( storage ).isDirectory();
-
-        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        awaitUntil( () -> !Files.exists( first.directory() ) );
-        final Sitemap second = cache.get( KEY, true, AUTH_INFO, this::generate );
-        assertThat( sitemapDirectories() ).containsExactly( second.directory() );
-
-        for ( int i = 0; i < SitemapCache.MAX_PER_SITE; i++ )
-        {
-            clock.now = clock.now.plusSeconds( 1 );
-            cache.get( siteKey( "https://host" + i + ".example.com" ), false, AUTH_INFO, this::generate );
-        }
-        awaitUntil( () -> !Files.exists( second.directory() ) );
-        assertThat( sitemapDirectories() ).hasSize( SitemapCache.MAX_PER_SITE );
-    }
-
-    @Test
-    void servesSitemapsKeptFromBeforeRestartWhileGeneratingThemAgain()
-    {
-        final SitemapParams params = new SitemapParams( "/my site", "https://example.com/a=b", List.of(
-            new ContentTypeSetting( "app:article", "daily", "0.8" ), new ContentTypeSetting( "app:page", "", "" ) ),
-                                                        List.of( "/my site/hidden/*", "*/=draft" ) );
-        final SitemapCache.Key key =
-            new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone", "user:system:a=b" ), params );
-        final Sitemap first = cache.get( key, true, AUTH_INFO, this::generate );
-        final String content = SitemapTest.text( first.root() );
-
-        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ofMinutes( 1 ), storage );
-        assertThat( restarted.size() ).isEqualTo( 1 );
-        awaitIdle();
-        assertThat( generated ).hasValue( 1 );
-        clock.now = clock.now.plusSeconds( 3600 );
-
-        final Sitemap restored = restarted.get( key, true, AUTH_INFO, this::generate );
-        assertThat( restored.directory() ).isEqualTo( first.directory() );
-        assertThat( SitemapTest.text( restored.root() ) ).isEqualTo( content );
-        assertThat( restored.size() ).isEqualTo( first.size() );
-        assertThat( restored.lastModified() ).isEqualTo( first.lastModified() );
-
-        awaitUntil( () -> generated.get() == 2 );
-        awaitIdle();
-        final Sitemap regenerated = restarted.get( key, true, AUTH_INFO, this::generate );
-        assertThat( regenerated ).isNotSameAs( restored );
-        assertThat( regenerated.lastModified() ).isEqualTo( first.lastModified() );
-        assertThat( generated ).hasValue( 2 );
-    }
-
-    @Test
-    void deletesUnfinishedFilesOnStart()
+    void generatesUncachedSitemapInCallingThreadAndDeletesItLater()
         throws IOException
     {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
-        final Path unfinished = Files.createDirectories( storage.resolve( "unfinished" ) );
-        final Path stale = Files.createDirectories( storage.resolve( "stale" ) );
-        Files.writeString( Files.createDirectories( storage.resolve( "broken" ) ).resolve( SitemapCache.ENTRY_FILE ), "format=1" );
+        final Node node = node( Duration.ofMillis( 200 ) );
 
-        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        final Sitemap sitemap = node.cache.uncached( KEY, AuthenticationInfo.unAuthenticated(), this::generate );
 
-        assertThat( restarted.size() ).isEqualTo( 1 );
-        assertThat( unfinished ).doesNotExist();
-        assertThat( stale ).doesNotExist();
-        assertThat( storage.resolve( "broken" ) ).doesNotExist();
-        assertThat( sitemapDirectories() ).containsExactly( first.directory() );
+        assertThat( sitemap.directory() ).isDirectory();
+        assertThat( text( sitemap ) ).contains( "https://example.com/1" );
+        assertThat( store.size() ).isZero();
+        awaitUntil( () -> !Files.exists( sitemap.directory() ) );
     }
 
     @Test
-    void keepsNewerOfTwoSitemapsWithSameKeyOnStart()
-        throws IOException
-    {
-        final Sitemap newer = cache.get( KEY, false, AUTH_INFO, this::generate );
-        final Path older = Files.createDirectories( storage.resolve( SitemapCache.uuid7( clock.now.minusSeconds( 1 ).toEpochMilli() ) ) );
-        try (Stream<Path> files = Files.list( newer.directory() ))
-        {
-            for ( final Path file : files.toList() )
-            {
-                Files.copy( file, older.resolve( file.getFileName() ) );
-            }
-        }
-
-        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
-
-        assertThat( restarted.size() ).isEqualTo( 1 );
-        assertThat( sitemapDirectories() ).containsExactly( newer.directory() );
-        assertThat( restarted.get( KEY, false, AUTH_INFO, this::generate ).directory() ).isEqualTo( newer.directory() );
-    }
-
-    @Test
-    void namesDirectoriesByTimeOrderedUuids()
-    {
-        final String earlier = SitemapCache.uuid7( 1_700_000_000_000L );
-        final String later = SitemapCache.uuid7( 1_700_000_000_001L );
-
-        assertThat( UUID.fromString( earlier ).version() ).isEqualTo( 7 );
-        assertThat( UUID.fromString( earlier ).variant() ).isEqualTo( 2 );
-        assertThat( earlier ).startsWith( "018bcfe5-6800-7" ).isLessThan( later );
-        assertThat( cache.get( KEY, false, AUTH_INFO, this::generate ).directory().getFileName().toString() ).startsWith(
-            SitemapCache.uuid7( clock.now.toEpochMilli() ).substring( 0, 13 ) );
-    }
-
-    @Test
-    void stopWaitsForRunningGenerationToHalt()
+    void stopHaltsRunningGenerationAndReleasesClaim()
         throws Exception
     {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
+        final Node node = node();
         final CountDownLatch started = new CountDownLatch( 1 );
-        final AtomicBoolean halted = new AtomicBoolean();
-        requests.submit( () -> cache.get( key( "other" ), false, AUTH_INFO, ( sink, cancelled ) -> {
+        source.set( ( sink, cancelled ) -> {
             started.countDown();
-            while ( !cancelled.getAsBoolean() )
-            {
-                Thread.onSpinWait();
-            }
-            sink.accept( new SitemapEntry( "/late", SitemapParams.SITE_CONTENT_TYPE, null ) );
-            halted.set( true );
+            awaitUntil( cancelled );
             return null;
-        } ) );
-        assertThat( started.await( 5, TimeUnit.SECONDS ) ).isTrue();
+        } );
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        await( started );
 
-        cache.deactivate();
-
-        assertThat( halted ).isTrue();
-        assertThat( sitemapDirectories() ).containsExactly( first.directory() );
-    }
-
-    @Test
-    void keepsFilesOnStop()
-        throws Exception
-    {
-        final Sitemap first = cache.get( KEY, false, AUTH_INFO, this::generate );
-        final CountDownLatch blocked = new CountDownLatch( 1 );
-        final Future<Sitemap> waiting = requests.submit( () -> cache.get( key( "other" ), false, AUTH_INFO, ( sink, cancelled ) -> {
-            blocked.countDown();
-            await( new CountDownLatch( 1 ) );
-            return null;
-        } ) );
-        blocked.await( 5, TimeUnit.SECONDS );
-        cache.deactivate();
+        node.cache.deactivate();
 
         assertThatThrownBy( () -> waiting.get( 5, TimeUnit.SECONDS ) ).isInstanceOf( ExecutionException.class )
             .hasCauseInstanceOf( CancellationException.class );
-        assertThat( first.directory() ).isDirectory();
-        assertThat( first.directory().resolve( SitemapCache.ENTRY_FILE ) ).isRegularFile();
+        assertThat( store.load( KEY.id() ) ).isNull();
+    }
+
+    @Test
+    void generatesSitemapsOfDifferentProjectsInParallel()
+        throws Exception
+    {
+        final ExecutorService pool = Executors.newCachedThreadPool();
+        executors.add( pool );
+        final Node node = node( Duration.ZERO, ( name, description, work ) -> pool.execute( work ) );
+        final CountDownLatch blocked = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        source.set( ( sink, cancelled ) -> {
+            if ( ContextAccessor.current().getRepositoryId().toString().equals( "com.enonic.cms.slow" ) )
+            {
+                blocked.countDown();
+                await( release );
+            }
+            return generate( sink, cancelled );
+        } );
+
+        final Future<Sitemap> slow = requests.submit( () -> node.cache.get( repoKey( "com.enonic.cms.slow" ), false ) );
+        assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
+
+        assertThat( node.cache.get( repoKey( "com.enonic.cms.fast" ), false ).size() ).isEqualTo( 1 );
+
+        release.countDown();
+        assertThat( slow.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
+    }
+
+    @Test
+    void runsGenerationsAsNamedTasks()
+    {
+        final List<String> names = Collections.synchronizedList( new ArrayList<>() );
+        final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        executors.add( executor );
+        final Node node = node( Duration.ZERO, ( name, description, work ) -> {
+            names.add( name + " " + description );
+            executor.execute( work );
+        } );
+
+        node.cache.get( KEY, false );
+
+        assertThat( names ).containsExactly(
+            SitemapCache.TASK_PREFIX + KEY.id() + " Sitemap of com.enonic.cms.project /mysite https://example.com" );
+    }
+
+    @Test
+    void keyIdIsDigestOfKey()
+    {
+        assertThat( KEY.id() ).matches( "[0-9a-f]{64}" ).isEqualTo( new SitemapCache.Key( KEY.repositoryId(), KEY.branch(),
+                                                                                           Set.of( "role:system.everyone" ),
+                                                                                           PARAMS ).id() );
+        assertThat( siteKey( "https://example.com:8443" ).id() ).isNotEqualTo( siteKey( "https://example.com" ).id() );
+        assertThat( SitemapCache.Key.restore( KEY.store() ) ).isEqualTo( KEY );
+    }
+
+    private Node node()
+    {
+        return node( Duration.ZERO );
+    }
+
+    private Node node( final Duration fileRetention )
+    {
+        return node( fileRetention, null );
+    }
+
+    private Node node( final Duration fileRetention, final SitemapCache.Tasks tasks )
+    {
+        final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        executors.add( executor );
+        final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ),
+                                                     tasks != null ? tasks : ( name, description, work ) -> executor.execute( work ),
+                                                     executor, clock, CLUSTER_STARTED, Duration.ZERO, fileRetention,
+                                                     temp.resolve( "node-" + nodes.size() ) );
+        nodes.add( cache );
+        return new Node( cache, executor );
     }
 
     private Instant generate( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
     {
-        sink.accept( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
-        return generate( null );
+        sink.accept( new SitemapEntry( "/" + generated.incrementAndGet(), SitemapParams.SITE_CONTENT_TYPE, null ) );
+        return null;
     }
 
-    private Instant generate( final Instant validUntil )
+    private static String text( final Sitemap sitemap )
     {
-        generated.incrementAndGet();
-        return validUntil;
-    }
-
-    private List<Path> sitemapDirectories()
-    {
-        try (Stream<Path> paths = Files.list( storage ))
+        try
         {
-            return paths.filter( Files::isDirectory ).toList();
+            return new String( sitemap.root().read(), StandardCharsets.UTF_8 );
         }
         catch ( IOException e )
         {
             throw new IllegalStateException( e );
         }
+    }
+
+    private static SitemapCache.Key key( final String sitePath )
+    {
+        return new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ),
+                                     new SitemapParams( sitePath, "https://example.com", List.of(), List.of() ) );
     }
 
     private static SitemapCache.Key siteKey( final String siteUrl )
@@ -675,22 +536,26 @@ class SitemapCacheTest
         return siteKey( "https://example.com:" + ( 8000 + port ) );
     }
 
-    private static SitemapCache.Key key( final String repo )
+    private static SitemapCache.Key repoKey( final String repo )
     {
         return new SitemapCache.Key( repo, "master", Set.of(), PARAMS );
     }
 
-    private void awaitIdle()
+    private static Event nodeEvent( final String type, final String repo, final String branch, final boolean localOrigin )
     {
-        try
-        {
-            executor.submit( () -> {
-            } ).get( 5, TimeUnit.SECONDS );
-        }
-        catch ( Exception e )
-        {
-            throw new IllegalStateException( e );
-        }
+        return Event.create( type )
+            .localOrigin( localOrigin )
+            .value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) )
+            .build();
+    }
+
+    private static Event storedEvent( final String type, final String id )
+    {
+        return Event.create( type )
+            .localOrigin( false )
+            .value( "nodes", List.of(
+                Map.of( "id", "1", "path", "/" + id, "repo", RepositorySitemapStore.REPOSITORY.toString(), "branch", "master" ) ) )
+            .build();
     }
 
     private static void awaitUntil( final BooleanSupplier condition )
@@ -704,13 +569,6 @@ class SitemapCacheTest
             }
             sleep( 5 );
         }
-    }
-
-    private static Event nodeEvent( final String type, final String repo, final String branch )
-    {
-        return Event.create( type )
-            .value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) )
-            .build();
     }
 
     private static void sleep( final long millis )
@@ -739,6 +597,22 @@ class SitemapCacheTest
         }
     }
 
+    private record Node(SitemapCache cache, ScheduledExecutorService executor)
+    {
+        void awaitIdle()
+        {
+            try
+            {
+                executor.submit( () -> {
+                } ).get( 5, TimeUnit.SECONDS );
+            }
+            catch ( Exception e )
+            {
+                throw new IllegalStateException( e );
+            }
+        }
+    }
+
     private static final class MutableClock
         extends Clock
     {
@@ -747,6 +621,16 @@ class SitemapCacheTest
         MutableClock( final Instant now )
         {
             this.now = now;
+        }
+
+        void advance( final Duration duration )
+        {
+            now = now.plus( duration );
+        }
+
+        void set( final Instant instant )
+        {
+            now = instant;
         }
 
         @Override

@@ -80,10 +80,7 @@ public final class SitemapService
             final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
             return cache.uncached( key, context.getAuthInfo(), draft );
         }
-        final SitemapCache.Source source =
-            ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
-        final boolean background = !siteUrlFromRequest || baseUrl.isPresent();
-        return cache.get( key, background, authInfo, source );
+        return cache.get( key, !siteUrlFromRequest || baseUrl.isPresent() );
     }
 
     /**
