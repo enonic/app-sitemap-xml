@@ -70,7 +70,7 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 	SiteMapResolverData,
 	SitemapUrl[]
 > => (env) => {
-	const count = env.args.count && env.args.count > 0 ? env.args.count : 2147483647;
+	const count = env.args.count === undefined || env.args.count === null ? 2147483647 : Math.max(0, env.args.count);
 	return withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
 		(bean, params) => JSON.parse(bean.guillotineUrlset(params, count)) as SitemapUrl[]);
 };

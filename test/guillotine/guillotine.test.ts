@@ -286,6 +286,13 @@ describe('guillotine extensions', () => {
 			})).toEqual(URLS);
 			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
 
+			expect(urlsetResolver({
+				args: {count: 0},
+				localContext: sitemapResolverResult.localContext,
+				source: sitemapResolverResult.source,
+			})).toEqual([]);
+			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
+
 			const files = filesResolver({args: {}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source});
 			expect(files).toEqual([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}]);
 			expect(fileResolver({args: {number: 2}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source}))
