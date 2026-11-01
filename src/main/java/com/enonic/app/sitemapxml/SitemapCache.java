@@ -61,7 +61,7 @@ import com.enonic.xp.security.auth.AuthenticationInfo;
 public final class SitemapCache
     implements EventListener
 {
-    static final int MAX_ENTRIES = 100;
+    static final int MAX_PER_SITE = 10;
 
     static final int MAX_WAITING = 10;
 
@@ -179,10 +179,7 @@ public final class SitemapCache
                 return current;
             }
 
-            if ( entries.size() > MAX_ENTRIES )
-            {
-                evictOverflow();
-            }
+            evictOverflow( key );
             generate( key, entry, Duration.ZERO, false );
             if ( !waiting.tryAcquire() )
             {
@@ -435,7 +432,7 @@ public final class SitemapCache
                 Objects.requireNonNull( older.sitemap ).delete();
             }
         }
-        evictOverflow();
+        List.copyOf( entries.keySet() ).forEach( this::evictOverflow );
         LOG.debug( "Restored {} sitemaps", entries.size() );
     }
 
@@ -499,15 +496,17 @@ public final class SitemapCache
     }
 
     /**
-     * Removes the least recently used generated sitemaps. Sitemaps that requests are waiting for are kept.
+     * Removes the least recently used generated sitemaps of the site of the given key beyond {@value #MAX_PER_SITE}: a site is
+     * requested through a few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps that requests are
+     * waiting for are kept.
      */
-    private void evictOverflow()
+    private void evictOverflow( final Key key )
     {
-        entries.entrySet()
-            .stream()
+        final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSite( key ) ).collect( Collectors.toList() );
+        site.stream()
             .filter( e -> e.getValue().sitemap != null )
             .sorted( Map.Entry.comparingByValue( ( a, b ) -> a.lastAccess.compareTo( b.lastAccess ) ) )
-            .limit( Math.max( 0, entries.size() - MAX_ENTRIES ) )
+            .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
             .collect( Collectors.toList() )
             .forEach( e -> remove( e.getKey(), e.getValue() ) );
     }
@@ -601,6 +600,12 @@ public final class SitemapCache
         public String toString()
         {
             return repositoryId + " " + branch + " " + params.sitePath();
+        }
+
+        boolean isSameSite( final Key other )
+        {
+            return repositoryId.equals( other.repositoryId ) && branch.equals( other.branch ) &&
+                params.sitePath().equals( other.params.sitePath() );
         }
 
         void store( final JsonGenerator json )
