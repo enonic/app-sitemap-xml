@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
@@ -243,21 +242,31 @@ public final class Sitemap
     }
 
     /**
-     * Describes the sitemap in the given properties, for {@link #restore} to read the sitemap back from its directory.
+     * Writes a description of the sitemap, for {@link #restore} to read the sitemap back from its directory.
      */
-    void store( final Properties properties )
+    void store( final JsonGenerator json )
+        throws IOException
     {
-        properties.setProperty( "sitemap.size", Integer.toString( size ) );
-        properties.setProperty( "sitemap.files", Integer.toString( lastModified.size() ) );
-        for ( int i = 0; i < lastModified.size(); i++ )
+        json.writeStartObject();
+        json.writeNumberField( "size", size );
+        json.writeArrayFieldStart( "files" );
+        for ( final Instant lastmod : lastModified )
         {
-            final Instant lastmod = lastModified.get( i );
+            json.writeStartObject();
             if ( lastmod != null )
             {
-                properties.setProperty( "sitemap.lastmod." + ( i + 1 ), lastmod.toString() );
+                json.writeStringField( "lastmod", lastmod.toString() );
             }
+            json.writeEndObject();
         }
-        plainSizes.forEach( ( name, bytes ) -> properties.setProperty( "sitemap.bytes." + name, Long.toString( bytes ) ) );
+        json.writeEndArray();
+        json.writeObjectFieldStart( "bytes" );
+        for ( final Map.Entry<String, Long> file : plainSizes.entrySet() )
+        {
+            json.writeNumberField( file.getKey(), file.getValue() );
+        }
+        json.writeEndObject();
+        json.writeEndObject();
     }
 
     /**
@@ -265,38 +274,25 @@ public final class Sitemap
      *
      * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path directory, final Properties properties )
+    static Sitemap restore( final Path directory, final Map<String, ?> description )
     {
         if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
         {
             throw new IllegalArgumentException( "No sitemap in " + directory );
         }
-        final int files = Integer.parseInt( required( properties, "sitemap.files" ) );
         final List<Instant> lastModified = new ArrayList<>();
-        for ( int number = 1; number <= files; number++ )
+        for ( final Object file : Json.list( description, "files" ) )
         {
-            final String lastmod = properties.getProperty( "sitemap.lastmod." + number );
+            final String lastmod = Json.optionalString( Json.object( file ), "lastmod" );
             lastModified.add( lastmod == null ? null : Instant.parse( lastmod ) );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
-        for ( final String property : properties.stringPropertyNames() )
+        final Map<String, ?> bytes = Json.object( description.get( "bytes" ) );
+        for ( final String name : bytes.keySet() )
         {
-            if ( property.startsWith( "sitemap.bytes." ) )
-            {
-                plainSizes.put( property.substring( "sitemap.bytes.".length() ), Long.parseLong( properties.getProperty( property ) ) );
-            }
+            plainSizes.put( name, Json.number( bytes, name ) );
         }
-        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified );
-    }
-
-    private static String required( final Properties properties, final String name )
-    {
-        final String value = properties.getProperty( name );
-        if ( value == null )
-        {
-            throw new IllegalArgumentException( "Missing " + name );
-        }
-        return value;
+        return new Sitemap( directory, (int) Json.number( description, "size" ), plainSizes, lastModified );
     }
 
     Path directory()

@@ -1,8 +1,6 @@
 package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -14,8 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Properties;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -37,6 +35,8 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.JsonGenerator;
 
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
@@ -71,9 +71,9 @@ public final class SitemapCache
 
     static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
 
-    static final String ENTRY_FILE = "entry.properties";
+    static final String ENTRY_FILE = "entry.json";
 
-    private static final String FORMAT = "1";
+    private static final int FORMAT = 1;
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
@@ -99,7 +99,7 @@ public final class SitemapCache
             final Thread thread = new Thread( runnable, "sitemapxml-generator" );
             thread.setDaemon( true );
             return thread;
-        } ), Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "com.enonic.app.sitemapxml" ) );
+        } ), Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
     }
 
     SitemapCache( final ScheduledExecutorService generator, final Clock clock, final Duration regenerationDelay,
@@ -347,25 +347,26 @@ public final class SitemapCache
      */
     private static void persist( final Key key, final Entry entry, final Sitemap sitemap )
     {
-        final Properties properties = new Properties();
-        properties.setProperty( "format", FORMAT );
-        key.store( properties );
-        properties.setProperty( "background", Boolean.toString( entry.background ) );
-        properties.setProperty( "lastAccess", entry.lastAccess.toString() );
-        final Instant validUntil = entry.validUntil;
-        if ( validUntil != null )
-        {
-            properties.setProperty( "validUntil", validUntil.toString() );
-        }
-        sitemap.store( properties );
-
         final Path file = sitemap.directory().resolve( ENTRY_FILE );
         final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
         try
         {
-            try (OutputStream out = Files.newOutputStream( temporary ))
+            try (JsonGenerator json = Sitemap.JSON.createGenerator( Files.newOutputStream( temporary ) ))
             {
-                properties.store( out, null );
+                json.writeStartObject();
+                json.writeNumberField( "format", FORMAT );
+                json.writeFieldName( "key" );
+                key.store( json );
+                json.writeBooleanField( "background", entry.background );
+                json.writeStringField( "lastAccess", entry.lastAccess.toString() );
+                final Instant validUntil = entry.validUntil;
+                if ( validUntil != null )
+                {
+                    json.writeStringField( "validUntil", validUntil.toString() );
+                }
+                json.writeFieldName( "sitemap" );
+                sitemap.store( json );
+                json.writeEndObject();
             }
             Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
         }
@@ -423,20 +424,19 @@ public final class SitemapCache
         {
             return null;
         }
-        try (InputStream in = Files.newInputStream( file ))
+        try
         {
-            final Properties properties = new Properties();
-            properties.load( in );
-            if ( !FORMAT.equals( properties.getProperty( "format" ) ) )
+            final Map<String, ?> description = Json.readObject( file );
+            if ( Json.number( description, "format" ) != FORMAT )
             {
                 return null;
             }
-            final Key key = Key.restore( properties );
-            final Entry entry = new Entry( Instant.parse( properties.getProperty( "lastAccess" ) ) );
-            entry.background = Boolean.parseBoolean( properties.getProperty( "background" ) );
-            final String validUntil = properties.getProperty( "validUntil" );
+            final Key key = Key.restore( Json.object( description.get( "key" ) ) );
+            final Entry entry = new Entry( Instant.parse( Json.string( description, "lastAccess" ) ) );
+            entry.background = Json.bool( description, "background" );
+            final String validUntil = Json.optionalString( description, "validUntil" );
             entry.validUntil = validUntil == null ? null : Instant.parse( validUntil );
-            final Sitemap sitemap = Sitemap.restore( directory, properties );
+            final Sitemap sitemap = Sitemap.restore( directory, Json.object( description.get( "sitemap" ) ) );
             entry.sitemap = sitemap;
             entry.ready.complete( sitemap );
             return Map.entry( key, entry );
@@ -581,67 +581,55 @@ public final class SitemapCache
             return repositoryId + " " + branch + " " + params.sitePath();
         }
 
-        void store( final Properties properties )
+        void store( final JsonGenerator json )
+            throws IOException
         {
-            properties.setProperty( "repository", repositoryId );
-            properties.setProperty( "branch", branch );
-            storeList( properties, "principal", List.copyOf( principals ) );
-            properties.setProperty( "sitePath", params.sitePath() );
-            properties.setProperty( "siteUrl", params.siteUrl() );
-            final List<ContentTypeSetting> contentTypes = params.contentTypes();
-            for ( int i = 0; i < contentTypes.size(); i++ )
+            json.writeStartObject();
+            json.writeStringField( "repository", repositoryId );
+            json.writeStringField( "branch", branch );
+            json.writeArrayFieldStart( "principals" );
+            for ( final String principal : new TreeSet<>( principals ) )
             {
-                properties.setProperty( "contentType." + i, contentTypes.get( i ).contentType() );
-                properties.setProperty( "changefreq." + i, contentTypes.get( i ).changefreq() );
-                properties.setProperty( "priority." + i, contentTypes.get( i ).priority() );
+                json.writeString( principal );
             }
-            storeList( properties, "ignorePattern", params.ignorePatterns() );
-            properties.setProperty( "maxItems", Integer.toString( params.maxItems() ) );
+            json.writeEndArray();
+            json.writeStringField( "sitePath", params.sitePath() );
+            json.writeStringField( "siteUrl", params.siteUrl() );
+            json.writeArrayFieldStart( "contentTypes" );
+            for ( final ContentTypeSetting setting : params.contentTypes() )
+            {
+                json.writeStartObject();
+                json.writeStringField( "contentType", setting.contentType() );
+                json.writeStringField( "changefreq", setting.changefreq() );
+                json.writeStringField( "priority", setting.priority() );
+                json.writeEndObject();
+            }
+            json.writeEndArray();
+            json.writeArrayFieldStart( "ignorePatterns" );
+            for ( final String pattern : params.ignorePatterns() )
+            {
+                json.writeString( pattern );
+            }
+            json.writeEndArray();
+            json.writeNumberField( "maxItems", params.maxItems() );
+            json.writeEndObject();
         }
 
-        static Key restore( final Properties properties )
+        static Key restore( final Map<String, ?> key )
         {
             final List<ContentTypeSetting> contentTypes = new ArrayList<>();
-            for ( int i = 0; properties.getProperty( "contentType." + i ) != null; i++ )
+            for ( final Object item : Json.list( key, "contentTypes" ) )
             {
-                contentTypes.add( new ContentTypeSetting( properties.getProperty( "contentType." + i ),
-                                                          properties.getProperty( "changefreq." + i, "" ),
-                                                          properties.getProperty( "priority." + i, "" ) ) );
+                final Map<String, ?> setting = Json.object( item );
+                contentTypes.add( new ContentTypeSetting( Json.string( setting, "contentType" ), Json.string( setting, "changefreq" ),
+                                                          Json.string( setting, "priority" ) ) );
             }
             final SitemapParams params =
-                new SitemapParams( required( properties, "sitePath" ), required( properties, "siteUrl" ), contentTypes,
-                                   restoreList( properties, "ignorePattern" ),
-                                   Integer.parseInt( required( properties, "maxItems" ) ) );
-            return new Key( required( properties, "repository" ), required( properties, "branch" ),
-                            Set.copyOf( restoreList( properties, "principal" ) ), params );
-        }
-
-        private static void storeList( final Properties properties, final String name, final List<String> values )
-        {
-            for ( int i = 0; i < values.size(); i++ )
-            {
-                properties.setProperty( name + "." + i, values.get( i ) );
-            }
-        }
-
-        private static List<String> restoreList( final Properties properties, final String name )
-        {
-            final List<String> values = new ArrayList<>();
-            for ( int i = 0; properties.getProperty( name + "." + i ) != null; i++ )
-            {
-                values.add( properties.getProperty( name + "." + i ) );
-            }
-            return values;
-        }
-
-        private static String required( final Properties properties, final String name )
-        {
-            final String value = properties.getProperty( name );
-            if ( value == null )
-            {
-                throw new IllegalArgumentException( "Missing " + name );
-            }
-            return value;
+                new SitemapParams( Json.string( key, "sitePath" ), Json.string( key, "siteUrl" ), contentTypes,
+                                   Json.strings( key, "ignorePatterns" ),
+                                   (int) Json.number( key, "maxItems" ) );
+            return new Key( Json.string( key, "repository" ), Json.string( key, "branch" ),
+                            Set.copyOf( Json.strings( key, "principals" ) ), params );
         }
     }
 
