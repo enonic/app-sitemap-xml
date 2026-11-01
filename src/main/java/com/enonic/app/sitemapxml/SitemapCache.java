@@ -134,7 +134,7 @@ public final class SitemapCache
         while ( true )
         {
             final Instant now = clock.instant();
-            final Entry entry = entries.computeIfAbsent( key, k -> new Entry( storage.resolve( UUID.randomUUID().toString() ), now ) );
+            final Entry entry = entries.computeIfAbsent( key, k -> new Entry( now ) );
             entry.lastAccess = now;
             entry.background = background;
             if ( entry.source == null )
@@ -289,6 +289,7 @@ public final class SitemapCache
     {
         if ( entries.remove( key, entry ) )
         {
+            final Sitemap sitemap;
             synchronized ( entry )
             {
                 entry.removed = true;
@@ -298,31 +299,37 @@ public final class SitemapCache
                     generation.cancel();
                     entry.generation = null;
                 }
-                deleteFile( entry.directory.resolve( ENTRY_FILE ) );
+                sitemap = entry.sitemap;
             }
             entry.ready.completeExceptionally( new CancellationException( "Sitemap removed" ) );
-            deleteLater( entry.directory );
+            if ( sitemap != null )
+            {
+                retire( sitemap );
+            }
             LOG.debug( "Removed sitemap {}", key );
         }
     }
 
     /**
-     * Deletes the files later: requests may still be reading them.
+     * Stops the sitemap from being restored after a restart, and deletes its files later: requests may still be reading them.
      */
-    private void deleteLater( final Path directory )
+    private void retire( final Sitemap sitemap )
     {
+        deleteFile( sitemap.directory().resolve( ENTRY_FILE ) );
         try
         {
-            generator.schedule( () -> Sitemap.delete( directory ), fileRetention.toMillis(), TimeUnit.MILLISECONDS );
+            final Runnable delete = sitemap::delete;
+            generator.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
         }
         catch ( RejectedExecutionException e )
         {
-            Sitemap.delete( directory );
+            sitemap.delete();
         }
     }
 
     /**
-     * Writes the key and the description of the sitemap of the entry, replacing the previous ones at once.
+     * Writes the key and the description of the sitemap next to its files. The file appears at once and complete, so a sitemap
+     * directory without it is an unfinished generation.
      */
     private static void persist( final Key key, final Entry entry, final Sitemap sitemap )
     {
@@ -338,15 +345,15 @@ public final class SitemapCache
         }
         sitemap.store( properties );
 
-        final Path file = entry.directory.resolve( ENTRY_FILE );
-        final Path temporary = entry.directory.resolve( ENTRY_FILE + ".tmp" );
+        final Path file = sitemap.directory().resolve( ENTRY_FILE );
+        final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
         try
         {
             try (OutputStream out = Files.newOutputStream( temporary ))
             {
                 properties.store( out, null );
             }
-            Files.move( temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE );
+            Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
         }
         catch ( IOException e )
         {
@@ -357,7 +364,7 @@ public final class SitemapCache
 
     /**
      * Reads back the sitemaps kept on disk. Content may have changed since they were generated, so they are generated again when
-     * requested. Files of unfinished generations and replaced sitemaps are deleted.
+     * requested. Files of unfinished generations are deleted, and of two sitemaps with the same key the older one.
      */
     private void restore()
     {
@@ -385,21 +392,6 @@ public final class SitemapCache
                 continue;
             }
             final Entry entry = restored.getValue();
-            final Path current = Objects.requireNonNull( entry.sitemap ).directory();
-            try (Stream<Path> list = Files.list( directory ))
-            {
-                for ( final Path path : list.toList() )
-                {
-                    if ( !path.equals( current ) && !path.getFileName().toString().equals( ENTRY_FILE ) )
-                    {
-                        Sitemap.delete( path );
-                    }
-                }
-            }
-            catch ( IOException e )
-            {
-                LOG.debug( "Could not clean {}", directory, e );
-            }
             final Entry other = entries.get( restored.getKey() );
             if ( other == null || other.lastAccess.isBefore( entry.lastAccess ) )
             {
@@ -407,7 +399,7 @@ public final class SitemapCache
             }
             if ( other != null )
             {
-                Sitemap.delete( entries.get( restored.getKey() ) == other ? directory : other.directory );
+                Objects.requireNonNull( ( entries.get( restored.getKey() ) == other ? entry : other ).sitemap ).delete();
             }
         }
         evictOverflow();
@@ -430,7 +422,7 @@ public final class SitemapCache
                 return null;
             }
             final Key key = Key.restore( properties );
-            final Entry entry = new Entry( directory, Instant.parse( properties.getProperty( "lastAccess" ) ) );
+            final Entry entry = new Entry( Instant.parse( properties.getProperty( "lastAccess" ) ) );
             entry.background = Boolean.parseBoolean( properties.getProperty( "background" ) );
             final String validUntil = properties.getProperty( "validUntil" );
             entry.validUntil = validUntil == null ? null : Instant.parse( validUntil );
@@ -633,7 +625,7 @@ public final class SitemapCache
                 }
                 final Instant validUntil;
                 final Sitemap sitemap;
-                try (Sitemap.Builder builder = Sitemap.builder( entry.directory.resolve( UUID.randomUUID().toString() ), key.params() ))
+                try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( UUID.randomUUID().toString() ), key.params() ))
                 {
                     validUntil = ContextBuilder.create()
                         .repositoryId( key.repositoryId() )
@@ -682,7 +674,7 @@ public final class SitemapCache
             entry.ready.complete( sitemap );
             if ( previous != null )
             {
-                deleteLater( previous.directory() );
+                retire( previous );
             }
             LOG.debug( "Generated sitemap {}", key );
 
@@ -703,10 +695,7 @@ public final class SitemapCache
             }
             if ( entry.sitemap == null )
             {
-                if ( entries.remove( key, entry ) )
-                {
-                    Sitemap.delete( entry.directory );
-                }
+                entries.remove( key, entry );
                 entry.ready.completeExceptionally( e );
             }
             else
@@ -718,11 +707,6 @@ public final class SitemapCache
 
     private static final class Entry
     {
-        /**
-         * Holds the sitemaps of the entry, and the description of the current one.
-         */
-        final Path directory;
-
         final CompletableFuture<Sitemap> ready = new CompletableFuture<>();
 
         /**
@@ -751,9 +735,8 @@ public final class SitemapCache
 
         volatile boolean removed;
 
-        Entry( final Path directory, final Instant now )
+        Entry( final Instant now )
         {
-            this.directory = directory;
             this.lastAccess = now;
         }
 
