@@ -20,10 +20,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
@@ -247,33 +249,27 @@ public final class Sitemap
     }
 
     /**
-     * Writes a description of the sitemap, for {@link #restore} to read the sitemap back from its directory.
+     * Describes the sitemap, for {@link #restore} to read the sitemap back from its directory.
      */
-    void store( final JsonGenerator json )
-        throws IOException
+    Map<String, Object> store()
     {
-        json.writeStartObject();
-        json.writeNumberField( "size", size );
-        json.writeArrayFieldStart( "files" );
+        final List<Map<String, Object>> files = new ArrayList<>();
         for ( int i = 0; i < lastModified.size(); i++ )
         {
-            json.writeStartObject();
+            final Map<String, Object> file = new LinkedHashMap<>();
             final Instant lastmod = lastModified.get( i );
             if ( lastmod != null )
             {
-                json.writeStringField( "lastmod", lastmod.toString() );
+                file.put( "lastmod", lastmod.toString() );
             }
-            json.writeStringField( "digest", digests.get( i ) );
-            json.writeEndObject();
+            file.put( "digest", digests.get( i ) );
+            files.add( file );
         }
-        json.writeEndArray();
-        json.writeObjectFieldStart( "bytes" );
-        for ( final Map.Entry<String, Long> file : plainSizes.entrySet() )
-        {
-            json.writeNumberField( file.getKey(), file.getValue() );
-        }
-        json.writeEndObject();
-        json.writeEndObject();
+        final Map<String, Object> description = new LinkedHashMap<>();
+        description.put( "size", size );
+        description.put( "files", files );
+        description.put( "bytes", new TreeMap<>( plainSizes ) );
+        return description;
     }
 
     /**

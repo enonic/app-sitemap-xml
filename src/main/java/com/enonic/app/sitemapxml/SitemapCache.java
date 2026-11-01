@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,8 +37,6 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.fasterxml.jackson.core.JsonGenerator;
 
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
@@ -396,23 +395,18 @@ public final class SitemapCache
         final Path temporary = sitemap.directory().resolve( ENTRY_FILE + ".tmp" );
         try
         {
-            try (JsonGenerator json = Sitemap.JSON.createGenerator( Files.newOutputStream( temporary ) ))
+            final Map<String, Object> description = new LinkedHashMap<>();
+            description.put( "format", FORMAT );
+            description.put( "key", key.store() );
+            description.put( "background", entry.background );
+            description.put( "lastAccess", entry.lastAccess.toString() );
+            final Instant validUntil = entry.validUntil;
+            if ( validUntil != null )
             {
-                json.writeStartObject();
-                json.writeNumberField( "format", FORMAT );
-                json.writeFieldName( "key" );
-                key.store( json );
-                json.writeBooleanField( "background", entry.background );
-                json.writeStringField( "lastAccess", entry.lastAccess.toString() );
-                final Instant validUntil = entry.validUntil;
-                if ( validUntil != null )
-                {
-                    json.writeStringField( "validUntil", validUntil.toString() );
-                }
-                json.writeFieldName( "sitemap" );
-                sitemap.store( json );
-                json.writeEndObject();
+                description.put( "validUntil", validUntil.toString() );
             }
+            description.put( "sitemap", sitemap.store() );
+            Json.writeObject( description, temporary );
             Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
         }
         catch ( IOException e )
@@ -639,38 +633,27 @@ public final class SitemapCache
                 params.sitePath().equals( other.params.sitePath() ) && principals.equals( other.principals );
         }
 
-        void store( final JsonGenerator json )
-            throws IOException
+        Map<String, Object> store()
         {
-            json.writeStartObject();
-            json.writeStringField( "repository", repositoryId );
-            json.writeStringField( "branch", branch );
-            json.writeArrayFieldStart( "principals" );
-            for ( final String principal : new TreeSet<>( principals ) )
-            {
-                json.writeString( principal );
-            }
-            json.writeEndArray();
-            json.writeStringField( "sitePath", params.sitePath() );
-            json.writeStringField( "siteUrl", params.siteUrl() );
-            json.writeArrayFieldStart( "contentTypes" );
+            final List<Map<String, Object>> contentTypes = new ArrayList<>();
             for ( final ContentTypeSetting setting : params.contentTypes() )
             {
-                json.writeStartObject();
-                json.writeStringField( "contentType", setting.contentType() );
-                json.writeStringField( "changefreq", setting.changefreq() );
-                json.writeStringField( "priority", setting.priority() );
-                json.writeEndObject();
+                final Map<String, Object> item = new LinkedHashMap<>();
+                item.put( "contentType", setting.contentType() );
+                item.put( "changefreq", setting.changefreq() );
+                item.put( "priority", setting.priority() );
+                contentTypes.add( item );
             }
-            json.writeEndArray();
-            json.writeArrayFieldStart( "ignorePatterns" );
-            for ( final String pattern : params.ignorePatterns() )
-            {
-                json.writeString( pattern );
-            }
-            json.writeEndArray();
-            json.writeNumberField( "maxItems", params.maxItems() );
-            json.writeEndObject();
+            final Map<String, Object> key = new LinkedHashMap<>();
+            key.put( "repository", repositoryId );
+            key.put( "branch", branch );
+            key.put( "principals", new ArrayList<>( new TreeSet<>( principals ) ) );
+            key.put( "sitePath", params.sitePath() );
+            key.put( "siteUrl", params.siteUrl() );
+            key.put( "contentTypes", contentTypes );
+            key.put( "ignorePatterns", params.ignorePatterns() );
+            key.put( "maxItems", params.maxItems() );
+            return key;
         }
 
         static Key restore( final Map<String, ?> key )

@@ -1,17 +1,18 @@
 package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.jr.ob.JSON;
 
 /**
- * Reads small JSON files into maps and lists, and takes typed values out of them.
+ * Reads and writes small JSON files as maps and lists, and takes typed values out of them.
  */
 final class Json
 {
@@ -22,13 +23,18 @@ final class Json
     static Map<String, Object> readObject( final Path file )
         throws IOException
     {
-        try (JsonParser parser = Sitemap.JSON.createParser( file.toFile() ))
+        try (InputStream in = Files.newInputStream( file ))
         {
-            if ( parser.nextToken() != JsonToken.START_OBJECT )
-            {
-                throw new IOException( "Not a JSON object: " + file );
-            }
-            return readObject( parser );
+            return JSON.std.mapFrom( in );
+        }
+    }
+
+    static void writeObject( final Map<String, ?> object, final Path file )
+        throws IOException
+    {
+        try (OutputStream out = Files.newOutputStream( file ))
+        {
+            JSON.std.write( object, out );
         }
     }
 
@@ -50,11 +56,11 @@ final class Json
     static long number( final Map<String, ?> object, final String name )
     {
         final Object value = object.get( name );
-        if ( !( value instanceof Long ) )
+        if ( !( value instanceof Integer || value instanceof Long ) )
         {
             throw new IllegalArgumentException( "No number " + name );
         }
-        return (Long) value;
+        return ( (Number) value ).longValue();
     }
 
     static boolean bool( final Map<String, ?> object, final String name )
@@ -94,54 +100,5 @@ final class Json
             strings.add( (String) value );
         }
         return strings;
-    }
-
-    private static Map<String, Object> readObject( final JsonParser parser )
-        throws IOException
-    {
-        final Map<String, Object> object = new HashMap<>();
-        while ( parser.nextToken() == JsonToken.FIELD_NAME )
-        {
-            final String name = parser.currentName();
-            parser.nextToken();
-            object.put( name, readValue( parser ) );
-        }
-        return object;
-    }
-
-    private static Object readValue( final JsonParser parser )
-        throws IOException
-    {
-        final JsonToken token = parser.currentToken();
-        if ( token == JsonToken.START_OBJECT )
-        {
-            return readObject( parser );
-        }
-        if ( token == JsonToken.START_ARRAY )
-        {
-            final List<Object> list = new ArrayList<>();
-            while ( parser.nextToken() != JsonToken.END_ARRAY )
-            {
-                list.add( readValue( parser ) );
-            }
-            return list;
-        }
-        if ( token == JsonToken.VALUE_STRING )
-        {
-            return parser.getText();
-        }
-        if ( token == JsonToken.VALUE_NUMBER_INT )
-        {
-            return parser.getLongValue();
-        }
-        if ( token == JsonToken.VALUE_TRUE || token == JsonToken.VALUE_FALSE )
-        {
-            return parser.getBooleanValue();
-        }
-        if ( token == JsonToken.VALUE_NULL )
-        {
-            return null;
-        }
-        throw new IOException( "Unexpected " + token );
     }
 }
