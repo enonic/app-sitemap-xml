@@ -21,14 +21,18 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import org.jspecify.annotations.Nullable;
@@ -53,9 +57,10 @@ import com.enonic.xp.security.auth.AuthenticationInfo;
  * Generated sitemaps. A sitemap is served until a newer one of the same site replaces it, also when its content changed in the
  * meantime and across restarts: its files and a description of them are kept on disk.
  * <p>
- * Sitemaps are generated one at a time, in the order they are requested. There is no limit on how many generations are queued, but
- * when more than {@value #MAX_WAITING} requests are already waiting for sitemaps that are not generated yet, further such requests get
- * {@link SitemapBusyException}. Requests for generated sitemaps are always answered right away.
+ * Sitemaps of a project are generated one at a time, in the order they are requested; different projects generate in parallel. There
+ * is no limit on how many generations are queued, but when more than {@value #MAX_WAITING} requests are already waiting for sitemaps
+ * that are not generated yet, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps are always
+ * answered right away.
  * <p>
  * A sitemap whose URLs do not depend on the request (the site has a Base URL) is generated again in the background a few seconds after
  * its content changes, unless it was not requested for {@link #IDLE_TIMEOUT}. Other sitemaps, and all sitemaps kept from before a restart,
@@ -82,6 +87,8 @@ public final class SitemapCache
 
     static final Duration STOP_TIMEOUT = Duration.ofSeconds( 30 );
 
+    static final Duration GENERATOR_KEEP_ALIVE = Duration.ofMinutes( 1 );
+
     static final String ENTRY_FILE = "entry.json";
 
     private static final int FORMAT = 1;
@@ -96,7 +103,13 @@ public final class SitemapCache
 
     private final Semaphore waiting = new Semaphore( MAX_WAITING );
 
-    private final ScheduledExecutorService generator;
+    private final ScheduledExecutorService scheduler;
+
+    private final Function<String, ExecutorService> generatorFactory;
+
+    private final ConcurrentMap<String, ExecutorService> generators = new ConcurrentHashMap<>();
+
+    private volatile boolean stopped;
 
     private final Clock clock;
 
@@ -109,16 +122,17 @@ public final class SitemapCache
     public SitemapCache()
     {
         this( Executors.newSingleThreadScheduledExecutor( runnable -> {
-            final Thread thread = new Thread( runnable, "sitemapxml-generator" );
+            final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
             thread.setDaemon( true );
             return thread;
-        } ), Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
+        } ), SitemapCache::newGenerator, Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
     }
 
-    SitemapCache( final ScheduledExecutorService generator, final Clock clock, final Duration regenerationDelay,
-                  final Duration fileRetention, final Path storage )
+    SitemapCache( final ScheduledExecutorService scheduler, final Function<String, ExecutorService> generatorFactory, final Clock clock,
+                  final Duration regenerationDelay, final Duration fileRetention, final Path storage )
     {
-        this.generator = generator;
+        this.scheduler = scheduler;
+        this.generatorFactory = generatorFactory;
         this.clock = clock;
         this.regenerationDelay = regenerationDelay;
         this.fileRetention = fileRetention;
@@ -127,12 +141,29 @@ public final class SitemapCache
     }
 
     /**
-     * Stops generating, and waits for a running generation to halt, so that a new instance finds no generation writing to disk.
+     * A single generator thread for the given repository: sitemaps of a project are generated one at a time, those of different
+     * projects in parallel. The thread ends when idle.
+     */
+    static ExecutorService newGenerator( final String repositoryId )
+    {
+        final ThreadPoolExecutor executor =
+            new ThreadPoolExecutor( 1, 1, GENERATOR_KEEP_ALIVE.toMillis(), TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), runnable -> {
+                final Thread thread = new Thread( runnable, "sitemapxml-generator-" + repositoryId );
+                thread.setDaemon( true );
+                return thread;
+            } );
+        executor.allowCoreThreadTimeOut( true );
+        return executor;
+    }
+
+    /**
+     * Stops generating, and waits for running generations to halt, so that a new instance finds no generation writing to disk.
      * Generated sitemaps stay on disk, to be served after a restart.
      */
     @Deactivate
     public void deactivate()
     {
+        stopped = true;
         for ( final Entry entry : entries.values() )
         {
             final Generation generation = entry.generation;
@@ -143,12 +174,18 @@ public final class SitemapCache
             entry.ready.completeExceptionally( new CancellationException( "Sitemaps stopped" ) );
         }
         entries.clear();
-        generator.shutdownNow();
+        scheduler.shutdownNow();
+        generators.values().forEach( ExecutorService::shutdownNow );
+        final long deadline = System.nanoTime() + STOP_TIMEOUT.toNanos();
         try
         {
-            if ( !generator.awaitTermination( STOP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS ) )
+            for ( final ExecutorService executor : Stream.concat( Stream.of( scheduler ), generators.values().stream() ).toList() )
             {
-                LOG.warn( "Sitemap generation still running after {}", STOP_TIMEOUT );
+                if ( !executor.awaitTermination( deadline - System.nanoTime(), TimeUnit.NANOSECONDS ) )
+                {
+                    LOG.warn( "Sitemap generation still running after {}", STOP_TIMEOUT );
+                    return;
+                }
             }
         }
         catch ( InterruptedException e )
@@ -325,11 +362,18 @@ public final class SitemapCache
             {
                 return;
             }
-            final Generation generation = new Generation( key, entry );
+            final Generation generation = new Generation( key, entry, delay );
             entry.generation = generation;
             try
             {
-                generation.future = generator.schedule( generation, delay.toMillis(), TimeUnit.MILLISECONDS );
+                if ( delay.isNegative() || delay.isZero() )
+                {
+                    generator( key ).execute( generation );
+                }
+                else
+                {
+                    generation.future = scheduler.schedule( generation::start, delay.toMillis(), TimeUnit.MILLISECONDS );
+                }
             }
             catch ( RejectedExecutionException e )
             {
@@ -337,6 +381,15 @@ public final class SitemapCache
                 entry.ready.completeExceptionally( e );
             }
         }
+    }
+
+    private ExecutorService generator( final Key key )
+    {
+        if ( stopped )
+        {
+            throw new RejectedExecutionException( "Sitemaps stopped" );
+        }
+        return generators.computeIfAbsent( key.repositoryId(), generatorFactory );
     }
 
     private void remove( final Key key, final Entry entry )
@@ -373,7 +426,7 @@ public final class SitemapCache
         try
         {
             final Runnable delete = sitemap::delete;
-            generator.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
+            scheduler.schedule( delete, fileRetention.toMillis(), TimeUnit.MILLISECONDS );
         }
         catch ( RejectedExecutionException e )
         {
@@ -626,6 +679,8 @@ public final class SitemapCache
 
         final Entry entry;
 
+        final long due;
+
         volatile @Nullable ScheduledFuture<?> future;
 
         volatile boolean started;
@@ -637,16 +692,28 @@ public final class SitemapCache
          */
         long changes;
 
-        Generation( final Key key, final Entry entry )
+        Generation( final Key key, final Entry entry, final Duration delay )
         {
             this.key = key;
             this.entry = entry;
+            this.due = System.nanoTime() + delay.toNanos();
         }
 
         boolean startsWithin( final Duration delay )
         {
-            final ScheduledFuture<?> scheduled = future;
-            return scheduled != null && scheduled.getDelay( TimeUnit.MILLISECONDS ) <= delay.toMillis();
+            return due - System.nanoTime() <= delay.toNanos();
+        }
+
+        void start()
+        {
+            try
+            {
+                generator( key ).execute( this );
+            }
+            catch ( RejectedExecutionException e )
+            {
+                LOG.debug( "Generation of sitemap {} not started", key, e );
+            }
         }
 
         void cancel()

@@ -66,7 +66,7 @@ class SitemapCacheTest
     @BeforeEach
     void setUp()
     {
-        cache = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        cache = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
     }
 
     @AfterEach
@@ -129,7 +129,7 @@ class SitemapCacheTest
     @Test
     void backgroundSitemapIsRegeneratedAfterGracePeriodWhilePreviousIsServed()
     {
-        final SitemapCache delayed = new SitemapCache( executor, clock, Duration.ofMillis( 300 ), Duration.ZERO, storage );
+        final SitemapCache delayed = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ofMillis( 300 ), Duration.ZERO, storage );
         final Sitemap first = delayed.get( KEY, true, AUTH_INFO, this::generate );
 
         delayed.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
@@ -217,7 +217,7 @@ class SitemapCacheTest
     @Test
     void generatesUncachedSitemapInCallingThreadAndDeletesItLater()
     {
-        final SitemapCache retaining = new SitemapCache( executor, clock, Duration.ZERO, Duration.ofMillis( 200 ), storage );
+        final SitemapCache retaining = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ofMillis( 200 ), storage );
         final Thread caller = Thread.currentThread();
         final List<String> seen = new ArrayList<>();
 
@@ -349,6 +349,34 @@ class SitemapCacheTest
             assertThat( result.get( 5, TimeUnit.SECONDS ) ).isSameAs( results.getFirst().get() );
         }
         assertThat( generated ).hasValue( 1 );
+    }
+
+    @Test
+    void generatesSitemapsOfDifferentProjectsInParallel()
+        throws Exception
+    {
+        final SitemapCache parallel = new SitemapCache( executor, SitemapCache::newGenerator, clock, Duration.ZERO, Duration.ZERO, storage );
+        try
+        {
+            final CountDownLatch blocked = new CountDownLatch( 1 );
+            final CountDownLatch release = new CountDownLatch( 1 );
+            final Future<Sitemap> slow =
+                requests.submit( () -> parallel.get( key( "com.enonic.cms.slow" ), false, AUTH_INFO, ( sink, cancelled ) -> {
+                    blocked.countDown();
+                    await( release );
+                    return generate( sink, cancelled );
+                } ) );
+            assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
+
+            assertThat( parallel.get( key( "com.enonic.cms.fast" ), false, AUTH_INFO, this::generate ).size() ).isEqualTo( 1 );
+
+            release.countDown();
+            assertThat( slow.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
+        }
+        finally
+        {
+            parallel.deactivate();
+        }
     }
 
     @Test
@@ -495,7 +523,7 @@ class SitemapCacheTest
         final Sitemap first = cache.get( key, true, AUTH_INFO, this::generate );
         final String content = SitemapTest.text( first.root() );
 
-        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ofMinutes( 1 ), storage );
+        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ofMinutes( 1 ), storage );
         assertThat( restarted.size() ).isEqualTo( 1 );
         awaitIdle();
         assertThat( generated ).hasValue( 1 );
@@ -524,7 +552,7 @@ class SitemapCacheTest
         final Path stale = Files.createDirectories( storage.resolve( "stale" ) );
         Files.writeString( Files.createDirectories( storage.resolve( "broken" ) ).resolve( SitemapCache.ENTRY_FILE ), "format=1" );
 
-        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
 
         assertThat( restarted.size() ).isEqualTo( 1 );
         assertThat( unfinished ).doesNotExist();
@@ -547,7 +575,7 @@ class SitemapCacheTest
             }
         }
 
-        final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ZERO, storage );
+        final SitemapCache restarted = new SitemapCache( executor, repositoryId -> executor, clock, Duration.ZERO, Duration.ZERO, storage );
 
         assertThat( restarted.size() ).isEqualTo( 1 );
         assertThat( sitemapDirectories() ).containsExactly( newer.directory() );
