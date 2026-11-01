@@ -34,6 +34,8 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.core.io.SerializedString;
 import com.google.common.io.ByteSource;
 import com.google.common.io.MoreFiles;
@@ -62,8 +64,6 @@ public final class Sitemap
 
     static final String ROOT_FILE = "sitemap.xml";
 
-    static final String JSON_FILE = "sitemap.json";
-
     static final String PLAIN_INDEX_FILE = "sitemap-index.xml";
 
     static final JsonFactory JSON = new JsonFactory();
@@ -78,8 +78,12 @@ public final class Sitemap
 
     private final List<Instant> lastModified;
 
-    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified )
+    private final SitemapParams params;
+
+    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified,
+                     final SitemapParams params )
     {
+        this.params = params;
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -152,9 +156,75 @@ public final class Sitemap
         return validFile( number ).map( this::gzip );
     }
 
+    /**
+     * All URLs of the sitemap as a JSON array of {@code {"changefreq", "lastmod", "priority", "loc"}}, built from the stored path-based
+     * entries.
+     */
     public ByteSource json()
     {
-        return plain( JSON_FILE );
+        final SitemapRenderer renderer = new SitemapRenderer( params );
+        final String json = jsonArray( out -> {
+            for ( int number = 1; number <= lastModified.size(); number++ )
+            {
+                try (BufferedReader lines = new BufferedReader(
+                    new InputStreamReader( plain( urlsetFileName( number ) ).openStream(), StandardCharsets.UTF_8 ) ))
+                {
+                    String line;
+                    while ( ( line = lines.readLine() ) != null )
+                    {
+                        if ( !line.isEmpty() )
+                        {
+                            writeUrl( out, line, renderer );
+                        }
+                    }
+                }
+            }
+        } );
+        return ByteSource.wrap( json.getBytes( StandardCharsets.UTF_8 ) );
+    }
+
+    private static void writeUrl( final JsonGenerator out, final String urlsetEntry, final SitemapRenderer renderer )
+        throws IOException
+    {
+        String path = "/";
+        String lastmod = null;
+        String changefreq = SitemapParams.DEFAULT_CHANGEFREQ;
+        String priority = SitemapParams.DEFAULT_PRIORITY;
+        try (JsonParser entry = JSON.createParser( urlsetEntry ))
+        {
+            entry.nextToken();
+            while ( entry.nextToken() == JsonToken.FIELD_NAME )
+            {
+                final String field = entry.getCurrentName();
+                entry.nextToken();
+                switch ( field )
+                {
+                    case "path":
+                        path = entry.getText();
+                        break;
+                    case "lastmod":
+                        lastmod = entry.getText();
+                        break;
+                    case "changefreq":
+                        changefreq = entry.getText();
+                        break;
+                    case "priority":
+                        priority = entry.getText();
+                        break;
+                    default:
+                        entry.skipChildren();
+                }
+            }
+        }
+        out.writeStartObject();
+        out.writeStringField( "changefreq", changefreq );
+        if ( lastmod != null )
+        {
+            out.writeStringField( "lastmod", lastmod );
+        }
+        out.writeStringField( "priority", priority );
+        out.writeStringField( "loc", renderer.loc( new SitemapEntry( "/".equals( path ) ? "" : path, "", null ) ) );
+        out.writeEndObject();
     }
 
     public List<Instant> lastModified()
@@ -273,7 +343,7 @@ public final class Sitemap
      *
      * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path parent, final Properties properties )
+    static Sitemap restore( final Path parent, final Properties properties, final SitemapParams params )
     {
         final String name = required( properties, "sitemap.directory" );
         final Path directory = parent.resolve( name );
@@ -296,7 +366,7 @@ public final class Sitemap
                 plainSizes.put( property.substring( "sitemap.bytes.".length() ), Long.parseLong( properties.getProperty( property ) ) );
             }
         }
-        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified );
+        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified, params );
     }
 
     private static String required( final Properties properties, final String name )
@@ -476,10 +546,6 @@ public final class Sitemap
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
-        private final CountingWriter jsonFile;
-
-        private final JsonGenerator json;
-
         private CountingWriter file;
 
         private CountingWriter urlsetFile;
@@ -502,7 +568,6 @@ public final class Sitemap
 
         private Builder( final Path directory, final SitemapParams params, final int maxUrlsPerFile, final long maxFileBytes,
                         final int maxFiles )
-            throws IOException
         {
             this.directory = directory;
             this.params = params;
@@ -511,9 +576,6 @@ public final class Sitemap
             this.maxFileBytes = maxFileBytes;
             this.maxFiles = maxFiles;
             this.indexBytes = utf8Length( INDEX_START ) + utf8Length( INDEX_END );
-            this.jsonFile = open( JSON_FILE );
-            this.json = JSON.createGenerator( jsonFile );
-            this.json.writeStartArray();
         }
 
         public void add( final SitemapEntry entry )
@@ -534,7 +596,6 @@ public final class Sitemap
                 }
                 Objects.requireNonNull( file ).write( url );
                 renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
-                renderer.json( json, entry, loc );
                 fileUrls++;
                 lastModified.set( lastModified.size() - 1, latest( lastModified.get( lastModified.size() - 1 ), entry.lastModified() ) );
                 size++;
@@ -549,9 +610,6 @@ public final class Sitemap
         {
             try
             {
-                json.writeEndArray();
-                json.close();
-                plainSizes.put( JSON_FILE, jsonFile.bytes() );
                 closeFile();
                 if ( tooLong > 0 )
                 {
@@ -578,7 +636,7 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified );
+                return new Sitemap( directory, size, plainSizes, lastModified, params );
             }
             catch ( IOException e )
             {
@@ -680,7 +738,7 @@ public final class Sitemap
             {
                 return;
             }
-            for ( final Closeable closeable : new Closeable[]{json, file, urlset} )
+            for ( final Closeable closeable : new Closeable[]{file, urlset} )
             {
                 try
                 {

@@ -89,6 +89,23 @@ class SitemapTest
     }
 
     @Test
+    void jsonOfAllFilesWithDefaultsAndSiteRoot()
+    {
+        final SitemapParams params =
+            new SitemapParams( "/mysite", "https://example.com/", List.of( new ContentTypeSetting( "base:folder", "", "" ) ), List.of(),
+                               50_000 );
+        final Sitemap sitemap = write( params, 1, List.of( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ),
+                                                           new SitemapEntry( "/æ ø", "base:folder",
+                                                                             Instant.parse( "2024-02-02T09:01:33Z" ) ) ) );
+
+        assertThat( sitemap.fileCount() ).isEqualTo( 2 );
+        assertThat( text( sitemap.json() ) ).isEqualTo(
+            "[{\"changefreq\":\"hourly\",\"priority\":\"1.0\",\"loc\":\"https://example.com/\"}," +
+                "{\"changefreq\":\"monthly\",\"lastmod\":\"2024-02-02T09:01:33Z\",\"priority\":\"0.5\"," +
+                "\"loc\":\"https://example.com/%C3%A6%20%C3%B8\"}]" );
+    }
+
+    @Test
     void encodesPathSegmentsLikePortalUrls()
     {
         final StringBuilder out = new StringBuilder();
@@ -255,8 +272,7 @@ class SitemapTest
                                                                                                        "urlset-1.jsonl.gz",
                                                                                                        "urlset-2.jsonl.gz",
                                                                                                        "sitemap-1.xml.gz",
-                                                                                                       "sitemap-2.xml.gz",
-                                                                                                       "sitemap.json.gz" );
+                                                                                                       "sitemap-2.xml.gz" );
         }
         for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow(),
                                                 sitemap.json() ) )

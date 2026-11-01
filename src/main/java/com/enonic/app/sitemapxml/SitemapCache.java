@@ -445,7 +445,7 @@ public final class SitemapCache
             entry.background = Boolean.parseBoolean( properties.getProperty( "background" ) );
             final String validUntil = properties.getProperty( "validUntil" );
             entry.validUntil = validUntil == null ? null : Instant.parse( validUntil );
-            final Sitemap sitemap = Sitemap.restore( directory, properties );
+            final Sitemap sitemap = Sitemap.restore( directory, properties, key.params() );
             entry.sitemap = sitemap;
             entry.ready.complete( sitemap );
             return Map.entry( key, entry );
