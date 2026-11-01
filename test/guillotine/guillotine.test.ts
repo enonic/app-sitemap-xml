@@ -247,6 +247,8 @@ describe('guillotine extensions', () => {
 					source: null
 				});
 				expect(result.source).toEqual({baseUrl: projectConfig.overrideDomain});
+				const {run: runInContext} = await import('/lib/xp/context');
+				expect(jest.mocked(runInContext)).toHaveBeenCalledWith({principals: ['role:system.admin']}, expect.any(Function));
 				expect(result.localContext.siteJson).toBe('null');
 				expect(result.localContext.siteConfigJson).toBe(JSON.stringify(projectConfig));
 				const urls = urlsetResolver({
