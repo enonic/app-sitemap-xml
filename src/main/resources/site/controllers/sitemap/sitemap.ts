@@ -38,11 +38,15 @@ export function get(request: Request<{
 
 	const {overrideDomain = ''} = siteConfig;
 
-	const params = toSitemapParams({
-		sitePath: site._path,
-		siteUrl: getSiteUrl(site._path, overrideDomain),
-		siteConfig,
-	});
+	const params = {
+		...toSitemapParams({
+			sitePath: site._path,
+			siteUrl: getSiteUrl(site._path, overrideDomain),
+			siteConfig,
+		}),
+		// With a "Base URL" override the URLs do not depend on the request, so the sitemap can be generated in the background.
+		siteUrlFromRequest: !overrideDomain,
+	};
 
 	const bean = newSitemapBean();
 	const scriptParams = __.toScriptValue(params);

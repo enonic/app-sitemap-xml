@@ -59,14 +59,16 @@ public final class SitemapBean
 
     public String guillotineUrlset( final ScriptValue params, final int count )
     {
-        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) ).urlsetJson( count );
+        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ), false ).urlsetJson( count );
     }
 
     private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body )
     {
         try
         {
-            final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ) );
+            final Map<String, Object> map = params.getMap();
+            final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
+                .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
             return body.apply( sitemap ).map( SitemapResponse::ok ).orElseGet( SitemapResponse::notFound );
         }
         catch ( SitemapBusyException e )
@@ -86,7 +88,7 @@ public final class SitemapBean
         final List<String> ignorePatterns = list( map.get( "ignorePatterns" ) ).stream().map( SitemapBean::string ).collect( Collectors.toList() );
 
         return new SitemapParams( string( map.get( "sitePath" ) ), string( map.get( "siteUrl" ) ), contentTypes, ignorePatterns,
-                                  integer( map.get( "maxItems" ) ), integer( map.get( "urlsPerFile" ) ) );
+                                  integer( map.get( "maxItems" ) ) );
     }
 
     private static List<?> list( final Object value )

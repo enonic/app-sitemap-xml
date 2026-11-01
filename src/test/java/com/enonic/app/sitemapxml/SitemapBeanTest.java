@@ -1,6 +1,7 @@
 package com.enonic.app.sitemapxml;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -12,7 +13,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.enonic.xp.content.ContentIds;
+import com.enonic.xp.content.ContentQuery;
 import com.enonic.xp.content.ContentService;
+import com.enonic.xp.content.FindContentIdsByQueryResult;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -20,6 +24,8 @@ import com.enonic.xp.security.auth.AuthenticationInfo;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,7 +45,7 @@ class SitemapBeanTest
     @Test
     void answers429WhenBusy()
     {
-        when( cache.get( any(), any(), any() ) ).thenThrow( new SitemapBusyException() );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
@@ -53,8 +59,8 @@ class SitemapBeanTest
     {
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 1 ), entries ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 1, entries ) );
         final SitemapBean bean = bean();
 
         assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
@@ -71,13 +77,13 @@ class SitemapBeanTest
     @Test
     void keysByContext()
     {
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
 
         inContext( () -> bean().root( scriptValue() ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), eq( true ), any( AuthenticationInfo.class ), any() );
         assertThat( key.getValue().repositoryId() ).isEqualTo( "com.enonic.cms.project" );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
         assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://example.com" );
@@ -86,8 +92,8 @@ class SitemapBeanTest
     @Test
     void readsPublishedContentWhenRequestedFromDraft()
     {
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp.resolve( "s" + System.nanoTime() ), new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10, 10 ), List.of() ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
 
         ContextBuilder.create()
             .repositoryId( "com.enonic.cms.project" )
@@ -96,19 +102,46 @@ class SitemapBeanTest
             .callWith( () -> bean().root( scriptValue() ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), any( AuthenticationInfo.class ), any() );
+        verify( cache ).get( key.capture(), eq( true ), any( AuthenticationInfo.class ), any() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
     @Test
     void answersGuillotineUrlset()
     {
-        when( cache.get( any(), any(), any() ) ).thenReturn(
-            Sitemap.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), 10, 1 ),
-                           List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) ) ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "", List.of(), List.of(), 10 ), 1,
+                   List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) ) ) );
 
         assertThat( inContext( () -> bean().guillotineUrlset( scriptValue(), 10 ) ) ).isEqualTo(
             "[{\"path\":\"/\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"},{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+    }
+
+    @Test
+    void generatesRequestBoundSitemapOnRequestOnly()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10, "siteUrlFromRequest", true ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
+
+        inContext( () -> bean().root( value ) );
+
+        final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
+        verify( cache ).get( any(), eq( false ), any( AuthenticationInfo.class ), source.capture() );
+
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn(
+            FindContentIdsByQueryResult.create().contents( ContentIds.empty() ).totalHits( 0 ).build() );
+        final List<SitemapEntry> entries = new ArrayList<>();
+        assertThat( inContext( () -> source.getValue().write( entries::add, () -> false ) ) ).isNull();
+        assertThat( entries ).isEmpty();
+    }
+
+    private Sitemap write( final SitemapParams params, final int urlsPerFile, final List<SitemapEntry> entries )
+    {
+        return SitemapTest.write( temp.resolve( "s" + System.nanoTime() ), params, entries, urlsPerFile, Sitemap.MAX_FILE_BYTES,
+                                  Sitemap.MAX_FILES );
     }
 
     private SitemapBean bean()
@@ -125,7 +158,7 @@ class SitemapBeanTest
     {
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn(
-            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10, "urlsPerFile", 10 ) );
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10 ) );
         return value;
     }
 

@@ -26,7 +26,12 @@ public final class SitemapService
         this.clock = clock;
     }
 
-    public Sitemap sitemap( final SitemapParams params )
+    /**
+     * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
+     *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
+     *                           background when content changes.
+     */
+    public Sitemap sitemap( final SitemapParams params, final boolean siteUrlFromRequest )
     {
         final Context context = ContextAccessor.current();
         final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
@@ -34,7 +39,7 @@ public final class SitemapService
         final Set<String> principals =
             context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
 
-        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ), context.getAuthInfo(),
-                          () -> new SitemapQuery( contentService, params, clock.instant() ).execute() );
+        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ), !siteUrlFromRequest, context.getAuthInfo(),
+                          ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled ) );
     }
 }

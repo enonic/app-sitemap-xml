@@ -1,11 +1,13 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -31,6 +33,11 @@ import com.enonic.xp.query.expr.OrderExpr;
 import com.enonic.xp.query.expr.QueryExpr;
 import com.enonic.xp.query.filter.RangeFilter;
 
+/**
+ * Finds the published contents of a sitemap with the content API, at most "Max included items". The query only returns ids, the
+ * contents are then loaded in batches and streamed to the sitemap writer, newest first, so neither contents nor entries of the whole
+ * sitemap are held in memory.
+ */
 public final class SitemapQuery
 {
     static final int ES_MAX_RESULT_WINDOW = 10_000;
@@ -62,27 +69,27 @@ public final class SitemapQuery
         this.now = now;
     }
 
-    public SitemapContents execute()
+    /**
+     * Streams the entries of the sitemap to the given consumer.
+     *
+     * @param cancelled checked between batches, the query stops with a {@link CancellationException} once it returns true
+     * @return when the sitemap must be generated again because scheduled content goes online or offline, or null
+     */
+    public Instant execute( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
     {
         final ContentQuery query = ContentQuery.create()
             .queryExpr( QueryExpr.from( DslExpr.from( dsl() ), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ) ) )
             .size( params.maxItems() <= ES_MAX_RESULT_WINDOW ? params.maxItems() : NodeQuery.ALL_RESULTS_SIZE_FLAG )
             .build();
-
         final List<ContentId> ids =
             contentService.find( query ).getContentIds().stream().limit( params.maxItems() ).collect( Collectors.toList() );
 
-        final Instant validUntil = ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of(
-            PUBLISH_FROM, PUBLISH_TO ).flatMap( field -> nextChange( field ).stream() ).min( Instant::compareTo ).orElse( null ) : null;
-
-        return new SitemapContents( entries( ids ), validUntil );
-    }
-
-    private List<SitemapEntry> entries( final List<ContentId> ids )
-    {
-        final List<SitemapEntry> entries = new ArrayList<>( ids.size() );
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
         {
+            if ( cancelled.getAsBoolean() )
+            {
+                throw new CancellationException( "Sitemap generation of " + params.sitePath() + " cancelled" );
+            }
             final List<ContentId> batch = ids.subList( start, Math.min( start + FETCH_BATCH_SIZE, ids.size() ) );
             final Map<ContentId, Content> contents = new HashMap<>();
             for ( final Content content : contentService.getByIds( new GetContentByIdsParams( ContentIds.from( batch ) ) ) )
@@ -94,12 +101,16 @@ public final class SitemapQuery
                 final Content content = contents.get( id );
                 if ( content != null && isInSite( content.getPath().toString() ) )
                 {
-                    entries.add( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
+                    sink.accept( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
                                                    content.getType().toString(), content.getModifiedTime() ) );
                 }
             }
         }
-        return entries;
+
+        return ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
+            .flatMap( field -> nextChange( field ).stream() )
+            .min( Instant::compareTo )
+            .orElse( null ) : null;
     }
 
     private boolean isInSite( final String path )

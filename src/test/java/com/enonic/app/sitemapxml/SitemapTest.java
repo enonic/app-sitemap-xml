@@ -9,7 +9,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 import org.junit.jupiter.api.Test;
@@ -30,7 +29,7 @@ class SitemapTest
     @Test
     void singleFileIsUrlset()
     {
-        final Sitemap sitemap = write( params( "https://example.com/", 10 ),
+        final Sitemap sitemap = write( params( "https://example.com/" ), 10,
                                        List.of( new SitemapEntry( "", "portal:site", Instant.parse( "2024-02-02T09:01:33.169Z" ) ),
                                                 new SitemapEntry( "/news/a b&c", "base:folder", null ) ) );
 
@@ -50,7 +49,7 @@ class SitemapTest
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
             .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + ( 6 - i ) + "T10:00:00Z" ) ) )
             .collect( Collectors.toList() );
-        final Sitemap sitemap = write( params( "https://example.com/site/project/master/mysite", 2 ), entries );
+        final Sitemap sitemap = write( params( "https://example.com/site/project/master/mysite" ), 2, entries );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         assertThat( text( sitemap.root() ) ).isEqualTo( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
@@ -70,7 +69,7 @@ class SitemapTest
     @Test
     void emptySitemapIsEmptyUrlset()
     {
-        final Sitemap sitemap = write( params( "https://example.com", 10 ), List.of() );
+        final Sitemap sitemap = write( params( "https://example.com" ), 10, List.of() );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 1 );
         assertThat( text( sitemap.root() ) ).endsWith( "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>" );
@@ -80,7 +79,7 @@ class SitemapTest
     @Test
     void json()
     {
-        final Sitemap sitemap = write( params( "https://example.com", 1 ),
+        final Sitemap sitemap = write( params( "https://example.com" ), 1,
                                        List.of( new SitemapEntry( "/a\"b", "base:folder", Instant.parse( "2024-02-02T09:01:33Z" ) ),
                                                 new SitemapEntry( "/c", "base:folder", null ) ) );
 
@@ -103,15 +102,13 @@ class SitemapTest
         throws IOException
     {
         final List<SitemapEntry> entries =
-            IntStream.rangeClosed( 1, 5 )
-                .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
-                .collect( Collectors.toList() );
+            IntStream.rangeClosed( 1, 5 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).collect( Collectors.toList() );
         final long urlBytes = SitemapRenderer.utf8Length(
             "<url><loc>https://example.com/item-1</loc><changefreq>daily</changefreq><priority>0.8</priority></url>" );
-        final long overhead = write( params( "https://example.com", 10 ), List.of() ).root().size();
+        final long overhead = write( params( "https://example.com" ), 10, List.of() ).root().size();
         final long maxBytes = overhead + 2 * urlBytes;
 
-        final Sitemap sitemap = Sitemap.write( temp.resolve( "split" ), params( "https://example.com", 10 ), entries, maxBytes, 10 );
+        final Sitemap sitemap = write( temp.resolve( "split" ), params( "https://example.com" ), entries, 10, maxBytes, 10 );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         for ( int number = 1; number <= 3; number++ )
@@ -125,7 +122,7 @@ class SitemapTest
     void leavesOutTooLongUrls()
     {
         final String longName = "a".repeat( Sitemap.MAX_LOC_LENGTH );
-        final Sitemap sitemap = write( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/ok", "base:folder", null ),
+        final Sitemap sitemap = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/ok", "base:folder", null ),
                                                                                      new SitemapEntry( "/" + longName, "base:folder",
                                                                                                        null ) ) );
 
@@ -138,12 +135,9 @@ class SitemapTest
     void indexListsAtMostMaxFiles()
     {
         final List<SitemapEntry> entries =
-            IntStream.range( 0, 7 )
-                .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
-                .collect( Collectors.toList() );
+            IntStream.range( 0, 7 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).collect( Collectors.toList() );
 
-        final Sitemap sitemap =
-            Sitemap.write( temp.resolve( "capped" ), params( "https://example.com", 2 ), entries, Sitemap.MAX_FILE_BYTES, 3 );
+        final Sitemap sitemap = write( temp.resolve( "capped" ), params( "https://example.com" ), entries, 2, Sitemap.MAX_FILE_BYTES, 3 );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         assertThat( sitemap.size() ).isEqualTo( 6 );
@@ -154,7 +148,7 @@ class SitemapTest
     @Test
     void deleteRemovesFiles()
     {
-        final Sitemap sitemap = write( params( "https://example.com", 1 ), List.of( new SitemapEntry( "/a", "base:folder", null ),
+        final Sitemap sitemap = write( params( "https://example.com" ), 1, List.of( new SitemapEntry( "/a", "base:folder", null ),
                                                                                     new SitemapEntry( "/b", "base:folder", null ) ) );
         assertThat( sitemap.directory() ).isDirectory();
 
@@ -170,9 +164,41 @@ class SitemapTest
         final Path blocked = temp.resolve( "blocked" );
         Files.writeString( blocked, "not a directory" );
 
-        assertThatThrownBy( () -> Sitemap.write( blocked.resolve( "sitemap" ), params( "https://example.com", 1 ), List.of() ) )
-            .isInstanceOf( UncheckedIOException.class );
+        assertThatThrownBy( () -> Sitemap.writer( blocked.resolve( "sitemap" ), params( "https://example.com" ) ) ).isInstanceOf(
+            UncheckedIOException.class );
         assertThat( Files.exists( blocked.resolve( "sitemap" ) ) ).isFalse();
+    }
+
+    @Test
+    void closingUnfinishedWriterDeletesFiles()
+    {
+        final Path directory = temp.resolve( "unfinished" );
+        try (Sitemap.Writer writer = Sitemap.writer( directory, params( "https://example.com" ) ))
+        {
+            writer.add( new SitemapEntry( "/a", "base:folder", null ) );
+            assertThat( directory ).isDirectory();
+        }
+
+        assertThat( Files.exists( directory ) ).isFalse();
+    }
+
+    @Test
+    void writesHugeSitemapWithoutLimit()
+    {
+        final Path directory = temp.resolve( "huge" );
+        final Sitemap sitemap;
+        try (Sitemap.Writer writer = Sitemap.writer( directory, params( "https://example.com" ) ))
+        {
+            for ( int i = 0; i < 120_000; i++ )
+            {
+                writer.add( new SitemapEntry( "/item-" + i, "base:folder", null ) );
+            }
+            sitemap = writer.finish();
+        }
+
+        assertThat( sitemap.size() ).isEqualTo( 120_000 );
+        assertThat( sitemap.fileCount() ).isEqualTo( 3 );
+        assertThat( text( sitemap.file( 3 ).orElseThrow() ) ).contains( "/item-119999<" ).doesNotContain( "/item-99999<" );
     }
 
     @Test
@@ -182,7 +208,7 @@ class SitemapTest
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
             .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
             .collect( Collectors.toList() );
-        final Sitemap sitemap = write( params( "https://example.com", 2 ), entries );
+        final Sitemap sitemap = write( params( "https://example.com" ), 2, entries );
 
         assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( text( sitemap.root() ).replace( ".xml<", ".xml.gz<" ) )
             .contains( "<loc>https://example.com/sitemap-1.xml.gz</loc>" );
@@ -197,7 +223,7 @@ class SitemapTest
     void gzipsSingleFileSitemap()
         throws IOException
     {
-        final Sitemap sitemap = write( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+        final Sitemap sitemap = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
 
         assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( text( sitemap.root() ) );
         assertThat( gunzip( sitemap.rootEncoded() ) ).isEqualTo( text( sitemap.root() ) );
@@ -220,9 +246,9 @@ class SitemapTest
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
             .mapToObj( i -> new SitemapEntry( "/æøå-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
             .collect( Collectors.toList() );
-        final Sitemap sitemap = write( params( "https://example.com", 2 ), entries );
+        final Sitemap sitemap = write( params( "https://example.com" ), 2, entries );
 
-        try (Stream<Path> files = Files.list( sitemap.directory() ))
+        try (var files = Files.list( sitemap.directory() ))
         {
             assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
                                                                                                        "sitemap-index.xml.gz",
@@ -247,8 +273,8 @@ class SitemapTest
                                                     new SitemapEntry( "/b c", "other:type", null ) );
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
                                                         List.of( new ContentTypeSetting( "base:folder", "daily", "0.8" ),
-                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 100, 2 );
-        final Sitemap sitemap = write( params, entries );
+                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 50_000 );
+        final Sitemap sitemap = write( params, 2, entries );
 
         assertThat( sitemap.lastModified() ).containsExactly( Instant.parse( "2024-01-03T10:00:00Z" ), null );
         assertThat( sitemap.urlsetJson( 10 ) ).isEqualTo(
@@ -265,11 +291,11 @@ class SitemapTest
     @Test
     void urlsetForGuillotineOfSingleAndEmptySitemap()
     {
-        final Sitemap single = write( params( "https://example.com", 10 ), List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+        final Sitemap single = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
         assertThat( single.lastModified() ).hasSize( 1 );
         assertThat( single.fileUrlsetJson( 1 ) ).contains( "[{\"path\":\"/a\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}]" );
 
-        final Sitemap empty = write( params( "https://example.com", 10 ), List.of() );
+        final Sitemap empty = write( params( "https://example.com" ), 10, List.of() );
         assertThat( empty.lastModified() ).hasSize( 1 );
         assertThat( empty.urlsetJson( 10 ) ).isEqualTo( "[]" );
         assertThat( empty.fileUrlsetJson( 1 ) ).contains( "[]" );
@@ -281,9 +307,20 @@ class SitemapTest
         assertThat( SitemapRenderer.utf8Length( "aæ€😀" ) ).isEqualTo( "aæ€😀".getBytes( StandardCharsets.UTF_8 ).length );
     }
 
-    private Sitemap write( final SitemapParams params, final List<SitemapEntry> entries )
+    private Sitemap write( final SitemapParams params, final int urlsPerFile, final List<SitemapEntry> entries )
     {
-        return Sitemap.write( temp.resolve( "sitemap-" + System.nanoTime() ), params, entries );
+        return write( temp.resolve( "sitemap-" + System.nanoTime() ), params, entries, urlsPerFile, Sitemap.MAX_FILE_BYTES,
+                      Sitemap.MAX_FILES );
+    }
+
+    static Sitemap write( final Path directory, final SitemapParams params, final List<SitemapEntry> entries, final int urlsPerFile,
+                          final long maxFileBytes, final int maxFiles )
+    {
+        try (Sitemap.Writer writer = Sitemap.writer( directory, params, urlsPerFile, maxFileBytes, maxFiles ))
+        {
+            entries.forEach( writer::add );
+            return writer.finish();
+        }
     }
 
     static String text( final ByteSource source )
@@ -298,8 +335,8 @@ class SitemapTest
         }
     }
 
-    private static SitemapParams params( final String siteUrl, final int urlsPerFile )
+    private static SitemapParams params( final String siteUrl )
     {
-        return new SitemapParams( "/mysite", siteUrl, CONTENT_TYPES, List.of(), 100, urlsPerFile );
+        return new SitemapParams( "/mysite", siteUrl, CONTENT_TYPES, List.of(), 50_000 );
     }
 }

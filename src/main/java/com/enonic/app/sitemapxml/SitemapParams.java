@@ -8,8 +8,6 @@ import java.util.stream.Collectors;
 
 public final class SitemapParams
 {
-    public static final int MAX_URLS_PER_FILE = 50_000;
-
     public static final String SITE_CONTENT_TYPE = "portal:site";
 
     public static final String DEFAULT_CHANGEFREQ = "monthly";
@@ -26,25 +24,18 @@ public final class SitemapParams
 
     private final int maxItems;
 
-    private final int urlsPerFile;
-
     public SitemapParams( final String sitePath, final String siteUrl, final List<ContentTypeSetting> contentTypes,
-                          final List<String> ignorePatterns, final int maxItems, final int urlsPerFile )
+                          final List<String> ignorePatterns, final int maxItems )
     {
         if ( maxItems < 1 )
         {
             throw new IllegalArgumentException( "maxItems must be positive: " + maxItems );
-        }
-        if ( urlsPerFile < 1 || urlsPerFile > MAX_URLS_PER_FILE )
-        {
-            throw new IllegalArgumentException( "urlsPerFile must be between 1 and " + MAX_URLS_PER_FILE + ": " + urlsPerFile );
         }
         this.sitePath = Objects.requireNonNull( sitePath );
         this.siteUrl = Objects.requireNonNull( siteUrl );
         this.contentTypes = normalize( contentTypes );
         this.ignorePatterns = ignorePatterns.stream().filter( pattern -> !pattern.isBlank() ).collect( Collectors.toUnmodifiableList() );
         this.maxItems = maxItems;
-        this.urlsPerFile = urlsPerFile;
     }
 
     public String sitePath()
@@ -72,11 +63,6 @@ public final class SitemapParams
         return maxItems;
     }
 
-    public int urlsPerFile()
-    {
-        return urlsPerFile;
-    }
-
     public ContentTypeSetting setting( final String contentType )
     {
         return contentTypes.stream()
@@ -102,21 +88,20 @@ public final class SitemapParams
             return false;
         }
         final SitemapParams that = (SitemapParams) o;
-        return maxItems == that.maxItems && urlsPerFile == that.urlsPerFile && sitePath.equals( that.sitePath ) &&
+        return maxItems == that.maxItems && sitePath.equals( that.sitePath ) &&
             siteUrl.equals( that.siteUrl ) && contentTypes.equals( that.contentTypes ) && ignorePatterns.equals( that.ignorePatterns );
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash( sitePath, siteUrl, contentTypes, ignorePatterns, maxItems, urlsPerFile );
+        return Objects.hash( sitePath, siteUrl, contentTypes, ignorePatterns, maxItems );
     }
 
     @Override
     public String toString()
     {
-        return "SitemapParams[" + sitePath + ", " + siteUrl + ", " + contentTypes + ", " + ignorePatterns + ", " + maxItems + ", " +
-            urlsPerFile + "]";
+        return "SitemapParams[" + sitePath + ", " + siteUrl + ", " + contentTypes + ", " + ignorePatterns + ", " + maxItems + "]";
     }
 
     private static List<ContentTypeSetting> normalize( final List<ContentTypeSetting> contentTypes )

@@ -10,7 +10,6 @@ export declare interface SitemapXmlSiteConfig {
 	}[]
 	maxItems?: string
 	overrideDomain?: string
-	urlsPerFile?: string
 	siteMap: {
 		contentType?: string
 		updatePeriod?: tChangeFreq

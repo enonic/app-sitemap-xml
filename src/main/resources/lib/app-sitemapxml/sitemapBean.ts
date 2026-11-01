@@ -5,7 +5,6 @@ import {forceArray} from '@enonic/js-utils/array/forceArray';
 import {
 	DEFAULT_MAX_ITEMS,
 	MAX_ITEMS_LIMIT,
-	MAX_URLS_PER_FILE,
 } from '/lib/app-sitemapxml/constants';
 
 
@@ -19,7 +18,8 @@ export interface SitemapParams {
 	}[]
 	ignorePatterns: string[]
 	maxItems: number
-	urlsPerFile: number
+	// True when siteUrl is taken from the request: the sitemap is then generated on request only.
+	siteUrlFromRequest?: boolean
 }
 
 export interface SitemapResponse {
@@ -59,7 +59,6 @@ export function toSitemapParams({
 		ignoreList,
 		maxItems,
 		siteMap,
-		urlsPerFile,
 	} = siteConfig;
 	return {
 		sitePath,
@@ -71,7 +70,6 @@ export function toSitemapParams({
 		})),
 		ignorePatterns: (ignoreList ? forceArray(ignoreList) : []).map(({path}) => path || ''),
 		maxItems: toInt(maxItems, DEFAULT_MAX_ITEMS, MAX_ITEMS_LIMIT),
-		urlsPerFile: toInt(urlsPerFile, MAX_URLS_PER_FILE, MAX_URLS_PER_FILE),
 	};
 }
 

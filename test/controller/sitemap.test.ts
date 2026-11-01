@@ -76,7 +76,7 @@ describe('sitemap controller', () => {
 			contentTypes: [],
 			ignorePatterns: [],
 			maxItems: 10000,
-			urlsPerFile: 50000,
+			siteUrlFromRequest: true,
 		});
 	});
 
@@ -86,7 +86,6 @@ describe('sitemap controller', () => {
 			maxItems: '2000000',
 			overrideDomain: 'https://override.example.org',
 			siteMap: [{contentType: 'base:folder', updatePeriod: 'daily', priority: '0.7'}, {}],
-			urlsPerFile: 'abc',
 		};
 		const {get} = await import('/site/controllers/sitemap/sitemap');
 
@@ -100,8 +99,8 @@ describe('sitemap controller', () => {
 				{contentType: '', changefreq: '', priority: ''},
 			],
 			ignorePatterns: ['/skip'],
-			maxItems: 1000000,
-			urlsPerFile: 50000,
+			maxItems: 50000,
+			siteUrlFromRequest: false,
 		});
 	});
 
