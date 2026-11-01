@@ -12,7 +12,6 @@ import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.jspecify.annotations.Nullable;
@@ -52,7 +51,7 @@ import com.enonic.xp.query.filter.RangeFilter;
  * in memory.
  * <p>
  * Each query only uses filters Elasticsearch evaluates in proportion to the contents it returns: the site is a single term on the path
- * hierarchy, time slices are numeric ranges. Ignore patterns that cannot be expressed as path terms are matched here, after loading.
+ * hierarchy, time slices are numeric ranges.
  */
 public final class SitemapQuery
 {
@@ -104,7 +103,6 @@ public final class SitemapQuery
 
     private final String contentRoot;
 
-    private final List<Pattern> ignoredByPattern;
 
     public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
     {
@@ -112,12 +110,6 @@ public final class SitemapQuery
         this.params = params;
         this.now = now;
         this.contentRoot = CONTENT_ROOT + params.sitePath();
-        this.ignoredByPattern = params.ignorePatterns()
-            .stream()
-            .map( pattern -> ignorePath( contentRoot, pattern ) )
-            .filter( path -> !isExact( path ) && !isDescendants( path ) )
-            .map( SitemapQuery::glob )
-            .toList();
     }
 
     /**
@@ -286,7 +278,7 @@ public final class SitemapQuery
     }
 
     /**
-     * Loads the contents in batches and passes the entries of those in the site and not ignored to the sink.
+     * Loads the contents in batches and passes the entries of those in the site to the sink.
      *
      * @return the indexed path of the last content loaded, or null if none was
      */
@@ -315,7 +307,7 @@ public final class SitemapQuery
                 }
                 // as XP indexes string values
                 last = indexed( CONTENT_ROOT + content.getPath() );
-                if ( isInSite( content.getPath().toString() ) && !isIgnored( last ) )
+                if ( isInSite( content.getPath().toString() ) )
                 {
                     sink.accept( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
                                                    content.getType().toString(), content.getModifiedTime() ) );
@@ -323,18 +315,6 @@ public final class SitemapQuery
             }
         }
         return last;
-    }
-
-    private boolean isIgnored( final String indexedPath )
-    {
-        for ( final Pattern pattern : ignoredByPattern )
-        {
-            if ( pattern.matcher( indexedPath ).matches() )
-            {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isInSite( final String path )
@@ -381,23 +361,7 @@ public final class SitemapQuery
         blockRobots.addString( "field", BLOCK_ROBOTS_FIELD );
         blockRobots.addBoolean( "value", true );
 
-        // Ignore patterns that are a path, or everything below a path (/a/b/*: all descendants, not /a/b itself), are terms too. Other patterns are matched after loading, as a
-        // wildcard here would enumerate paths in each query, all paths of the repository for a pattern starting with *.
-        for ( final String pattern : params.ignorePatterns() )
-        {
-            final String path = ignorePath( contentRoot, pattern );
-            if ( isExact( path ) )
-            {
-                term( bool.addSet( "mustNot" ), PATH.getPath(), path );
-            }
-            else if ( isDescendants( path ) )
-            {
-                final String parent = path.substring( 0, path.length() - 2 );
-                final PropertySet descendants = bool.addSet( "mustNot" ).addSet( "boolean" );
-                term( descendants.addSet( "must" ), PATH_HIERARCHY, parent );
-                term( descendants.addSet( "mustNot" ), PATH.getPath(), parent );
-            }
-        }
+        params.ignorePatterns().forEach( pattern -> like( bool.addSet( "mustNot" ), PATH.getPath(), ignorePath( contentRoot, pattern ) ) );
 
         return tree;
     }
@@ -412,37 +376,16 @@ public final class SitemapQuery
         return contentRoot + ( trimmed.startsWith( "/" ) ? "" : "/" ) + trimmed;
     }
 
-    static boolean isExact( final String path )
-    {
-        return path.indexOf( '*' ) < 0 && path.indexOf( '?' ) < 0;
-    }
-
-    static boolean isDescendants( final String path )
-    {
-        return path.endsWith( "/*" ) && path.length() > 2 && isExact( path.substring( 0, path.length() - 2 ) );
-    }
-
-    /**
-     * Matches like a "like" query: {@code *} any characters, {@code ?} one character, ignoring case.
-     */
-    static Pattern glob( final String pattern )
-    {
-        final StringBuilder regex = new StringBuilder();
-        for ( final char c : indexed( pattern ).toCharArray() )
-        {
-            switch ( c )
-            {
-                case '*' -> regex.append( ".*" );
-                case '?' -> regex.append( '.' );
-                default -> regex.append( Pattern.quote( String.valueOf( c ) ) );
-            }
-        }
-        return Pattern.compile( regex.toString(), Pattern.DOTALL );
-    }
-
     private static String indexed( final String value )
     {
         return value.trim().toLowerCase();
+    }
+
+    private static void like( final PropertySet parent, final String field, final String value )
+    {
+        final PropertySet like = parent.addSet( "like" );
+        like.addString( "field", field );
+        like.addString( "value", value );
     }
 
     private static void term( final PropertySet parent, final String field, final String value )

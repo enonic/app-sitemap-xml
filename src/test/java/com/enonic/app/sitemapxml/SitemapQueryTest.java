@@ -68,28 +68,10 @@ class SitemapQueryTest
         assertThat( must.get( 0 ).getSet( "in" ).getStrings( "values" ) ).containsExactly( "portal:site" );
         assertThat( must.get( 1 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
         assertThat( must.get( 1 ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite" );
-        assertThat( mustNot ).hasSize( 4 );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "x.com-enonic-app-metafields.meta-data.blockRobots" );
         assertThat( mustNot.get( 0 ).getSet( "term" ).getBoolean( "value" ) ).isTrue();
-        assertThat( mustNot.subList( 1, 3 ) ).extracting( set -> set.getSet( "term" ).getString( "field" ) + " " + set.getSet( "term" ).getString( "value" ) )
-            .containsExactly( "_path /content/mysite/skip", "_path /content/mysite/bar" );
-        final PropertySet descendants = mustNot.get( 3 ).getSet( "boolean" );
-        assertThat( descendants.getSet( "must" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path._path" );
-        assertThat( descendants.getSet( "must" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
-        assertThat( descendants.getSet( "mustNot" ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path" );
-        assertThat( descendants.getSet( "mustNot" ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/mysite/folder" );
-    }
-
-    @Test
-    void glob()
-    {
-        assertThat( SitemapQuery.glob( "*/Foo" ).matcher( "/content/s/a/foo" ).matches() ).isTrue();
-        assertThat( SitemapQuery.glob( "*/foo" ).matcher( "/content/s/a/foobar" ).matches() ).isFalse();
-        assertThat( SitemapQuery.glob( "/content/s/a?c" ).matcher( "/content/s/abc" ).matches() ).isTrue();
-        assertThat( SitemapQuery.glob( "/content/s/a.c" ).matcher( "/content/s/abc" ).matches() ).isFalse();
-        assertThat( SitemapQuery.isDescendants( "/content/s/a/*" ) ).isTrue();
-        assertThat( SitemapQuery.isDescendants( "/content/s/a*/*" ) ).isFalse();
-        assertThat( SitemapQuery.isExact( "/content/s/a" ) ).isTrue();
+        assertThat( mustNot.subList( 1, 6 ) ).extracting( set -> set.getSet( "like" ).getString( "value" ) )
+            .containsExactly( "/content/mysite/skip", "*/foo", "/content/mysite/bar", "/content/mysite/folder/*", "/content/mysite/x*" );
     }
 
     @Test
@@ -248,21 +230,6 @@ class SitemapQueryTest
         assertThat( reads.get( 0 ).getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
         assertThat( filters( reads.get( 0 ) ) ).isEqualTo(
             "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z & _ts 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z" );
-    }
-
-    @Test
-    void ignorePatternsWithWildcardsAreMatchedAfterLoading()
-    {
-        final List<Content> contents = List.of( content( "a", "/mysite/a/Foo" ), content( "b", "/mysite/b" ), content( "c", "/mysite/c-x" ) );
-        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
-        answerGetByIds( contents );
-        final SitemapParams params = new SitemapParams( "/mysite", "https://example.com", List.of( new ContentTypeSetting( "base:folder", "", "" ) ),
-                                                        List.of( "*/foo", "c-?" ) );
-
-        final List<SitemapEntry> entries = new ArrayList<>();
-        draft( () -> new SitemapQuery( contentService, params, NOW ).execute( entries::add, () -> false ) );
-
-        assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "/b" );
     }
 
     @Test
