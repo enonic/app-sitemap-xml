@@ -11,9 +11,7 @@ dependencies {
 	implementation xplibs.api.script
 	implementation xplibs.api.portal
 	implementation libs.jackson.core
-	include(libs.jackson.jr.objects) {
-		transitive = false
-	}
+	implementation libs.jackson.databind
 
 	include xplibs.context
 	include xplibs.content

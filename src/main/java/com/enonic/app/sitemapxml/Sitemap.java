@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -36,10 +37,12 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.io.SerializedString;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.io.ByteSource;
 import com.google.common.io.MoreFiles;
-
-import com.enonic.xp.util.GenericValue;
 
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_END;
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_START;
@@ -252,34 +255,32 @@ public final class Sitemap
     /**
      * Describes the sitemap, for {@link #restore} to read the sitemap back from its directory.
      */
-    GenericValue store()
+    ObjectNode store()
     {
-        final GenericValue.ListBuilder files = GenericValue.newList();
+        final ObjectNode description = JsonNodeFactory.instance.objectNode();
+        description.put( "size", size );
+        final ArrayNode files = description.putArray( "files" );
         for ( int i = 0; i < lastModified.size(); i++ )
         {
-            final GenericValue.ObjectBuilder file = GenericValue.newObject();
+            final ObjectNode file = files.addObject();
             final Instant lastmod = lastModified.get( i );
             if ( lastmod != null )
             {
                 file.put( "lastmod", lastmod.toString() );
             }
-            files.add( file.put( "digest", digests.get( i ) ).build() );
+            file.put( "digest", digests.get( i ) );
         }
-        final GenericValue.ObjectBuilder bytes = GenericValue.newObject();
-        for ( final Map.Entry<String, Long> file : plainSizes.entrySet() )
-        {
-            bytes.put( file.getKey(), file.getValue().longValue() );
-        }
-        return GenericValue.newObject().put( "size", size ).put( "files", files.build() ).put( "bytes", bytes.build() ).build();
+        final ObjectNode bytes = description.putObject( "bytes" );
+        new TreeMap<>( plainSizes ).forEach( bytes::put );
+        return description;
     }
 
     /**
      * Reads back a sitemap that {@link #store} described from its directory.
      *
-     * @throws IllegalArgumentException when the files are missing
-     * @throws RuntimeException when the description is incomplete
+     * @throws IllegalArgumentException when the description is incomplete or the files are missing
      */
-    static Sitemap restore( final Path directory, final GenericValue description )
+    static Sitemap restore( final Path directory, final JsonNode description )
     {
         if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
         {
@@ -287,17 +288,18 @@ public final class Sitemap
         }
         final List<@Nullable Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
-        for ( final GenericValue file : description.property( "files" ).values() )
+        for ( final JsonNode file : description.required( "files" ) )
         {
-            lastModified.add( file.optional( "lastmod" ).map( lastmod -> Instant.parse( lastmod.asString() ) ).orElse( null ) );
-            digests.add( file.property( "digest" ).asString() );
+            final JsonNode lastmod = file.get( "lastmod" );
+            lastModified.add( lastmod == null ? null : Instant.parse( lastmod.asText() ) );
+            digests.add( file.required( "digest" ).asText() );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
-        for ( final Map.Entry<String, GenericValue> file : description.property( "bytes" ).properties() )
+        for ( final Map.Entry<String, JsonNode> file : description.required( "bytes" ).properties() )
         {
             plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        return new Sitemap( directory, description.property( "size" ).asInteger(), plainSizes, lastModified, digests );
+        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests );
     }
 
     Path directory()
