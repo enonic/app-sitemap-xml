@@ -13,7 +13,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.enonic.xp.content.Content;
 import com.enonic.xp.content.ContentIds;
+import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.content.ContentQuery;
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.content.FindContentIdsByQueryResult;
@@ -22,7 +24,11 @@ import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.security.IdProviderKey;
 import com.enonic.xp.security.PrincipalKey;
+import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.User;
+import com.enonic.xp.security.acl.AccessControlEntry;
+import com.enonic.xp.security.acl.AccessControlList;
+import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -112,6 +118,8 @@ class SitemapBeanTest
     @Test
     void cachesPerUser()
     {
+        final Content site = site( AccessControlList.empty() );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
 
         asUser( () -> bean().root( scriptValue() ) );
@@ -120,6 +128,24 @@ class SitemapBeanTest
         verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), any() );
         assertThat( key.getValue().principals() ).contains( "user:system:editor" );
         verify( cache, never() ).uncached( any(), any(), any() );
+    }
+
+    @Test
+    void loggedInUserSharesPublicSitemapOfSiteReadableByEveryone()
+    {
+        final Content site =
+            site( AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
+
+        asUser( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
+        verify( cache ).get( key.capture(), anyBoolean(), authInfo.capture(), any() );
+        assertThat( authInfo.getValue().isAuthenticated() ).isFalse();
+        assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
+                                                                             RoleKeys.EVERYONE.toString() );
     }
 
     @Test
@@ -230,5 +256,12 @@ class SitemapBeanTest
             .authInfo( AuthenticationInfo.create().user( user ).build() )
             .build()
             .callWith( supplier::get );
+    }
+
+    private static Content site( final AccessControlList permissions )
+    {
+        final Content site = mock( Content.class );
+        when( site.getPermissions() ).thenReturn( permissions );
+        return site;
     }
 }
