@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -244,6 +245,66 @@ public final class Sitemap
     public void delete()
     {
         delete( directory );
+    }
+
+    /**
+     * Describes the sitemap in the given properties, for {@link #restore} to read the sitemap back from its directory.
+     */
+    void store( final Properties properties )
+    {
+        properties.setProperty( "sitemap.directory", directory.getFileName().toString() );
+        properties.setProperty( "sitemap.size", Integer.toString( size ) );
+        properties.setProperty( "sitemap.files", Integer.toString( lastModified.size() ) );
+        for ( int i = 0; i < lastModified.size(); i++ )
+        {
+            final Instant lastmod = lastModified.get( i );
+            if ( lastmod != null )
+            {
+                properties.setProperty( "sitemap.lastmod." + ( i + 1 ), lastmod.toString() );
+            }
+        }
+        plainSizes.forEach( ( name, bytes ) -> properties.setProperty( "sitemap.bytes." + name, Long.toString( bytes ) ) );
+    }
+
+    /**
+     * Reads back a sitemap that {@link #store} described, from its directory in the given parent directory.
+     *
+     * @throws IllegalArgumentException when the description is incomplete or the files are missing
+     */
+    static Sitemap restore( final Path parent, final Properties properties )
+    {
+        final String name = required( properties, "sitemap.directory" );
+        final Path directory = parent.resolve( name );
+        if ( !directory.getParent().equals( parent ) || !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
+        {
+            throw new IllegalArgumentException( "No sitemap in " + directory );
+        }
+        final int files = Integer.parseInt( required( properties, "sitemap.files" ) );
+        final List<@Nullable Instant> lastModified = new ArrayList<>();
+        for ( int number = 1; number <= files; number++ )
+        {
+            final String lastmod = properties.getProperty( "sitemap.lastmod." + number );
+            lastModified.add( lastmod == null ? null : Instant.parse( lastmod ) );
+        }
+        final Map<String, Long> plainSizes = new HashMap<>();
+        for ( final String property : properties.stringPropertyNames() )
+        {
+            if ( property.startsWith( "sitemap.bytes." ) )
+            {
+                plainSizes.put( property.substring( "sitemap.bytes.".length() ), Long.parseLong( properties.getProperty( property ) ) );
+            }
+        }
+        return new Sitemap( directory, Integer.parseInt( required( properties, "sitemap.size" ) ), plainSizes, lastModified );
+    }
+
+    private static String required( final Properties properties, final String name )
+    {
+        final String value = properties.getProperty( name );
+        if ( value == null )
+        {
+            throw new IllegalArgumentException( "Missing " + name );
+        }
+        return value;
     }
 
     Path directory()

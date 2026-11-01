@@ -142,14 +142,16 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 The sitemap lists published content only: it is always generated from the `master` branch, also when requested in preview (draft). It is generated in Java, through the content API, and written to disk while the content is read, so it is never held in memory. Once generated, requests are answered from the stored files.
 
-How a sitemap is kept up to date when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
+A generated sitemap is served until a newer one of the same site has been generated and replaces it, also after content changed and after XP or the app is restarted. How it is generated again when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
 
-* With a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change, and the previous one is served until the new one is ready. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are dropped instead of generated again.
-* Without a `Base URL`, the URLs depend on the host of the request: the sitemap is dropped and generated again on the next request, which waits for it.
+* With a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are generated again on their next request instead.
+* Without a `Base URL`, the URLs depend on the host of the request: the sitemap is generated again on its next request.
+
+A request for a sitemap that is being generated again gets the previous one right away. Only the first request for a sitemap waits for it to be generated.
 
 Sitemaps are generated one at a time, in the order they are needed. Any number of generations can be queued. Requests for generated sitemaps are always answered at once; when more than 10 requests are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
 
-Generated sitemap files are kept in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per generated sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. The cache is per cluster node and is emptied when the app is restarted.
+Generated sitemap files are kept in `$XP_HOME/work/com.enonic.app.sitemapxml` (one directory per site and host, with the files of its current sitemap). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` (and JSON) requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. The 100 most recently used sitemaps are kept; older ones are deleted. The cache is per cluster node.
 
 ### URLs in the sitemap
 
