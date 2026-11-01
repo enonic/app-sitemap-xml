@@ -260,6 +260,30 @@ class SitemapServiceTest
     }
 
     @Test
+    void beanAnswers304WhenEntityTagMatches()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
+        when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn(
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 10,
+                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
+        final SitemapBean bean = bean();
+
+        final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
+        assertThat( first.getStatus() ).isEqualTo( 200 );
+        final String etag = first.getETag();
+        assertThat( etag ).isNotNull();
+
+        final SitemapResponse unchanged = inContext( () -> bean.root( scriptValue( "W/" + etag + ", \"other\"" ) ) );
+        assertThat( unchanged.getStatus() ).isEqualTo( 304 );
+        assertThat( unchanged.getBody() ).isNull();
+        assertThat( unchanged.getETag() ).isEqualTo( etag );
+
+        assertThat( inContext( () -> bean.root( scriptValue( "\"other\"" ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( etag ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( "*" ) ) ).getStatus() ).isEqualTo( 304 );
+    }
+
+    @Test
     void beanAnswersGuillotineQueries()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
@@ -308,6 +332,14 @@ class SitemapServiceTest
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn(
             Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true ) );
+        return value;
+    }
+
+    private static ScriptValue scriptValue( final String ifNoneMatch )
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true, "ifNoneMatch", ifNoneMatch ) );
         return value;
     }
 

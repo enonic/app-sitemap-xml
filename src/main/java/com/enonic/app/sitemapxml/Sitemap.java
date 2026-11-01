@@ -84,10 +84,13 @@ public final class Sitemap
 
     private final List<String> digests;
 
+    private final Map<String, String> indexDigests;
+
     private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<@Nullable Instant> lastModified,
-                     final List<String> digests )
+                     final List<String> digests, final Map<String, String> indexDigests )
     {
         this.digests = List.copyOf( digests );
+        this.indexDigests = Map.copyOf( indexDigests );
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -158,6 +161,26 @@ public final class Sitemap
     public Optional<ByteSource> fileGzip( final int number )
     {
         return validFile( number ).map( this::gzip );
+    }
+
+    /**
+     * The entity tag of {@link #root()}, or of {@link #rootEncoded()} when encoded: the digest of the uncompressed content. It is the same
+     * on every cluster node holding the same sitemap, since the files are written in a deterministic order. Gzip-encoded variants get a
+     * weak tag, as the compressed bytes may differ between nodes.
+     */
+    public @Nullable String rootETag( final boolean encoded )
+    {
+        return etag( plainRootFile(), encoded );
+    }
+
+    public @Nullable String rootGzipETag()
+    {
+        return etag( ROOT_FILE, true );
+    }
+
+    public Optional<String> fileETag( final int number, final boolean gzip )
+    {
+        return validFile( number ).map( name -> etag( name, gzip ) );
     }
 
     public List<@Nullable Instant> lastModified()
@@ -272,6 +295,8 @@ public final class Sitemap
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
+        final ObjectNode index = description.putObject( "indexDigests" );
+        new TreeMap<>( indexDigests ).forEach( index::put );
         return description;
     }
 
@@ -299,7 +324,16 @@ public final class Sitemap
         {
             plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests );
+        final Map<String, String> indexDigests = new HashMap<>();
+        final JsonNode index = description.get( "indexDigests" );
+        if ( index != null )
+        {
+            for ( final Map.Entry<String, JsonNode> file : index.properties() )
+            {
+                indexDigests.put( file.getKey(), file.getValue().asText() );
+            }
+        }
+        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests, indexDigests );
     }
 
     Path directory()
@@ -315,6 +349,36 @@ public final class Sitemap
     static String urlsetFileName( final int number )
     {
         return "urlset-" + number + ".jsonl";
+    }
+
+    private @Nullable String etag( final String name, final boolean gzip )
+    {
+        final String digest = digest( name );
+        if ( digest == null )
+        {
+            return null;
+        }
+        return gzip ? "W/\"" + digest + "-gzip\"" : "\"" + digest + "\"";
+    }
+
+    private @Nullable String digest( final String name )
+    {
+        if ( indexDigests.containsKey( name ) )
+        {
+            return indexDigests.get( name );
+        }
+        if ( name.equals( ROOT_FILE ) && !isIndex() )
+        {
+            return digests.isEmpty() ? null : digests.get( 0 );
+        }
+        for ( int number = 1; number <= digests.size(); number++ )
+        {
+            if ( name.equals( fileName( number ) ) )
+            {
+                return digests.get( number - 1 );
+            }
+        }
+        return null;
     }
 
     private String plainRootFile()
@@ -489,6 +553,8 @@ public final class Sitemap
 
         private final List<String> digests = new ArrayList<>();
 
+        private final Map<String, String> indexDigests = new HashMap<>();
+
         private final Map<String, Long> plainSizes = new HashMap<>();
 
         private @Nullable CountingWriter file;
@@ -584,7 +650,7 @@ public final class Sitemap
                 if ( empty )
                 {
                     built = true;
-                    return new Sitemap( directory, size, plainSizes, lastModified, digests );
+                    return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
                 }
                 if ( lastModified.size() == 1 )
                 {
@@ -597,7 +663,7 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified, digests );
+                return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
             }
             catch ( IOException e )
             {
@@ -633,6 +699,7 @@ public final class Sitemap
             }
             index.write( INDEX_END );
             close( index, name );
+            indexDigests.put( name, index.digest() );
         }
 
         private boolean reserve( final long urlBytes )

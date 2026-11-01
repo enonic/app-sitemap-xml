@@ -14,6 +14,8 @@ export interface SitemapParams {
 		priority: string
 	}[]
 	ignorePatterns: string[]
+	// If-None-Match header of the request, answered with 304 when it matches the file's entity tag.
+	ifNoneMatch?: string
 	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
 	siteUrlFromRequest?: boolean
 }
@@ -22,6 +24,7 @@ export interface SitemapResponse {
 	getStatus(): number
 	getBody(): object | null
 	getRetryAfter(): number
+	getETag(): string | null
 }
 
 export interface SitemapBean {

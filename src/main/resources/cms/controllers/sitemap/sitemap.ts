@@ -43,6 +43,7 @@ export function get(request: Request): Response {
 		// Without "Base URL" override, a Base URL configured for the site in XP is used when present,
 		// so the sitemap is the same whichever host it is requested from.
 		siteUrlFromRequest: !overrideDomain,
+		ifNoneMatch: request.getHeader('If-None-Match') || undefined,
 	};
 
 	const bean = newSitemapBean();
@@ -69,6 +70,15 @@ export function get(request: Request): Response {
 			status,
 		};
 	}
+	const etag = result.getETag();
+	const etagHeader: Record<string, string> = etag ? {ETag: etag} : {};
+	if (status === 304) {
+		return {
+			body: null,
+			headers: isGzip ? etagHeader : {...etagHeader, Vary: 'Accept-Encoding'},
+			status,
+		};
+	}
 	if (status !== 200) {
 		return {
 			body: null,
@@ -79,13 +89,14 @@ export function get(request: Request): Response {
 		return {
 			body: result.getBody(),
 			contentType: 'application/gzip',
+			...(etag ? {headers: etagHeader} : {}),
 		};
 	}
 	return {
 		body: result.getBody(),
 		contentType: 'text/xml; charset=utf-8',
 		headers: isEncoded
-			? {'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
-			: {Vary: 'Accept-Encoding'},
+			? {...etagHeader, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
+			: {...etagHeader, Vary: 'Accept-Encoding'},
 	};
 }
