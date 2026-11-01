@@ -124,7 +124,12 @@ The app will automatically add the site content, if not already added in the sit
 
 ### Override the generated domain name
 
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in the `Base URL` field.
+By default, the URLs in `sitemap.xml` use the scheme, host and port the site is requested through. To use fixed ones instead, enter them in the `Base URL` field (in the `Advanced` section of the site configuration), for instance `https://www.example.com`:
+
+* The value is put in front of the path of each URL as XP renders it for the request, with the virtual host mapping applied. A site mapped to `/en` gets `https://www.example.com/en/...`.
+* Include the scheme (`https://`) and leave out the trailing slash. The value may end with a path, which then comes before the site's path.
+* The sitemap is then the same whichever host it is requested from, and it is generated again in the background when content changes.
+* Guillotine returns the value as `baseUrl`; the URLs it returns are paths relative to the site.
 
 ### Size of the sitemap
 
@@ -150,7 +155,7 @@ The sitemap lists published content only: it is generated from the `master` bran
 
 A generated sitemap is served until a newer one of the same site has been generated and replaces it, also after content changed and after XP or the app is restarted. How it is generated again when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
 
-* With a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are generated again on their next request instead.
+* With a `Base URL` in this app's site configuration, and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are generated again on their next request instead.
 * Without a `Base URL`, the URLs depend on the host of the request: the sitemap is generated again on its next request.
 
 A request for a sitemap that is being generated again gets the previous one right away. Only the first request for a sitemap waits for it to be generated.
@@ -164,8 +169,9 @@ Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapx
 URLs are resolved in this order:
 
 1. `Base URL` in this app's site configuration, see [Override the generated domain name](#override-the-generated-domain-name).
-2. The `Base URL` configured for the site in XP (the `portal` site configuration). The sitemap is then the same whichever host it is requested from.
-3. The URL of the site as seen by the request.
+2. The URL of the site as seen by the request.
+
+The `Base URL` configured for the site in XP (the `portal` site configuration) is not used: it applies to headless callers only, while `sitemap.xml` is rendered by XP for a request.
 
 ### Mappings
 

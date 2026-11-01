@@ -14,7 +14,7 @@ export interface SitemapParams {
 		priority: string
 	}[]
 	ignorePatterns: string[]
-	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
+	// True when siteUrl is taken from the request.
 	siteUrlFromRequest?: boolean
 }
 

@@ -3,7 +3,6 @@ package com.enonic.app.sitemapxml;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -21,8 +20,6 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
-import com.enonic.xp.portal.url.PortalScopeParams;
-import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.repository.RepositoryId;
@@ -39,18 +36,15 @@ public final class SitemapService
 
     private final ProjectService projectService;
 
-    private final PortalUrlService portalUrlService;
-
     private final SitemapCache cache;
 
     private final Clock clock;
 
-    public SitemapService( final ContentService contentService, final ProjectService projectService, final PortalUrlService portalUrlService,
-                           final SitemapCache cache, final Clock clock )
+    public SitemapService( final ContentService contentService, final ProjectService projectService, final SitemapCache cache,
+                           final Clock clock )
     {
         this.contentService = contentService;
         this.projectService = projectService;
-        this.portalUrlService = portalUrlService;
         this.cache = cache;
         this.clock = clock;
     }
@@ -60,8 +54,9 @@ public final class SitemapService
      * everyone, the public sitemap. Without a site path, the sitemap lists the whole project. Requests on the draft branch (preview) get
      * a sitemap with the site URL only, or nothing for a project, which is not kept.
      *
-     * @param siteUrlFromRequest true when the site URL of the params is taken from the request: a Base URL configured for the site in
-     *                           XP is then used instead, when there is one
+     * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
+     *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
+     *                           background when content changes.
      */
     public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
@@ -69,9 +64,7 @@ public final class SitemapService
         final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
         final Branch branch = ContentConstants.BRANCH_MASTER;
 
-        final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
-        final SitemapParams params =
-            baseUrl.map( requested::withSiteUrl ).orElseGet( () -> siteUrlFromRequest ? requested.forRequestSiteUrl() : requested );
+        final SitemapParams params = siteUrlFromRequest ? requested.forRequestSiteUrl() : requested;
         final AuthenticationInfo authInfo = sitemapAuthInfo( context, repositoryId, params.sitePath() );
         final SitemapCache.Key key = new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals( authInfo ), params );
 
@@ -82,8 +75,7 @@ public final class SitemapService
         }
         final SitemapCache.Source source =
             ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
-        final boolean background = !siteUrlFromRequest || baseUrl.isPresent();
-        return cache.get( key, background, authInfo, source );
+        return cache.get( key, !siteUrlFromRequest, authInfo, source );
     }
 
     /**
@@ -148,23 +140,5 @@ public final class SitemapService
     {
         sink.accept( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
         return null;
-    }
-
-    private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
-    {
-        try
-        {
-            return Optional.ofNullable( portalUrlService.portalScope( PortalScopeParams.create()
-                                                                          .setProjectName( ProjectName.from( repositoryId ) )
-                                                                          .setBranch( branch )
-                                                                          .setContentPath( ContentPath.from(
-                                                                              sitePath.isEmpty() ? "/" : sitePath ) )
-                                                                          .build() ).getBaseUrl() );
-        }
-        catch ( RuntimeException e )
-        {
-            LOG.debug( "Could not resolve Base URL of {}", sitePath, e );
-            return Optional.empty();
-        }
     }
 }

@@ -12,7 +12,6 @@ import org.jspecify.annotations.Nullable;
 import com.google.common.io.ByteSource;
 
 import com.enonic.xp.content.ContentService;
-import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
@@ -27,8 +26,7 @@ public final class SitemapBean
     public void initialize( final BeanContext context )
     {
         this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( ProjectService.class ).get(),
-                                           context.getService( PortalUrlService.class ).get(), context.getService( SitemapCache.class ).get(),
-                                           Clock.systemUTC() );
+                                           context.getService( SitemapCache.class ).get(), Clock.systemUTC() );
     }
 
     public SitemapResponse root( final ScriptValue params )

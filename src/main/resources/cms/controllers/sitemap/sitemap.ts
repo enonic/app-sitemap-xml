@@ -40,8 +40,6 @@ export function get(request: Request): Response {
 			siteUrl: getSiteUrl(site._path, overrideDomain),
 			siteConfig,
 		}),
-		// Without "Base URL" override, a Base URL configured for the site in XP is used when present,
-		// so the sitemap is the same whichever host it is requested from.
 		siteUrlFromRequest: !overrideDomain,
 	};
 

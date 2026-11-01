@@ -62,10 +62,10 @@ import com.enonic.xp.security.auth.AuthenticationInfo;
  * that are not generated yet, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps are always
  * answered right away.
  * <p>
- * A sitemap whose URLs do not depend on the request (the site has a Base URL) is generated again in the background a few seconds after
- * its content changes, unless it was not requested for {@link #IDLE_TIMEOUT}. Other sitemaps, and all sitemaps kept from before a restart,
- * are generated again when they are next requested; the request gets the previous sitemap. A generation still running when the content
- * changes again is halted and started over.
+ * A sitemap whose URLs do not depend on the request ("Base URL" override, or Guillotine) is generated again in the background a few
+ * seconds after its content changes, unless it was not requested for {@link #IDLE_TIMEOUT}. Other sitemaps, and all sitemaps kept from
+ * before a restart, are generated again when they are next requested; the request gets the previous sitemap. A generation still running
+ * when the content changes again is halted and started over.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
 public final class SitemapCache

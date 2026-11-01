@@ -15,16 +15,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.enonic.xp.app.ApplicationKey;
-import com.enonic.xp.branch.Branch;
 import com.enonic.xp.content.Content;
 import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
-import com.enonic.xp.data.PropertyTree;
-import com.enonic.xp.portal.url.PortalScope;
-import com.enonic.xp.portal.url.PortalScopeParams;
-import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.script.ScriptValue;
@@ -37,8 +31,6 @@ import com.enonic.xp.security.acl.AccessControlEntry;
 import com.enonic.xp.security.acl.AccessControlList;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
-import com.enonic.xp.site.SiteConfig;
-import com.enonic.xp.site.SiteConfigs;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,32 +58,12 @@ class SitemapServiceTest
     private ProjectService projectService;
 
     @Mock
-    private PortalUrlService portalUrlService;
-
-    @Mock
     private SitemapCache cache;
-
-    @Test
-    void usesBaseUrlOfSite()
-    {
-        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
-
-        final SitemapCache.Key key = sitemap( true, true );
-
-        assertThat( key.params().siteUrl() ).isEqualTo( "https://www.example.com" );
-        assertThat( key.repositoryId() ).isEqualTo( "com.enonic.cms.project" );
-        assertThat( key.branch() ).isEqualTo( "master" );
-        final ArgumentCaptor<PortalScopeParams> params = ArgumentCaptor.forClass( PortalScopeParams.class );
-        verify( portalUrlService ).portalScope( params.capture() );
-        assertThat( params.getValue().getContentPath() ).isEqualTo( ContentPath.from( "/mysite" ) );
-        assertThat( params.getValue().getProjectName() ).isEqualTo( ProjectName.from( "project" ) );
-        assertThat( params.getValue().getBranch() ).isEqualTo( Branch.from( "master" ) );
-    }
 
     @Test
     void draftGetsOnlyTheSiteWithoutCaching()
     {
-        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
@@ -110,7 +82,7 @@ class SitemapServiceTest
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), anyBoolean(), any( AuthenticationInfo.class ), any() );
@@ -126,7 +98,7 @@ class SitemapServiceTest
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
@@ -143,7 +115,7 @@ class SitemapServiceTest
         when( projectService.getPublicRead( ProjectName.from( "project" ) ) ).thenReturn( true );
         when( cache.get( any(), anyBoolean(), any(), any() ) ).thenReturn( write( project ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+        asUser( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( project,
                                                                                                                                 false ) );
 
         final ArgumentCaptor<AuthenticationInfo> authInfo = ArgumentCaptor.forClass( AuthenticationInfo.class );
@@ -160,7 +132,7 @@ class SitemapServiceTest
             .repositoryId( "com.enonic.cms.project" )
             .branch( "draft" )
             .build()
-            .callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+            .callWith( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( project,
                                                                                                                                         false ) );
 
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
@@ -183,38 +155,30 @@ class SitemapServiceTest
     }
 
     @Test
-    void usesRequestUrlWithoutBaseUrl()
+    void usesRequestUrlOnlyWithoutOverride()
     {
-        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        final SitemapCache.Key key = sitemap( true, false );
 
-        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( key.params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( key.repositoryId() ).isEqualTo( "com.enonic.cms.project" );
+        assertThat( key.branch() ).isEqualTo( "master" );
+    }
+
+    @Test
+    void usesOverriddenUrlInBackground()
+    {
+        assertThat( sitemap( false, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
     void lowerCasesHostOfRequestUrl()
     {
-        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-
-        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap(
+        inContext( () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap(
             PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( false ), any( AuthenticationInfo.class ), any() );
         assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
-    }
-
-    @Test
-    void usesRequestUrlWhenBaseUrlCannotBeResolved()
-    {
-        when( portalUrlService.portalScope( any() ) ).thenThrow( new IllegalStateException( "boom" ) );
-
-        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
-    }
-
-    @Test
-    void ignoresBaseUrlWhenOverridden()
-    {
-        assertThat( sitemap( false, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
@@ -275,7 +239,7 @@ class SitemapServiceTest
     private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean background )
     {
         inContext(
-            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
+            () -> new SitemapService( contentService, projectService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( background ), any( AuthenticationInfo.class ), any() );
         return key.getValue();
@@ -286,7 +250,6 @@ class SitemapServiceTest
         final BeanContext context = mock( BeanContext.class );
         when( context.getService( ContentService.class ) ).thenReturn( () -> contentService );
         when( context.getService( ProjectService.class ) ).thenReturn( () -> projectService );
-        when( context.getService( PortalUrlService.class ) ).thenReturn( () -> portalUrlService );
         when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
         final SitemapBean bean = new SitemapBean();
         bean.initialize( context );
@@ -299,23 +262,6 @@ class SitemapServiceTest
         when( value.getMap() ).thenReturn(
             Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true ) );
         return value;
-    }
-
-    private static PortalScope scope( final String baseUrl )
-    {
-        final PortalScope.Builder builder =
-            PortalScope.create()
-                .projectName( ProjectName.from( "project" ) )
-                .branch( Branch.from( "master" ) )
-                .path( ContentPath.from( "/mysite" ) )
-                .sitePath( ContentPath.from( "/mysite" ) );
-        if ( baseUrl != null )
-        {
-            final PropertyTree config = new PropertyTree();
-            config.setString( "baseUrl", baseUrl );
-            builder.siteConfigs( SiteConfigs.from( SiteConfig.create().application( ApplicationKey.PORTAL ).config( config ).build() ) );
-        }
-        return builder.build();
     }
 
     private static <T> T inContext( final Supplier<T> supplier )
