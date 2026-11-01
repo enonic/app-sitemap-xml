@@ -369,21 +369,22 @@ class SitemapCacheTest
     }
 
     @Test
-    void evictsLeastRecentlyUsedWhenFull()
+    void evictsLeastRecentlyUsedOfSiteWhenFull()
     {
-        for ( int i = 0; i <= SitemapCache.MAX_ENTRIES; i++ )
+        final Sitemap otherSite = cache.get( key( "other" ), false, AUTH_INFO, this::generate );
+        for ( int i = 0; i <= SitemapCache.MAX_PER_SITE; i++ )
         {
             clock.now = clock.now.plusSeconds( 1 );
-            cache.get( key( "repo" + i ), false, AUTH_INFO, this::generate );
+            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
         }
-        clock.now = clock.now.plusSeconds( 1 );
-        cache.get( key( "repo" + ( SitemapCache.MAX_ENTRIES + 1 ) ), false, AUTH_INFO, this::generate );
 
-        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_ENTRIES );
-        cache.get( key( "repo" + SitemapCache.MAX_ENTRIES ), false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( SitemapCache.MAX_ENTRIES + 2 );
-        cache.get( key( "repo0" ), false, AUTH_INFO, this::generate );
-        assertThat( generated ).hasValue( SitemapCache.MAX_ENTRIES + 3 );
+        assertThat( cache.size() ).isEqualTo( SitemapCache.MAX_PER_SITE + 1 );
+        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 2 );
+        cache.get( hostKey( SitemapCache.MAX_PER_SITE ), false, AUTH_INFO, this::generate );
+        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 2 );
+        cache.get( hostKey( 0 ), false, AUTH_INFO, this::generate );
+        assertThat( generated ).hasValue( SitemapCache.MAX_PER_SITE + 3 );
+        assertThat( cache.get( key( "other" ), false, AUTH_INFO, this::generate ) ).isSameAs( otherSite );
     }
 
     @Test
@@ -397,13 +398,13 @@ class SitemapCacheTest
         final Sitemap second = cache.get( KEY, true, AUTH_INFO, this::generate );
         assertThat( sitemapDirectories() ).containsExactly( second.directory() );
 
-        for ( int i = 0; i <= SitemapCache.MAX_ENTRIES; i++ )
+        for ( int i = 0; i < SitemapCache.MAX_PER_SITE; i++ )
         {
             clock.now = clock.now.plusSeconds( 1 );
-            cache.get( key( "repo" + i ), false, AUTH_INFO, this::generate );
+            cache.get( hostKey( i ), false, AUTH_INFO, this::generate );
         }
         awaitUntil( () -> !Files.exists( second.directory() ) );
-        assertThat( sitemapDirectories() ).hasSize( SitemapCache.MAX_ENTRIES );
+        assertThat( sitemapDirectories() ).hasSize( SitemapCache.MAX_PER_SITE );
     }
 
     @Test
@@ -553,6 +554,12 @@ class SitemapCacheTest
         {
             throw new IllegalStateException( e );
         }
+    }
+
+    private static SitemapCache.Key hostKey( final int port )
+    {
+        return new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ),
+                                     new SitemapParams( "/mysite", "https://example.com:" + ( 8000 + port ), List.of(), List.of() ) );
     }
 
     private static SitemapCache.Key key( final String repo )
