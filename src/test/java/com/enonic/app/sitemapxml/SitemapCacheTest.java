@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -361,7 +362,6 @@ class SitemapCacheTest
         awaitUntil( () -> generated.get() == SitemapCache.MAX_WAITING + 2 );
         assertThat( maxRunning ).hasValue( 1 );
 
-        // The throttled request queued its generation anyway, so the sitemap is ready when asked again.
         cache.get( key( "extra" ), false, AUTH_INFO, this::generate );
         assertThat( generated ).hasValue( SitemapCache.MAX_WAITING + 2 );
     }
@@ -415,7 +415,6 @@ class SitemapCacheTest
         final Sitemap first = cache.get( key, true, AUTH_INFO, this::generate );
         final String content = SitemapTest.text( first.root() );
 
-        // Files of the replaced sitemap are kept a while, for the requests still reading them.
         final SitemapCache restarted = new SitemapCache( executor, clock, Duration.ZERO, Duration.ofMinutes( 1 ), storage );
         assertThat( restarted.size() ).isEqualTo( 1 );
         awaitIdle();
@@ -471,7 +470,7 @@ class SitemapCacheTest
         assertThat( first.directory().resolveSibling( SitemapCache.ENTRY_FILE ) ).isRegularFile();
     }
 
-    private Instant generate( final java.util.function.Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    private Instant generate( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
     {
         sink.accept( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
         return generate( null );

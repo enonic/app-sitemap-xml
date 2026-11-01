@@ -57,7 +57,6 @@ public final class SitemapService
         final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
         final SitemapParams params = baseUrl.map( requested::withSiteUrl ).orElse( requested );
 
-        // Only a sitemap whose URLs do not depend on the request can be generated again before it is requested.
         final boolean background = !siteUrlFromRequest || baseUrl.isPresent();
 
         return cache.get( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals, params ), background,

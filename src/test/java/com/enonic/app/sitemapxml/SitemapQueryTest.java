@@ -152,13 +152,10 @@ class SitemapQueryTest
             requests.add( ( histogram != null ? histogram : query.getSize() + " " + query.getQueryExpr().getOrderList() ) + " " + filters );
             if ( histogram == null )
             {
-                // One content per slice, named after its filters.
                 final Content content = content( "c" + requests.size(), "/mysite/c" + requests.size() );
                 answerGetByIds( List.of( content ) );
                 return result( List.of( content ) );
             }
-            // newest day 6000, then 7000, then a day of 25000 split by hours, then a day with 30000 modified in one millisecond and
-            // stored on three days, then 3000
             switch ( histogram )
             {
                 case "modifiedtime 1d":
@@ -188,7 +185,6 @@ class SitemapQueryTest
 
         final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC] ";
         final String ms = "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
-        // All slices are planned first, then read newest first.
         assertThat( requests ).containsExactly( "modifiedtime 1d -",
                                                 "modifiedtime 1h modifiedtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
                                                 "modifiedtime 1h modifiedtime 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",

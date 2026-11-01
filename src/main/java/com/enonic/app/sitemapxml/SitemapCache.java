@@ -139,7 +139,6 @@ public final class SitemapCache
             entry.background = background;
             if ( entry.source == null )
             {
-                // Restored from disk: generated again with the principals of this request.
                 entry.authInfo = authInfo;
                 entry.source = source;
             }
@@ -241,7 +240,6 @@ public final class SitemapCache
         }
         if ( entry.sitemap == null )
         {
-            // Requests are waiting for it: start over with the changed content.
             generate( key, entry, Duration.ZERO, true );
         }
         else if ( entry.generation != null ||
@@ -249,7 +247,6 @@ public final class SitemapCache
         {
             generate( key, entry, regenerationDelay, true );
         }
-        // Otherwise the sitemap is generated again when next requested.
     }
 
     /**
@@ -410,7 +407,6 @@ public final class SitemapCache
             }
             if ( other != null )
             {
-                // Same sitemap kept twice: the older one goes.
                 Sitemap.delete( entries.get( restored.getKey() ) == other ? directory : other.directory );
             }
         }

@@ -185,7 +185,6 @@ public final class SitemapQuery
                 final List<Filter> filters = with( outer, range( field, from, to ) );
                 if ( level + 1 < INTERVALS.size() )
                 {
-                    // the finer ranges of this dimension replace this one
                     addSlices( histogram( filters, dimension, level + 1 ), dimension, level + 1, outer, slices );
                 }
                 else if ( dimension + 1 < DIMENSIONS.size() )
@@ -305,7 +304,6 @@ public final class SitemapQuery
                 {
                     continue;
                 }
-                // as XP indexes string values
                 last = indexed( CONTENT_ROOT + content.getPath() );
                 if ( isInSite( content.getPath().toString() ) )
                 {
@@ -352,9 +350,6 @@ public final class SitemapQuery
         in.addString( "field", "type" );
         params.contentTypeNames().forEach( type -> in.addString( "values", type ) );
 
-        // The site and everything below it: node paths are also indexed by path hierarchy (_path._path holds every ancestor path), so
-        // this is a single term, which costs the same however large the site is. A wildcard on _path would enumerate every path of the
-        // site in each query.
         term( bool.addSet( "must" ), PATH_HIERARCHY, contentRoot );
 
         final PropertySet blockRobots = bool.addSet( "mustNot" ).addSet( "term" );
