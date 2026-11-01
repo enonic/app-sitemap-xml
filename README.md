@@ -86,7 +86,12 @@ Limit the number of items in the file. Default: 10000. Max: 50000.
 
 ### Override the generated domain name
 
-By default, the app will use the domain name of the site. If you want to override this, you can specify a custom domain name in this field.
+By default, the URLs in `sitemap.xml` use the scheme, host and port the site is requested through. To use fixed ones instead, enter them in this field, for instance `https://www.example.com`:
+
+* The value is put in front of the path of each URL as XP renders it for the request, with the virtual host mapping applied. A site mapped to `/en` gets `https://www.example.com/en/...`.
+* Include the scheme (`https://`) and leave out the trailing slash. The value may end with a path, which then comes before the site's path.
+* The sitemap is then the same whichever host it is requested from, and it is generated again in the background when content changes.
+* Guillotine returns the value as `baseUrl`; the URLs it returns are paths relative to the site.
 
 ### Size of the sitemap
 
