@@ -633,19 +633,19 @@ public final class SitemapCache
                 }
                 final Instant validUntil;
                 final Sitemap sitemap;
-                try (Sitemap.Writer writer = Sitemap.writer( entry.directory.resolve( UUID.randomUUID().toString() ), key.params() ))
+                try (Sitemap.Builder builder = Sitemap.builder( entry.directory.resolve( UUID.randomUUID().toString() ), key.params() ))
                 {
                     validUntil = ContextBuilder.create()
                         .repositoryId( key.repositoryId() )
                         .branch( key.branch() )
                         .authInfo( authInfo )
                         .build()
-                        .callWith( () -> source.write( writer::add, () -> cancelled ) );
+                        .callWith( () -> source.write( builder::add, () -> cancelled ) );
                     if ( cancelled )
                     {
                         throw new CancellationException();
                     }
-                    sitemap = writer.finish();
+                    sitemap = builder.build();
                 }
                 publish( sitemap, validUntil );
             }

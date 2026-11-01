@@ -47,7 +47,7 @@ import com.enonic.xp.query.filter.RangeFilter;
 
 /**
  * Finds the published contents of a sitemap with the content API. Queries only return ids, at most {@value #PAGE_SIZE} at a time; the
- * contents are then loaded in batches and streamed to the sitemap writer, so neither contents nor entries of the whole sitemap are held
+ * contents are then loaded in batches and streamed to the sitemap builder, so neither contents nor entries of the whole sitemap are held
  * in memory.
  * <p>
  * Each query only uses filters Elasticsearch evaluates in proportion to the contents it returns: the site is a single term on the path
