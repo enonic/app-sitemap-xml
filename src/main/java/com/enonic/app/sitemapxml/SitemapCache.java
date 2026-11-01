@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -198,6 +199,36 @@ public final class SitemapCache
             {
                 waiting.release();
             }
+        }
+    }
+
+    /**
+     * Returns the sitemap generated for the given key, if there is one, without generating or keeping anything.
+     */
+    public Optional<Sitemap> cached( final Key key )
+    {
+        final Entry entry = entries.get( key );
+        return Optional.ofNullable( entry == null ? null : entry.sitemap );
+    }
+
+    /**
+     * Generates a sitemap in the calling thread without keeping it: its files are deleted once requests are done reading them.
+     *
+     * @param authInfo the generation runs with these principals
+     */
+    public Sitemap uncached( final Key key, final AuthenticationInfo authInfo, final Source source )
+    {
+        try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( uuid7( clock.millis() ) ), key.params() ))
+        {
+            ContextBuilder.create()
+                .repositoryId( key.repositoryId() )
+                .branch( key.branch() )
+                .authInfo( authInfo )
+                .build()
+                .callWith( () -> source.write( builder::add, () -> false ) );
+            final Sitemap sitemap = builder.build();
+            retire( sitemap );
+            return sitemap;
         }
     }
 

@@ -70,6 +70,10 @@ public final class SitemapBean
         {
             return SitemapResponse.tooManyRequests();
         }
+        catch ( InvalidSiteUrlException e )
+        {
+            return SitemapResponse.badRequest();
+        }
     }
 
     static SitemapParams toParams( final Map<String, Object> map )

@@ -1,8 +1,11 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import com.enonic.xp.content.ContentConstants;
@@ -10,9 +13,16 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.security.PrincipalKey;
+import com.enonic.xp.security.auth.AuthenticationInfo;
 
 public final class SitemapService
 {
+    private static final Set<String> PUBLIC_PRINCIPALS = AuthenticationInfo.unAuthenticated()
+        .getPrincipals()
+        .stream()
+        .map( PrincipalKey::toString )
+        .collect( Collectors.toUnmodifiableSet() );
+
     private final ContentService contentService;
 
     private final SitemapCache cache;
@@ -27,20 +37,38 @@ public final class SitemapService
     }
 
     /**
+     * Returns the sitemap of the published content. Only anonymous requests (crawlers) get it cached: requests of logged-in users get
+     * the cached one when there is one, otherwise one generated for them that is not kept. Requests on the draft branch (preview) get a
+     * sitemap with the site URL only, not kept either.
+     *
      * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
      *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
      *                           background when content changes.
      */
     public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
-        final SitemapParams params = siteUrlFromRequest ? requested.withLowerCaseHost() : requested;
+        final SitemapParams params = siteUrlFromRequest ? requested.forRequestSiteUrl() : requested;
         final Context context = ContextAccessor.current();
         final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
-        final String branch = ContentConstants.BRANCH_MASTER.getValue();
-        final Set<String> principals =
-            context.getAuthInfo().getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
+        final SitemapCache.Key key =
+            new SitemapCache.Key( repositoryId, ContentConstants.BRANCH_MASTER.getValue(), PUBLIC_PRINCIPALS, params );
 
-        return cache.get( new SitemapCache.Key( repositoryId, branch, principals, params ), !siteUrlFromRequest, context.getAuthInfo(),
-                          ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled ) );
+        if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
+        {
+            return cache.uncached( key, context.getAuthInfo(), SitemapService::siteOnly );
+        }
+        final SitemapCache.Source source =
+            ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
+        if ( context.getAuthInfo().isAuthenticated() )
+        {
+            return cache.cached( key ).orElseGet( () -> cache.uncached( key, context.getAuthInfo(), source ) );
+        }
+        return cache.get( key, !siteUrlFromRequest, context.getAuthInfo(), source );
+    }
+
+    private static Instant siteOnly( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    {
+        sink.accept( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
+        return null;
     }
 }
