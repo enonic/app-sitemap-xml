@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -133,6 +134,7 @@ class SitemapCacheTest
         node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
+        clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
         node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
@@ -228,29 +230,51 @@ class SitemapCacheTest
     }
 
     @Test
-    void haltsRunningGenerationWhenContentChangesAgain()
+    void generatesAgainWhenContentChangesWhileGenerating()
     {
-        final Node node = node();
+        final ExecutorService pool = Executors.newCachedThreadPool();
+        executors.add( pool );
+        final Node node = node( Duration.ZERO, pool );
         node.cache.get( KEY, true );
         final CountDownLatch started = new CountDownLatch( 1 );
-        final CountDownLatch halted = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
         source.set( ( sink, cancelled ) -> {
-            started.countDown();
-            awaitUntil( cancelled );
-            halted.countDown();
             source.set( this::generate );
-            return null;
+            started.countDown();
+            await( release );
+            return generate( sink, cancelled );
         } );
 
+        clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         await( started );
+        clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
-        await( halted );
-
-        awaitUntil( () -> generated.get() == 2 );
         node.awaitIdle();
-        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
-        assertThat( store.load( KEY.id() ).generating() ).isNull();
+        release.countDown();
+
+        awaitUntil( () -> generated.get() == 3 );
+        awaitUntil( () -> store.load( KEY.id() ).generating() == null && store.load( KEY.id() ).generatedAt() != null );
+        node.awaitIdle();
+        sleep( 100 );
+        assertThat( generated ).hasValue( 3 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+    }
+
+    @Test
+    void generationOffloadedToAnotherNodeAnswersWaitingRequests()
+        throws Exception
+    {
+        final Node worker = node();
+        final Node node = node( Duration.ZERO, worker.executor(), worker.cache() );
+
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        awaitUntil( () -> store.load( KEY.id() ) != null && store.load( KEY.id() ).sitemap() != null );
+        assertThat( waiting ).isNotDone();
+
+        node.cache.onEvent( storedEvent( "node.updated", KEY.id() ) );
+        assertThat( text( waiting.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/1" );
+        assertThat( generated ).hasValue( 1 );
     }
 
     @Test
@@ -322,14 +346,18 @@ class SitemapCacheTest
     {
         final Node node = node();
         final Sitemap first = node.cache.get( KEY, false );
+        final AtomicInteger failures = new AtomicInteger();
         source.set( ( sink, cancelled ) -> {
+            failures.incrementAndGet();
             throw new IllegalStateException( "boom" );
         } );
 
+        clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
         assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
         node.awaitIdle();
 
+        assertThat( failures.get() ).isEqualTo( 1 );
         assertThat( store.load( KEY.id() ).sitemap() ).isNotNull();
         assertThat( store.load( KEY.id() ).generating() ).isNull();
         assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
@@ -431,7 +459,7 @@ class SitemapCacheTest
     {
         final ExecutorService pool = Executors.newCachedThreadPool();
         executors.add( pool );
-        final Node node = node( Duration.ZERO, ( name, description, work ) -> pool.execute( work ) );
+        final Node node = node( Duration.ZERO, pool );
         final CountDownLatch blocked = new CountDownLatch( 1 );
         final CountDownLatch release = new CountDownLatch( 1 );
         source.set( ( sink, cancelled ) -> {
@@ -453,20 +481,16 @@ class SitemapCacheTest
     }
 
     @Test
-    void runsGenerationsAsNamedTasks()
+    void endsTaskAtOnceWhenSitemapIsUpToDate()
     {
-        final List<String> names = Collections.synchronizedList( new ArrayList<>() );
-        final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-        executors.add( executor );
-        final Node node = node( Duration.ZERO, ( name, description, work ) -> {
-            names.add( name + " " + description );
-            executor.execute( work );
-        } );
-
+        final Node node = node();
         node.cache.get( KEY, false );
 
-        assertThat( names ).containsExactly(
-            SitemapCache.TASK_PREFIX + KEY.id() + " Sitemap of com.enonic.cms.project /mysite https://example.com" );
+        node.cache.runTask( KEY, false, null );
+        assertThat( generated ).hasValue( 1 );
+
+        node.cache.runTask( KEY, false, clock.instant() );
+        assertThat( generated ).hasValue( 2 );
     }
 
     @Test
@@ -486,17 +510,28 @@ class SitemapCacheTest
 
     private Node node( final Duration fileRetention )
     {
-        return node( fileRetention, null );
+        return node( fileRetention, null, null );
     }
 
-    private Node node( final Duration fileRetention, final SitemapCache.Tasks tasks )
+    private Node node( final Duration fileRetention, final Executor taskExecutor )
+    {
+        return node( fileRetention, taskExecutor, null );
+    }
+
+    /**
+     * A cluster node. Its generation tasks run on the given executor and node, by default its own.
+     */
+    private Node node( final Duration fileRetention, final Executor taskExecutor, final SitemapCache taskNode )
     {
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         executors.add( executor );
-        final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ),
-                                                     tasks != null ? tasks : ( name, description, work ) -> executor.execute( work ),
+        final AtomicReference<SitemapCache> self = new AtomicReference<>();
+        final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> ( taskExecutor != null ? taskExecutor : executor ).execute(
+            () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt ) );
+        final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, Duration.ZERO, fileRetention,
                                                      temp.resolve( "node-" + nodes.size() ) );
+        self.set( cache );
         nodes.add( cache );
         return new Node( cache, executor );
     }
