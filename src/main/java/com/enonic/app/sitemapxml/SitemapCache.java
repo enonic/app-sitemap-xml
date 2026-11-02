@@ -80,9 +80,10 @@ import com.enonic.xp.task.TaskService;
  * waiting for sitemaps that were never generated, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps
  * are always answered right away.
  * <p>
- * When content changes, only the node where it changed reacts: it marks the sitemaps of the project as obsolete, and generates the regen
- * ones again a few seconds later: public sitemaps whose URLs do not depend on the request ("Base URL", or Guillotine); the delay lets a
- * series of publications end in one generation. Other sitemaps are generated again on their next request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
+ * When content changes, only the node where it changed reacts: a few seconds later it marks the sitemaps of the project as obsolete and
+ * generates the regen ones again: public sitemaps whose URLs do not depend on the request ("Base URL", or Guillotine). The delay lets a
+ * series of publications, or a flood of events, end in one pass and one generation. Other sitemaps are generated again on their next
+ * request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
  * content may have changed while no node was running.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
