@@ -91,15 +91,6 @@ form:
     label: "Advanced"
     items:
       - type: "TextLine"
-        name: "maxItems"
-        label: "Max included items"
-        helpText: "Default value is 10000, maximum is 50000 - aligned with sitemap.xml\
-          \ specification"
-        occurrences:
-          min: 0
-          max: 1
-        regexp: "^(50000|[1-4]\\d{4}|\\d{2,4}|[1-9])$"
-      - type: "TextLine"
         name: "overrideDomain"
         label: "Base URL"
         helpText: "Force a specific base-url to be used in the sitemap, this will\

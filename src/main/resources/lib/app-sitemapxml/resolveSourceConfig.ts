@@ -21,7 +21,7 @@ export function resolveSourceConfig(project: string, branch: string, scopeKey?: 
 			}
 		}
 
-		const projectEntity = getProject({id: project});
+		const projectEntity = runInContext({principals: ['role:system.admin']}, () => getProject({id: project}));
 		return projectEntity ? projectEntity.siteConfig : {};
 	});
 }
