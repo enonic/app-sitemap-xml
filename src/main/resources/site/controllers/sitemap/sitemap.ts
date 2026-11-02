@@ -23,6 +23,9 @@ import {
 
 const PATH_REGEXP = /\/sitemap(?:-(\d+))?\.xml(\.gz)?$/;
 
+// The sitemap protocol allows at most 50 000 files in a sitemap index.
+const MAX_FILES = 50000;
+
 
 function getSiteUrl(sitePath: string, overrideDomain: string): string {
 	return overrideDomain
@@ -57,6 +60,12 @@ export function get(request: Request<{
 
 	const match = PATH_REGEXP.exec(request.path);
 	const fileNumber = match && match[1] ? parseInt(match[1], 10) : 0;
+	if (match && match[1] && !(fileNumber >= 1 && fileNumber <= MAX_FILES)) {
+		return {
+			body: null,
+			status: 404,
+		};
+	}
 	const isGzip = !!(match && match[2]);
 	// Files are stored gzip-compressed, so a plain .xml request that accepts gzip gets the stored file as is.
 	const isEncoded = !isGzip && acceptsGzip(request.headers);
