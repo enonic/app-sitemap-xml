@@ -1,5 +1,9 @@
 package com.enonic.app.sitemapxml;
 
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.jspecify.annotations.Nullable;
@@ -33,4 +37,26 @@ public interface SitemapFiles
     @Nullable String rootGzipETag();
 
     Optional<String> fileETag( int number, boolean gzip );
+
+    boolean isIndex();
+
+    /**
+     * The time each file last changed, in order.
+     */
+    List<@Nullable Instant> lastModified();
+
+    /**
+     * When the root last changed: that of its only file, or the latest of the files a sitemap index lists.
+     */
+    default @Nullable Instant rootLastModified()
+    {
+        return lastModified().stream().filter( Objects::nonNull ).max( Comparator.naturalOrder() ).orElse( null );
+    }
+
+    default Optional<Instant> fileLastModified( final int number )
+    {
+        return isIndex() && number >= 1 && number <= lastModified().size()
+            ? Optional.ofNullable( lastModified().get( number - 1 ) )
+            : Optional.empty();
+    }
 }

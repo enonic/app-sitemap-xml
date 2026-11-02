@@ -16,6 +16,8 @@ export interface SitemapParams {
 	ignorePatterns: string[]
 	// If-None-Match header of the request, answered with 304 when it matches the file's entity tag.
 	ifNoneMatch?: string
+	// If-Modified-Since header of the request, answered with 304 when the file did not change since (without If-None-Match).
+	ifModifiedSince?: string
 	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
 	siteUrlFromRequest?: boolean
 }
@@ -25,6 +27,7 @@ export interface SitemapResponse {
 	getBody(): object | null
 	getRetryAfter(): number
 	getETag(): string | null
+	getLastModified(): string | null
 }
 
 export interface SitemapBean {

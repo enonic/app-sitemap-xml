@@ -79,23 +79,29 @@ final class SiteUrls
     }
 
     /**
-     * Whether a request could still get the sitemap of the key as one generated again without a request: its site URL is the one the
-     * configuration gives now. A sitemap whose "Base URL" or virtual host changed is not requested anymore. When the configuration can't
-     * be read, the sitemap counts as current.
+     * Whether a request could still get the sitemap of the key as one generated again without a request: the app is still configured for
+     * the site, or the project, and its site URL is the one the configuration gives now. A sitemap whose "Base URL" or virtual host
+     * changed, or of a site the app was removed from, is not requested anymore. When the configuration can't be read, the sitemap counts
+     * as current.
      */
     boolean isCurrent( final SitemapCache.Key key )
     {
-        if ( key.params().format() == SitemapParams.Format.GUILLOTINE )
-        {
-            // returns paths: no site URL in the key
-            return true;
-        }
         final Optional<PortalScope> scope = ContextBuilder.from( ContextAccessor.current() )
             .authInfo( AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() ).principals( RoleKeys.ADMIN ).build() )
             .build()
             .callWith( () -> scope( RepositoryId.from( key.repositoryId() ), ContentConstants.BRANCH_MASTER, key.params().sitePath() ) );
         if ( scope.isEmpty() )
         {
+            return true;
+        }
+        if ( scope.get().getSiteConfigs() == null || scope.get().getSiteConfigs().get( SitemapCache.APPLICATION ) == null )
+        {
+            // the app was removed from the site, or the project
+            return false;
+        }
+        if ( key.params().format() == SitemapParams.Format.GUILLOTINE )
+        {
+            // returns paths: no site URL in the key
             return true;
         }
         final String siteUrl = key.params().siteUrl();

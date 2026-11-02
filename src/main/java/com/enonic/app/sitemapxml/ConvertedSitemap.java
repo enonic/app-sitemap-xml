@@ -23,8 +23,8 @@ import java.util.zip.DeflaterInputStream;
 
 import org.jspecify.annotations.Nullable;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.google.common.io.ByteSource;
 
 import static com.enonic.app.sitemapxml.SitemapRenderer.INDEX_END;
@@ -42,8 +42,6 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
 final class ConvertedSitemap
     implements SitemapFiles
 {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     private static final int ETAG_LENGTH = 32;
 
     private final Sitemap source;
@@ -117,9 +115,16 @@ final class ConvertedSitemap
         return validFile( number ) ? Optional.of( etag( "file", source.fileDigest( number ), gzip ) ) : Optional.empty();
     }
 
-    private boolean isIndex()
+    @Override
+    public boolean isIndex()
     {
         return source.fileCount() > 1;
+    }
+
+    @Override
+    public List<@Nullable Instant> lastModified()
+    {
+        return source.lastModified();
     }
 
     private boolean validFile( final int number )
@@ -234,23 +239,47 @@ final class ConvertedSitemap
                             ended = true;
                             return URLSET_END;
                         }
-                        return url( renderer, MAPPER.readTree( line ) );
+                        return url( renderer, line );
                     }
                 };
             }
         };
     }
 
-    private String url( final SitemapRenderer renderer, final JsonNode entry )
+    /**
+     * The {@code <url>} of a JSON line of the Guillotine sitemap, read with the streaming parser.
+     */
+    private String url( final SitemapRenderer renderer, final String line )
+        throws IOException
     {
-        final String path = entry.required( "path" ).asText();
-        final JsonNode lastmod = entry.get( "lastmod" );
-        final JsonNode changefreq = entry.get( "changefreq" );
-        final JsonNode priority = entry.get( "priority" );
-        return renderer.url( "/".equals( path ) ? params.siteUrl() : baseUrl + path,
-                             lastmod == null ? null : Instant.parse( lastmod.asText() ),
-                             changefreq == null ? SitemapParams.DEFAULT_CHANGEFREQ : changefreq.asText(),
-                             priority == null ? SitemapParams.DEFAULT_PRIORITY : priority.asText() );
+        String path = null;
+        String lastmod = null;
+        String changefreq = SitemapParams.DEFAULT_CHANGEFREQ;
+        String priority = SitemapParams.DEFAULT_PRIORITY;
+        try (JsonParser json = Sitemap.JSON.createParser( line ))
+        {
+            json.nextToken();
+            while ( json.nextToken() == JsonToken.FIELD_NAME )
+            {
+                final String name = json.currentName();
+                json.nextToken();
+                final String value = json.getText();
+                switch ( name )
+                {
+                    case "path" -> path = value;
+                    case "lastmod" -> lastmod = value;
+                    case "changefreq" -> changefreq = value;
+                    case "priority" -> priority = value;
+                    default -> json.skipChildren();
+                }
+            }
+        }
+        if ( path == null )
+        {
+            throw new IOException( "Sitemap entry without path: " + line );
+        }
+        return renderer.url( "/".equals( path ) ? params.siteUrl() : baseUrl + path, lastmod == null ? null : Instant.parse( lastmod ),
+                             changefreq, priority );
     }
 
     /**
@@ -267,7 +296,8 @@ final class ConvertedSitemap
                 final CRC32 crc = new CRC32();
                 final CountingInputStream counted = new CountingInputStream( plain.openStream() );
                 final CheckedInputStream checked = new CheckedInputStream( counted, crc );
-                final Deflater deflater = new Deflater( Deflater.DEFAULT_COMPRESSION, true );
+                // for each response: the fastest level, a little larger output for much less work
+                final Deflater deflater = new Deflater( Deflater.BEST_SPEED, true );
                 final InputStream deflated = new DeflaterInputStream( checked, deflater )
                 {
                     @Override

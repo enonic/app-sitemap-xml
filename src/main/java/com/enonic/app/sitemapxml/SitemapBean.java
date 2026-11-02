@@ -1,6 +1,11 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,28 +41,33 @@ public final class SitemapBean
 
     public SitemapResponse root( final ScriptValue params )
     {
-        return respond( params, sitemap -> Optional.of( sitemap.root() ), sitemap -> Optional.ofNullable( sitemap.rootETag( false ) ) );
+        return respond( params, sitemap -> Optional.of( sitemap.root() ), sitemap -> Optional.ofNullable( sitemap.rootETag( false ) ),
+                        sitemap -> Optional.ofNullable( sitemap.rootLastModified() ) );
     }
 
     public SitemapResponse file( final ScriptValue params, final int number )
     {
-        return respond( params, sitemap -> sitemap.file( number ), sitemap -> sitemap.fileETag( number, false ) );
+        return respond( params, sitemap -> sitemap.file( number ), sitemap -> sitemap.fileETag( number, false ),
+                        sitemap -> sitemap.fileLastModified( number ) );
     }
 
     public SitemapResponse rootGzip( final ScriptValue params )
     {
-        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ), sitemap -> Optional.ofNullable( sitemap.rootGzipETag() ) );
+        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ), sitemap -> Optional.ofNullable( sitemap.rootGzipETag() ),
+                        sitemap -> Optional.ofNullable( sitemap.rootLastModified() ) );
     }
 
     public SitemapResponse rootEncoded( final ScriptValue params )
     {
         return respond( params, sitemap -> Optional.of( sitemap.rootEncoded() ),
-                        sitemap -> Optional.ofNullable( sitemap.rootETag( true ) ) );
+                        sitemap -> Optional.ofNullable( sitemap.rootETag( true ) ),
+                        sitemap -> Optional.ofNullable( sitemap.rootLastModified() ) );
     }
 
     public SitemapResponse fileGzip( final ScriptValue params, final int number )
     {
-        return respond( params, sitemap -> sitemap.fileGzip( number ), sitemap -> sitemap.fileETag( number, true ) );
+        return respond( params, sitemap -> sitemap.fileGzip( number ), sitemap -> sitemap.fileETag( number, true ),
+                        sitemap -> sitemap.fileLastModified( number ) );
     }
 
     public String guillotineFiles( final ScriptValue params )
@@ -81,8 +91,13 @@ public final class SitemapBean
             .sitemap( toParams( params.getMap() ).withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE ), false );
     }
 
+    /**
+     * Answers with the body, its entity tag and when it last changed, or {@code 304 Not Modified}: when {@code If-None-Match} is the
+     * tag, or without {@code If-None-Match}, when {@code If-Modified-Since} is not before the last change.
+     */
     private SitemapResponse respond( final ScriptValue params, final Function<SitemapFiles, Optional<ByteSource>> body,
-                                     final Function<SitemapFiles, Optional<String>> etag )
+                                     final Function<SitemapFiles, Optional<String>> etag,
+                                     final Function<SitemapFiles, Optional<Instant>> lastModified )
     {
         final Map<String, Object> map = params.getMap();
         try
@@ -95,11 +110,15 @@ public final class SitemapBean
                 return SitemapResponse.notFound();
             }
             final String tag = etag.apply( sitemap ).orElse( null );
-            if ( tag != null && tag.equals( map.get( "ifNoneMatch" ) ) )
+            final Instant modified = lastModified.apply( sitemap ).orElse( null );
+            final Object ifNoneMatch = map.get( "ifNoneMatch" );
+            if ( ifNoneMatch != null
+                ? tag != null && tag.equals( ifNoneMatch )
+                : modified != null && notModifiedSince( modified, map.get( "ifModifiedSince" ) ) )
             {
-                return SitemapResponse.notModified( tag );
+                return SitemapResponse.notModified( tag, modified );
             }
-            return SitemapResponse.ok( content.get(), tag );
+            return SitemapResponse.ok( content.get(), tag, modified );
         }
         catch ( SitemapBusyException e )
         {
@@ -108,6 +127,26 @@ public final class SitemapBean
         catch ( InvalidSiteUrlException e )
         {
             return SitemapResponse.badRequest();
+        }
+    }
+
+    /**
+     * Whether the file did not change after the {@code If-Modified-Since} date, which has whole seconds.
+     */
+    private static boolean notModifiedSince( final Instant modified, final @Nullable Object ifModifiedSince )
+    {
+        if ( !( ifModifiedSince instanceof String since ) || since.isBlank() )
+        {
+            return false;
+        }
+        try
+        {
+            final Instant date = ZonedDateTime.parse( since.trim(), DateTimeFormatter.RFC_1123_DATE_TIME ).toInstant();
+            return !modified.truncatedTo( ChronoUnit.SECONDS ).isAfter( date );
+        }
+        catch ( DateTimeParseException e )
+        {
+            return false;
         }
     }
 

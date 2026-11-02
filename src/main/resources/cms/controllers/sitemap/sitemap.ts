@@ -47,6 +47,7 @@ export function get(request: Request): Response {
 		// so the sitemap is the same whichever host it is requested from.
 		siteUrlFromRequest: !overrideDomain,
 		ifNoneMatch: request.getHeader('If-None-Match') || undefined,
+		ifModifiedSince: request.getHeader('If-Modified-Since') || undefined,
 	};
 
 	const bean = newSitemapBean();
@@ -80,7 +81,11 @@ export function get(request: Request): Response {
 		};
 	}
 	const etag = result.getETag();
-	const etagHeader: Record<string, string> = etag ? {ETag: etag} : {};
+	const lastModified = result.getLastModified();
+	const etagHeader: Record<string, string> = {
+		...(etag ? {ETag: etag} : {}),
+		...(lastModified ? {'Last-Modified': lastModified} : {}),
+	};
 	if (status === 304) {
 		return {
 			body: null,
@@ -98,7 +103,7 @@ export function get(request: Request): Response {
 		return {
 			body: result.getBody(),
 			contentType: 'application/gzip',
-			...(etag ? {headers: etagHeader} : {}),
+			...(Object.keys(etagHeader).length ? {headers: etagHeader} : {}),
 		};
 	}
 	return {
@@ -108,4 +113,11 @@ export function get(request: Request): Response {
 			? {...etagHeader, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
 			: {...etagHeader, Vary: 'Accept-Encoding'},
 	};
+}
+
+/**
+ * Answers HEAD like GET, without the body: a sitemap written on the fly is not written.
+ */
+export function head(request: Request): Response {
+	return {...get(request), body: null};
 }

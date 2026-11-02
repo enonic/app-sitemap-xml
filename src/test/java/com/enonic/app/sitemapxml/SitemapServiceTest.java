@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -374,6 +375,42 @@ class SitemapServiceTest
         final String encoded = inContext( () -> bean.rootEncoded( scriptValue() ) ).getETag();
         assertThat( encoded ).isEqualTo( etag.substring( 0, etag.length() - 1 ) + "-gzip\"" );
         assertThat( inContext( () -> bean.rootEncoded( scriptValue( encoded ) ) ).getStatus() ).isEqualTo( 304 );
+    }
+
+    @Test
+    void beanSendsLastModifiedAndAnswers304WhenNotModifiedSince()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
+        when( cache.get( any() ) ).thenReturn(
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 10,
+                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
+        final SitemapBean bean = bean();
+
+        final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
+        // the files were last changed at SitemapTest.NOW
+        assertThat( first.getLastModified() ).isEqualTo( "Sat, 1 Jun 2024 00:00:00 GMT" );
+
+        assertThat( inContext( () -> bean.root( since( "Sat, 01 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
+        assertThat( inContext( () -> bean.root( since( "Sun, 02 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
+        assertThat( inContext( () -> bean.root( since( "Fri, 31 May 2024 23:59:59 GMT", null ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.root( since( "not a date", null ) ) ).getStatus() ).isEqualTo( 200 );
+        // If-None-Match decides when present
+        assertThat( inContext( () -> bean.root( since( "Sun, 02 Jun 2024 00:00:00 GMT", "\"other\"" ) ) ).getStatus() ).isEqualTo(
+            200 );
+    }
+
+    private static ScriptValue since( final String ifModifiedSince, final @Nullable String ifNoneMatch )
+    {
+        final Map<String, Object> map = new HashMap<>(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true, "ifModifiedSince",
+                    ifModifiedSince ) );
+        if ( ifNoneMatch != null )
+        {
+            map.put( "ifNoneMatch", ifNoneMatch );
+        }
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( map );
+        return value;
     }
 
     @Test

@@ -40,11 +40,24 @@ class SiteUrlsTest
     private VirtualHostService virtualHostService;
 
     @Test
-    void guillotineSitemapIsAlwaysCurrentAsItHasNoSiteUrl()
+    void guillotineSitemapIsCurrentWhileTheAppIsConfiguredAsItHasNoSiteUrl()
     {
-        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent(
+        final SitemapCache.Key guillotine =
             new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone", "user:system:anonymous" ),
-                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ) ) ) ).isTrue();
+                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ) );
+        scope( "https://www.example.com", "https://base.example.com" );
+        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( guillotine ) ).isTrue();
+
+        scope( false, null, "https://base.example.com" );
+        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( guillotine ) ).isFalse();
+    }
+
+    @Test
+    void sitemapIsNotCurrentOnceTheAppIsRemovedFromTheSite()
+    {
+        scope( false, null, "https://base.example.com/" );
+
+        assertThat( current( "https://base.example.com" ) ).isFalse();
     }
 
     @Test
@@ -109,11 +122,19 @@ class SiteUrlsTest
 
     private void scope( final @Nullable String override, final @Nullable String baseUrl )
     {
+        scope( true, override, baseUrl );
+    }
+
+    private void scope( final boolean app, final @Nullable String override, final @Nullable String baseUrl )
+    {
         final List<SiteConfig> configs = new ArrayList<>();
-        if ( override != null )
+        if ( app )
         {
             final PropertyTree config = new PropertyTree();
-            config.setString( "overrideDomain", override );
+            if ( override != null )
+            {
+                config.setString( "overrideDomain", override );
+            }
             configs.add( SiteConfig.create().application( SitemapCache.APPLICATION ).config( config ).build() );
         }
         if ( baseUrl != null )

@@ -22,12 +22,13 @@ jest.mock('/lib/xp/portal', () => ({
 	pageUrl,
 }), {virtual: true});
 
-function response(status: number, body: string | object | null, etag: string | null = null) {
+function response(status: number, body: string | object | null, etag: string | null = null, lastModified: string | null = null) {
 	return {
 		getStatus: () => status,
 		getBody: () => body,
 		getRetryAfter: () => (status === 429 ? 10 : 0),
 		getETag: () => etag,
+		getLastModified: () => lastModified,
 	};
 }
 
@@ -142,6 +143,35 @@ describe('sitemap controller', () => {
 			body: 'gzipped root',
 			contentType: 'application/gzip',
 			headers: {ETag: '"abc-gzip"'},
+		});
+	});
+
+	it('sends Last-Modified and passes If-Modified-Since', async () => {
+		const {get} = await import('/cms/controllers/sitemap/sitemap');
+		const date = 'Sat, 01 Jun 2024 10:00:00 GMT';
+		bean.root.mockReturnValueOnce(response(200, '<urlset/>', '"abc"', date));
+		expect(get(request('/mysite/sitemap.xml'))).toEqual({
+			body: '<urlset/>',
+			contentType: 'text/xml; charset=utf-8',
+			headers: {ETag: '"abc"', 'Last-Modified': date, Vary: 'Accept-Encoding'},
+		});
+
+		bean.root.mockReturnValueOnce(response(304, null, '"abc"', date));
+		expect(get(request('/mysite/sitemap.xml', {'If-Modified-Since': date}))).toEqual({
+			body: null,
+			headers: {ETag: '"abc"', 'Last-Modified': date, Vary: 'Accept-Encoding'},
+			status: 304,
+		});
+		expect(bean.root).toHaveBeenLastCalledWith(expect.objectContaining({ifModifiedSince: date}));
+	});
+
+	it('answers HEAD like GET without the body', async () => {
+		const {head} = await import('/cms/controllers/sitemap/sitemap');
+		bean.root.mockReturnValueOnce(response(200, '<urlset/>', '"abc"'));
+		expect(head(request('/mysite/sitemap.xml'))).toEqual({
+			body: null,
+			contentType: 'text/xml; charset=utf-8',
+			headers: {ETag: '"abc"', Vary: 'Accept-Encoding'},
 		});
 	});
 
