@@ -97,7 +97,7 @@ public final class SitemapBean
                 return SitemapResponse.notFound();
             }
             final String tag = etag.apply( sitemap ).orElse( null );
-            if ( tag != null && matches( map.get( "ifNoneMatch" ), tag ) )
+            if ( tag != null && tag.equals( map.get( "ifNoneMatch" ) ) )
             {
                 return SitemapResponse.notModified( tag );
             }
@@ -111,32 +111,6 @@ public final class SitemapBean
         {
             return SitemapResponse.badRequest();
         }
-    }
-
-    /**
-     * Whether an {@code If-None-Match} header matches the entity tag, by weak comparison.
-     */
-    static boolean matches( final @Nullable Object ifNoneMatch, final String etag )
-    {
-        if ( !( ifNoneMatch instanceof String header ) )
-        {
-            return false;
-        }
-        final String opaque = opaqueTag( etag );
-        for ( final String candidate : header.split( "," ) )
-        {
-            final String trimmed = candidate.trim();
-            if ( trimmed.equals( "*" ) || opaqueTag( trimmed ).equals( opaque ) )
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static String opaqueTag( final String etag )
-    {
-        return etag.startsWith( "W/" ) ? etag.substring( 2 ) : etag;
     }
 
     static SitemapParams toParams( final Map<String, Object> map )

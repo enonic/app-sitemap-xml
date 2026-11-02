@@ -61,6 +61,8 @@ public final class Sitemap
 
     static final long MAX_FILE_BYTES = 50L * 1024 * 1024;
 
+    private static final int ETAG_LENGTH = 32;
+
     static final int MAX_FILES = 50_000;
 
     static final int MAX_LOC_LENGTH = 2_048;
@@ -168,9 +170,9 @@ public final class Sitemap
     }
 
     /**
-     * The entity tag of {@link #root()}, or of {@link #rootEncoded()} when encoded: the digest of the uncompressed content. It is the same
-     * on every cluster node holding the same sitemap, since the files are written in a deterministic order. Gzip-encoded variants get a
-     * weak tag, as the compressed bytes may differ between nodes.
+     * The entity tag of {@link #root()}, or of {@link #rootEncoded()} when encoded: the first 16 bytes of the digest of the uncompressed
+     * content, with a {@code -gzip} suffix for gzip-compressed variants. It is the same on every cluster node holding the same sitemap,
+     * since the files are written in a deterministic order.
      */
     public @Nullable String rootETag( final boolean encoded )
     {
@@ -382,7 +384,7 @@ public final class Sitemap
         {
             return null;
         }
-        return gzip ? "W/\"" + digest + "-gzip\"" : "\"" + digest + "\"";
+        return "\"" + digest.substring( 0, ETAG_LENGTH ) + ( gzip ? "-gzip" : "" ) + "\"";
     }
 
     private @Nullable String digest( final String name )

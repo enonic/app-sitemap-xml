@@ -137,11 +137,11 @@ describe('sitemap controller', () => {
 		});
 		expect(bean.root).toHaveBeenLastCalledWith(expect.objectContaining({ifNoneMatch: '"abc"'}));
 
-		bean.rootGzip.mockReturnValueOnce(response(200, 'gzipped root', 'W/"abc-gzip"'));
+		bean.rootGzip.mockReturnValueOnce(response(200, 'gzipped root', '"abc-gzip"'));
 		expect(get(request('/mysite/sitemap.xml.gz'))).toEqual({
 			body: 'gzipped root',
 			contentType: 'application/gzip',
-			headers: {ETag: 'W/"abc-gzip"'},
+			headers: {ETag: '"abc-gzip"'},
 		});
 	});
 

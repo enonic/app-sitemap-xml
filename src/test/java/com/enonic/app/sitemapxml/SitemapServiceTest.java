@@ -272,14 +272,17 @@ class SitemapServiceTest
         final String etag = first.getETag();
         assertThat( etag ).isNotNull();
 
-        final SitemapResponse unchanged = inContext( () -> bean.root( scriptValue( "W/" + etag + ", \"other\"" ) ) );
+        final SitemapResponse unchanged = inContext( () -> bean.root( scriptValue( etag ) ) );
         assertThat( unchanged.getStatus() ).isEqualTo( 304 );
         assertThat( unchanged.getBody() ).isNull();
         assertThat( unchanged.getETag() ).isEqualTo( etag );
 
         assertThat( inContext( () -> bean.root( scriptValue( "\"other\"" ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.root( scriptValue( "W/" + etag ) ) ).getStatus() ).isEqualTo( 200 );
         assertThat( inContext( () -> bean.rootEncoded( scriptValue( etag ) ) ).getStatus() ).isEqualTo( 200 );
-        assertThat( inContext( () -> bean.rootEncoded( scriptValue( "*" ) ) ).getStatus() ).isEqualTo( 304 );
+        final String encoded = inContext( () -> bean.rootEncoded( scriptValue() ) ).getETag();
+        assertThat( encoded ).isEqualTo( etag.substring( 0, etag.length() - 1 ) + "-gzip\"" );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( encoded ) ) ).getStatus() ).isEqualTo( 304 );
     }
 
     @Test
