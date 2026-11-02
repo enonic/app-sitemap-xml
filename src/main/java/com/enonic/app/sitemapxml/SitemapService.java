@@ -20,6 +20,8 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
+import com.enonic.xp.portal.PortalRequest;
+import com.enonic.xp.portal.PortalRequestAccessor;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.project.ProjectService;
@@ -28,6 +30,8 @@ import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostHelper;
 import com.enonic.xp.web.vhost.VirtualHostService;
 
 public final class SitemapService
@@ -81,7 +85,13 @@ public final class SitemapService
             return cache.uncached( key, context.getAuthInfo(), draft );
         }
         return cache.get( key, !authInfo.isAuthenticated() &&
-            ( !siteUrlFromRequest || baseUrl.isPresent() || siteUrls.isVirtualHostUrl( params ) ) );
+            ( !siteUrlFromRequest || baseUrl.isPresent() || siteUrls.isVirtualHostUrl( params, servedVirtualHost() ) ) );
+    }
+
+    private static @Nullable VirtualHost servedVirtualHost()
+    {
+        final PortalRequest request = PortalRequestAccessor.get();
+        return request == null || request.getRawRequest() == null ? null : VirtualHostHelper.getVirtualHost( request.getRawRequest() );
     }
 
     /**

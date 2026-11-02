@@ -3,6 +3,7 @@ package com.enonic.app.sitemapxml;
 import java.util.Arrays;
 import java.util.Optional;
 
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,6 +21,8 @@ import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 import com.enonic.xp.site.SiteConfig;
 import com.enonic.xp.site.SiteConfigs;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostHelper;
 import com.enonic.xp.web.vhost.VirtualHostService;
 
 /**
@@ -49,15 +52,28 @@ final class SiteUrls
     }
 
     /**
-     * Whether the site URL taken from the request is that of a virtual host matching its host exactly (not by a {@code ~} pattern),
-     * without a port: such URLs come from the configuration, not from whatever the client sent, so the sitemap can be generated again
-     * without a request.
+     * Whether the site URL taken from the request is that of the virtual host the request came through, and that virtual host matches
+     * the host exactly (one of its hosts, not a {@code ~} pattern), without a port: such URLs come from the configuration, not from
+     * whatever the client sent, so the sitemap can be generated again without a request.
+     *
+     * @param served the virtual host of the request, from {@link VirtualHostHelper}: its host is the request's host name for both an
+     *               exact host and a pattern, so its configuration is looked up by name
      */
-    boolean isVirtualHostUrl( final SitemapParams params )
+    boolean isVirtualHostUrl( final SitemapParams params, final @Nullable VirtualHost served )
+    {
+        return served != null && isExactVirtualHostUrl( params, served.getName() );
+    }
+
+    /**
+     * Whether the host of the site URL, without a port, is one of the exact hosts of the virtual host of the given name, or of any
+     * virtual host when the name is null.
+     */
+    private boolean isExactVirtualHostUrl( final SitemapParams params, final @Nullable String name )
     {
         final String host = params.hostWithoutPort();
         return host != null && virtualHostService.isEnabled() && virtualHostService.getVirtualHosts()
             .stream()
+            .filter( virtualHost -> name == null || name.equals( virtualHost.getName() ) )
             .flatMap( virtualHost -> Arrays.stream( virtualHost.getHost().split( " " ) ) )
             .anyMatch( exact -> !exact.startsWith( "~" ) && exact.equalsIgnoreCase( host ) );
     }
@@ -95,7 +111,8 @@ final class SiteUrls
         {
             return siteUrl.equals( baseUrl );
         }
-        return isVirtualHostUrl( key.params() );
+        // no request here: any virtual host matching the host exactly
+        return isExactVirtualHostUrl( key.params(), null );
     }
 
     private Optional<PortalScope> scope( final RepositoryId repositoryId, final Branch branch, final String sitePath )

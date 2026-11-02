@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +24,8 @@ import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
+import com.enonic.xp.portal.PortalRequest;
+import com.enonic.xp.portal.PortalRequestAccessor;
 import com.enonic.xp.portal.url.PortalScope;
 import com.enonic.xp.portal.url.PortalScopeParams;
 import com.enonic.xp.portal.url.PortalUrlService;
@@ -76,6 +80,10 @@ class SitemapServiceTest
 
     @Mock
     private VirtualHostService virtualHostService;
+
+    private final List<VirtualHost> configured = new ArrayList<>();
+
+    private @Nullable String served;
 
     @Test
     void usesBaseUrlOfSite()
@@ -201,7 +209,8 @@ class SitemapServiceTest
     void requestUrlOfVirtualHostMatchingItsHostExactlyWithoutPortIsRegen()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-        virtualHosts( "www.example.com Request.Example.com" );
+        virtualHosts( "site", "www.example.com Request.Example.com" );
+        served = "site";
 
         assertThat( sitemap( true, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
@@ -210,7 +219,28 @@ class SitemapServiceTest
     void requestUrlOfVirtualHostMatchingItsHostByPatternIsNotRegen()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-        virtualHosts( "~.*\\.example\\.com" );
+        virtualHosts( "site", "~.*\\.example\\.com" );
+        served = "site";
+
+        sitemap( true, false );
+    }
+
+    @Test
+    void requestUrlServedByPatternIsNotRegenAlsoWhenAnotherVirtualHostHasTheHostExactly()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "exact", "request.example.com" );
+        virtualHosts( "pattern", "~.*\\.example\\.com" );
+        served = "pattern";
+
+        sitemap( true, false );
+    }
+
+    @Test
+    void requestUrlIsNotRegenWithoutVirtualHostOnTheRequest()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "site", "request.example.com" );
 
         sitemap( true, false );
     }
@@ -219,11 +249,12 @@ class SitemapServiceTest
     void requestUrlWithPortIsNotRegen()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-        lenient().when( virtualHostService.isEnabled() ).thenReturn( true );
+        virtualHosts( "site", "request.example.com" );
+        served = "site";
 
-        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(),
-                                             virtualHostService ).sitemap( PARAMS.withSiteUrl( "https://request.example.com:8443/mysite" ),
-                                                                           true ) );
+        inServedRequest( () -> inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache,
+                                                                    Clock.systemUTC(), virtualHostService ).sitemap(
+            PARAMS.withSiteUrl( "https://request.example.com:8443/mysite" ), true ) ) );
 
         verify( cache ).get( any(), eq( false ) );
         verify( virtualHostService, never() ).getVirtualHosts();
@@ -233,6 +264,7 @@ class SitemapServiceTest
     void requestUrlIsNotRegenWhenVirtualHostsAreDisabled()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        served = "site";
 
         sitemap( true, false );
     }
@@ -358,19 +390,39 @@ class SitemapServiceTest
 
     private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean regen )
     {
-        inContext(
-            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, siteUrlFromRequest ) );
+        inServedRequest( () -> inContext(
+            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, siteUrlFromRequest ) ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( regen ) );
         return key.getValue();
     }
 
-    private void virtualHosts( final String host )
+    private void virtualHosts( final String name, final String host )
     {
         final VirtualHost virtualHost = mock( VirtualHost.class );
-        when( virtualHost.getHost() ).thenReturn( host );
-        when( virtualHostService.isEnabled() ).thenReturn( true );
-        when( virtualHostService.getVirtualHosts() ).thenReturn( List.of( virtualHost ) );
+        lenient().when( virtualHost.getName() ).thenReturn( name );
+        lenient().when( virtualHost.getHost() ).thenReturn( host );
+        configured.add( virtualHost );
+        lenient().when( virtualHostService.isEnabled() ).thenReturn( true );
+        lenient().when( virtualHostService.getVirtualHosts() ).thenReturn( configured );
+    }
+
+    /**
+     * Runs as a portal request that came through the virtual host named {@link #served}, if any.
+     */
+    private <T> T inServedRequest( final Supplier<T> supplier )
+    {
+        if ( served == null )
+        {
+            return supplier.get();
+        }
+        final VirtualHost virtualHost = mock( VirtualHost.class );
+        when( virtualHost.getName() ).thenReturn( served );
+        final HttpServletRequest raw = mock( HttpServletRequest.class );
+        when( raw.getAttribute( VirtualHost.class.getName() ) ).thenReturn( virtualHost );
+        final PortalRequest request = new PortalRequest();
+        request.setRawRequest( raw );
+        return PortalRequestAccessor.callWith( request, supplier );
     }
 
     private SitemapBean bean()
