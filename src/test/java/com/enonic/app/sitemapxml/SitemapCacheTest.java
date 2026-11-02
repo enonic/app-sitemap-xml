@@ -522,6 +522,50 @@ class SitemapCacheTest
     }
 
     @Test
+    void unchangedGenerationReleasesQueuedGenerationToo()
+    {
+        source.set( ( sink, cancelled ) -> {
+            generated.incrementAndGet();
+            sink.accept( new SitemapEntry( "/same", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            return null;
+        } );
+        final Node node = node();
+        node.cache.get( KEY, false );
+        final SitemapStore.Stored first = store.load( KEY.id() );
+        assertThat( store.queue( first, "other", clock.instant(), SitemapCache.STALE_GENERATION ) ).isTrue();
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        node.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
+        node.cache.get( KEY, false );
+        awaitUntil( () -> store.checks.get() == 1 );
+
+        final SitemapStore.Stored checked = store.load( KEY.id() );
+        assertThat( checked.version() ).isEqualTo( first.version() );
+        assertThat( checked.queued() ).isNull();
+        assertThat( checked.generating() ).isNull();
+    }
+
+    @Test
+    void sitemapIsStoredAgainWhenItBecomesRegen()
+    {
+        final Node node = node();
+        node.cache.get( KEY, false );
+        assertThat( store.load( KEY.id() ).regen() ).isFalse();
+        clock.advance( SitemapCache.SUBMIT_INTERVAL.plusSeconds( 1 ) );
+
+        node.cache.get( KEY, true );
+
+        awaitUntil( () -> store.load( KEY.id() ).regen() );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 2 );
+        node.cache.get( KEY, true );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 2 );
+    }
+
+    @Test
     void floodOfChangesMarksAndGeneratesOnce()
     {
         regenerationDelay = Duration.ofMillis( 300 );

@@ -280,8 +280,9 @@ public final class SitemapCache
             final SitemapStore.Stored stored = current( key, entry );
             if ( stored != null && stored.sitemap() != null )
             {
-                if ( shouldRegenerate( entry, stored, now ) )
+                if ( stored.regen() != regen || shouldRegenerate( entry, stored, now ) )
                 {
+                    // also when the configuration made it regen or not since: it is stored again with the flag
                     generate( key, entry, Duration.ZERO, false, entry.sitemapChanges != entry.changes ? entry.changedAt : null );
                 }
                 return stored.sitemap();
@@ -337,7 +338,7 @@ public final class SitemapCache
             {
                 final Instant now = clock.instant();
                 final SitemapStore.Stored previous = store.load( id );
-                if ( previous != null && isUpToDate( previous, now, changedAt ) )
+                if ( previous != null && previous.regen() == regen && isUpToDate( previous, now, changedAt ) )
                 {
                     LOG.debug( "Sitemap {} is up to date", key );
                     report( progress, "Sitemap is up to date" );

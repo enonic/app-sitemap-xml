@@ -62,6 +62,19 @@ class SiteUrlsTest
     }
 
     @Test
+    void overrideMatchesOnlyUpToWhereThePathStarts()
+    {
+        scope( "https://www.example.co", null );
+        assertThat( current( "https://www.example.com/mysite" ) ).isFalse();
+        assertThat( current( "https://www.example.co:8443/mysite" ) ).isFalse();
+        assertThat( current( "https://www.example.co/mysite" ) ).isTrue();
+        assertThat( current( "https://www.example.co/" ) ).isTrue();
+
+        scope( "https://www.example.com/", null );
+        assertThat( current( "https://www.example.com//mysite" ) ).isTrue();
+    }
+
+    @Test
     void sitemapWithBaseUrlIsCurrentWhileItIsTheBaseUrl()
     {
         scope( null, "https://base.example.com/" );

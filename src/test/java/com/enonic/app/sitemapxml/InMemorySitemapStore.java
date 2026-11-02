@@ -139,7 +139,7 @@ final class InMemorySitemapStore
         final Instant obsolete = latest.obsolete() != null && latest.obsolete().isBefore( startedAt ) ? null : latest.obsolete();
         final Stored checked =
             new Stored( latest.id(), latest.version(), latest.key(), latest.regen(), latest.sitemap(), latest.validUntil(), startedAt,
-                        startedAt, obsolete, null, latest.queued() );
+                        startedAt, obsolete, null, null );
         stored.put( latest.id(), checked );
         return checked;
     }

@@ -86,7 +86,9 @@ final class SiteUrls
         }
         if ( !override.isEmpty() )
         {
-            return siteUrl.startsWith( override );
+            // the override followed by the site's path: it must end where a path starts, not in the middle of a host or a segment
+            return siteUrl.startsWith( override ) &&
+                ( override.endsWith( "/" ) || siteUrl.length() == override.length() || siteUrl.charAt( override.length() ) == '/' );
         }
         final String baseUrl = scope.get().getBaseUrl();
         if ( baseUrl != null )

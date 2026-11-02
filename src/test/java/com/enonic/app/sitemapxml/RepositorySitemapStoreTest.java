@@ -278,7 +278,7 @@ class RepositorySitemapStoreTest
         verify( nodeService ).applyVersionAttributes( apply.capture() );
         assertThat( apply.getValue().getNodeVersionId() ).isEqualTo( versionId );
         assertThat( apply.getValue().getAddAttributes().get( "checked" ).asString() ).isEqualTo( NOW.toString() );
-        assertThat( apply.getValue().getRemoveAttributes() ).containsExactly( "generating" );
+        assertThat( apply.getValue().getRemoveAttributes() ).containsExactlyInAnyOrder( "generating", "queued" );
         final ArgumentCaptor<Event> event = ArgumentCaptor.forClass( Event.class );
         verify( eventPublisher ).publish( event.capture() );
         assertThat( event.getValue().getType() ).isEqualTo( RepositorySitemapStore.CHECKED_EVENT );

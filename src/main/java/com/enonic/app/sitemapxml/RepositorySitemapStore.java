@@ -5,11 +5,13 @@ import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -205,7 +207,7 @@ final class RepositorySitemapStore
             return false;
         }
         call( () -> {
-            apply( NodeVersionId.from( stored.version() ), attribute( QUEUED, member, now ), null );
+            apply( NodeVersionId.from( stored.version() ), attribute( QUEUED, member, now ) );
             return null;
         } );
         return true;
@@ -248,7 +250,7 @@ final class RepositorySitemapStore
                 if ( obsolete != null && !obsolete.isBefore( startedAt ) )
                 {
                     apply( node.getNodeVersionId(),
-                           Attributes.create().attribute( OBSOLETE, GenericValue.stringValue( obsolete.toString() ) ).build(), null );
+                           Attributes.create().attribute( OBSOLETE, GenericValue.stringValue( obsolete.toString() ) ).build() );
                 }
             }
             return toStored( node );
@@ -288,7 +290,8 @@ final class RepositorySitemapStore
                 return null;
             }
             apply( node.getNodeVersionId(),
-                   Attributes.create().attribute( CHECKED, GenericValue.stringValue( startedAt.toString() ) ).build(), GENERATING );
+                   Attributes.create().attribute( CHECKED, GenericValue.stringValue( startedAt.toString() ) ).build(), GENERATING,
+                   QUEUED );
             return toStored( node );
         } );
         if ( checked != null )
@@ -445,18 +448,20 @@ final class RepositorySitemapStore
     {
         call( () -> {
             apply( NodeVersionId.from( stored.version() ),
-                   Attributes.create().attribute( name, GenericValue.stringValue( time.toString() ) ).build(), null );
+                   Attributes.create().attribute( name, GenericValue.stringValue( time.toString() ) ).build() );
             return null;
         } );
     }
 
-    private void apply( final NodeVersionId versionId, final Attributes add, final @Nullable String remove )
+    private void apply( final NodeVersionId versionId, final Attributes add, final @Nullable String... remove )
     {
         final ApplyVersionAttributesParams.Builder params =
             ApplyVersionAttributesParams.create().nodeVersionId( versionId ).addAttributes( add );
-        if ( remove != null )
+        final Set<String> removed = remove == null ? Set.of() : Arrays.stream( remove ).filter( Objects::nonNull ).collect(
+            Collectors.toUnmodifiableSet() );
+        if ( !removed.isEmpty() )
         {
-            params.removeAttributes( Set.of( remove ) );
+            params.removeAttributes( removed );
         }
         nodeService.applyVersionAttributes( params.build() );
     }
