@@ -109,7 +109,7 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 ### Conditional requests
 
-Every sitemap file is sent with an `ETag`: the SHA-256 digest of its uncompressed content, and a weak `W/"…-gzip"` tag when it is sent gzip-compressed. A request with a matching `If-None-Match` (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
+Every sitemap file is sent with an `ETag`, as Booster does: the first 16 bytes of the SHA-256 digest of its uncompressed content in hex, with a `-gzip` suffix when it is sent gzip-compressed (`"…-gzip"`). A request whose `If-None-Match` is that tag (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
 
 ## Caching and background generation
 

@@ -308,10 +308,10 @@ class SitemapTest
         final Sitemap split = write( params( "https://example.com" ), 2, entries );
         final Sitemap again = write( params( "https://example.com" ), 2, entries );
 
-        assertThat( split.rootETag( false ) ).matches( "\"[0-9a-f]{64}\"" ).isEqualTo( again.rootETag( false ) );
+        assertThat( split.rootETag( false ) ).matches( "\"[0-9a-f]{32}\"" ).isEqualTo( again.rootETag( false ) );
         final String plain = split.rootETag( false );
-        assertThat( split.rootETag( true ) ).isEqualTo( "W/" + plain.substring( 0, plain.length() - 1 ) + "-gzip\"" );
-        assertThat( split.rootGzipETag() ).startsWith( "W/\"" ).isNotEqualTo( split.rootETag( true ) );
+        assertThat( split.rootETag( true ) ).isEqualTo( plain.substring( 0, plain.length() - 1 ) + "-gzip\"" );
+        assertThat( split.rootGzipETag() ).matches( "\"[0-9a-f]{32}-gzip\"" ).isNotEqualTo( split.rootETag( true ) );
         assertThat( split.fileETag( 1, false ) ).isNotEqualTo( split.fileETag( 2, false ) ).isEqualTo( again.fileETag( 1, false ) );
         assertThat( split.fileETag( 4, false ) ).isEmpty();
 
