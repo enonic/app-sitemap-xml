@@ -71,15 +71,16 @@ public final class Sitemap
      * The longest base URL a Guillotine client is assumed to put in front of the paths. Paths longer than the rest of
      * {@link #MAX_LOC_LENGTH} are left out of a Guillotine sitemap.
      */
-    static final int MAX_BASE_URL_LENGTH = 500;
+    static final int MAX_BASE_URL_LENGTH = 360;
 
     /**
      * The bytes a Guillotine client is assumed to write for a URL besides its path, and for each entry of its sitemap index: a
-     * Guillotine sitemap is split as if each URL took its percent-encoded path plus this many bytes. It covers what Next.js
-     * writes for a sitemap entry ({@code <url>}, {@code <loc>}, {@code <lastmod>}, {@code <changefreq>}, {@code <priority>}, each on its
-     * own line, 133 bytes with a full time) with a base URL of {@link #MAX_BASE_URL_LENGTH} characters, rounded up.
+     * Guillotine sitemap is split as if each URL took its percent-encoded path plus this many bytes. A round number: what Next.js
+     * writes for a sitemap entry besides the URL ({@code <url>}, {@code <loc>}, {@code <lastmod>}, {@code <changefreq>},
+     * {@code <priority>}, each on its own line, 133 bytes with a full time) leaves room for a base URL of {@link #MAX_BASE_URL_LENGTH}
+     * characters.
      */
-    static final int RESERVED_BYTES_PER_URL = 640;
+    static final int RESERVED_BYTES_PER_URL = 500;
 
     static final String GZIP_EXTENSION = ".gz";
 
@@ -647,8 +648,8 @@ public final class Sitemap
         {
             try
             {
-                // a Guillotine sitemap has no site URL: the path, percent-encoded
-                final String loc = renderer.loc( entry );
+                // for Guillotine, the path the client puts after its base URL
+                final String loc = xml() ? renderer.loc( entry ) : renderer.path( entry );
                 if ( loc.length() > ( xml() ? MAX_LOC_LENGTH : MAX_LOC_LENGTH - MAX_BASE_URL_LENGTH ) )
                 {
                     tooLong++;

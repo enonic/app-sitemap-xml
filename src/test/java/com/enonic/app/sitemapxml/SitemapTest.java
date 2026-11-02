@@ -80,9 +80,21 @@ class SitemapTest
     void encodesPathSegmentsLikePortalUrls()
     {
         final StringBuilder out = new StringBuilder();
-        SitemapRenderer.encodePathSegment( out, "æøå ~-._!$&'()*+,;=:@?#/%" );
+        SitemapRenderer.encodePathSegment( out, "æøå ~-._!$&'()*+,;=:@?#/%", false );
 
         assertThat( out ).hasToString( "%C3%A6%C3%B8%C3%A5%20~-._!$&'()*+,;=:@%3F%23%2F%25" );
+    }
+
+    @Test
+    void guillotinePathsArePercentEncodedAndSafeInXml()
+    {
+        final StringBuilder out = new StringBuilder();
+        SitemapRenderer.encodePathSegment( out, "æ ~-._!$&'()*+,;=:@<>\"", true );
+        assertThat( out ).hasToString( "%C3%A6%20~-._!$%26%27()*+,;=:@%3C%3E%22" );
+
+        final Sitemap sitemap =
+            write( guillotine(), 10, List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/a&b/æ 'c'", "base:folder", null ) ) );
+        assertThat( sitemap.urlsetJson( 10 ) ).contains( "\"path\":\"/\"" ).contains( "\"path\":\"/a%26b/%C3%A6%20%27c%27\"" );
     }
 
     @Test
@@ -150,15 +162,15 @@ class SitemapTest
         for ( int number = 1; number <= guillotine.fileCount(); number++ )
         {
             final String json = guillotine.fileUrlsetJson( number ).orElseThrow();
-            // as Next.js resolveSitemap writes the file, with the path percent-encoded and the full time
+            // as Next.js resolveSitemap writes the file: the base URL, the path as returned, the full time
             final StringBuilder xml = new StringBuilder( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ).append(
                 "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" );
             for ( final String path : json.split( "\"path\":\"" ) )
             {
                 if ( path.startsWith( "/" ) )
                 {
-                    final String encoded = path.substring( 0, path.indexOf( '"' ) ).replace( " ", "%20" ).replace( "æ", "%C3%A6" )
-                        .replace( "ø", "%C3%B8" );
+                    final String encoded = path.substring( 0, path.indexOf( '"' ) );
+                    assertThat( encoded ).doesNotContain( " ", "æ", "ø" );
                     xml.append( "<url>\n<loc>" ).append( baseUrl ).append( encoded ).append( "</loc>\n" )
                         .append( "<lastmod>" ).append( lastmod ).append( "</lastmod>\n" )
                         .append( "<changefreq>monthly</changefreq>\n<priority>0.8</priority>\n</url>\n" );
@@ -326,10 +338,10 @@ class SitemapTest
         assertThat( sitemap.urlsetJson( 10 ) ).isEqualTo(
             "[{\"path\":\"/\",\"lastmod\":\"2024-01-03T10:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}," +
                 "{\"path\":\"/a\",\"lastmod\":\"2024-01-02T10:00:00Z\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}," +
-                "{\"path\":\"/b c\"}]" );
-        assertThat( sitemap.urlsetJson( 2 ) ).doesNotContain( "/b c" ).contains( "\"/a\"" );
+                "{\"path\":\"/b%20c\"}]" );
+        assertThat( sitemap.urlsetJson( 2 ) ).doesNotContain( "/b%20c" ).contains( "\"/a\"" );
         assertThat( sitemap.urlsetJson( 0 ) ).isEqualTo( "[]" );
-        assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b c\"}]" );
+        assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b%20c\"}]" );
         assertThat( sitemap.fileUrlsetJson( 3 ) ).isEmpty();
         assertThat( sitemap.fileUrlsetJson( 0 ) ).isEmpty();
     }

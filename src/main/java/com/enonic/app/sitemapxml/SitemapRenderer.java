@@ -63,16 +63,24 @@ final class SitemapRenderer
         {
             return params.siteUrl();
         }
-        final StringBuilder url = new StringBuilder( baseUrl() );
+        return baseUrl() + path( entry );
+    }
+
+    /**
+     * The path of the entry relative to the site, percent-encoded; for Guillotine also safe in XML as it is.
+     */
+    String path( final SitemapEntry entry )
+    {
+        final StringBuilder path = new StringBuilder();
         for ( final String segment : entry.path().split( "/" ) )
         {
             if ( !segment.isEmpty() )
             {
-                url.append( '/' );
-                encodePathSegment( url, segment );
+                path.append( '/' );
+                encodePathSegment( path, segment, params.format() == SitemapParams.Format.GUILLOTINE );
             }
         }
-        return url.toString();
+        return path.isEmpty() ? "/" : path.toString();
     }
 
     String url( final SitemapEntry entry, final String loc )
@@ -99,7 +107,8 @@ final class SitemapRenderer
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
         json.writeStartObject();
-        json.writeStringField( "path", entry.path().isEmpty() ? "/" : entry.path() );
+        // percent-encoded, also & and ': clients put it in <loc> as it is
+        json.writeStringField( "path", path( entry ) );
         if ( entry.lastModified() != null )
         {
             json.writeStringField( "lastmod", entry.lastModified().toString() );
@@ -192,12 +201,18 @@ final class SitemapRenderer
         return bytes;
     }
 
-    static void encodePathSegment( final StringBuilder out, final String segment )
+    /**
+     * Percent-encodes a path segment like portal URLs do.
+     *
+     * @param xmlSafe whether {@code &} and {@code '} are encoded too, so that the result needs no escaping in XML
+     */
+    static void encodePathSegment( final StringBuilder out, final String segment, final boolean xmlSafe )
     {
+        final String allowed = xmlSafe ? "-._~!$()*+,;=:@" : "-._~!$&'()*+,;=:@";
         for ( final byte b : segment.getBytes( StandardCharsets.UTF_8 ) )
         {
             final char c = (char) ( b & 0xFF );
-            if ( ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || "-._~!$&'()*+,;=:@".indexOf( c ) >= 0 )
+            if ( ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || allowed.indexOf( c ) >= 0 )
             {
                 out.append( c );
             }
