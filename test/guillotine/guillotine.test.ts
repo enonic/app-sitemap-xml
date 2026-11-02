@@ -266,6 +266,14 @@ describe('guillotine extensions', () => {
 				expect(jest.mocked(run)).toHaveBeenLastCalledWith(
 					expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
 				);
+				urlsetResolver({
+					args: {},
+					localContext: {...result.localContext, branch: 'draft'},
+					source: result.source
+				});
+				expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+					expect.objectContaining({branch: 'draft', repository: 'com.enonic.cms.project'}), expect.any(Function)
+				);
 			}
 
 			const {get: getProject} = await import('/lib/xp/project');

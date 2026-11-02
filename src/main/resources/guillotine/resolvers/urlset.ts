@@ -53,7 +53,7 @@ export function withSitemap<T>(
 		} = {}
 	} = getContext();
 	return runInContext({
-		branch: 'master',
+		branch: localContext.branch,
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || []
 	}, () => fn(newSitemapBean(), __.toScriptValue(toSitemapParams({
