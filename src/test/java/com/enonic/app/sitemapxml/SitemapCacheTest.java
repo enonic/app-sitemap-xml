@@ -63,6 +63,8 @@ class SitemapCacheTest
 
     private final List<SitemapCache> nodes = Collections.synchronizedList( new ArrayList<>() );
 
+    private Duration regenerationDelay = Duration.ZERO;
+
     @TempDir
     private Path temp;
 
@@ -481,6 +483,42 @@ class SitemapCacheTest
     }
 
     @Test
+    void waitsGracePeriodBeforeGeneratingInBackgroundOnceForSeveralChanges()
+    {
+        regenerationDelay = Duration.ofMillis( 300 );
+        final Node node = node();
+        node.cache.get( KEY, true );
+
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        node.awaitIdle();
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 1 );
+
+        awaitUntil( () -> generated.get() == 2 );
+        sleep( 400 );
+        node.awaitIdle();
+        assertThat( generated ).hasValue( 2 );
+    }
+
+    @Test
+    void backgroundSitemapIsGeneratedAgainWhenScheduledContentChanges()
+    {
+        final Node node = node();
+        source.set( ( sink, cancelled ) -> {
+            source.set( this::generate );
+            generate( sink, cancelled );
+            return clock.instant().plusMillis( 200 );
+        } );
+
+        node.cache.get( KEY, true );
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        awaitUntil( () -> generated.get() == 2 );
+        assertThat( store.load( KEY.id() ).validUntil() ).isNull();
+    }
+
+    @Test
     void endsTaskAtOnceWhenSitemapIsUpToDate()
     {
         final Node node = node();
@@ -529,7 +567,7 @@ class SitemapCacheTest
         final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> ( taskExecutor != null ? taskExecutor : executor ).execute(
             () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt ) );
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
-                                                     executor, clock, CLUSTER_STARTED, Duration.ZERO, fileRetention,
+                                                     executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,
                                                      temp.resolve( "node-" + nodes.size() ) );
         self.set( cache );
         nodes.add( cache );
