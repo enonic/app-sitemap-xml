@@ -56,6 +56,7 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.utf8Length;
  * local directory, and then stored as attachments of a node, see {@link RepositorySitemapStore}.
  */
 public final class Sitemap
+    implements SitemapFiles
 {
     static final int MAX_URLS_PER_FILE = 50_000;
 
@@ -420,6 +421,22 @@ public final class Sitemap
             }
         }
         return null;
+    }
+
+    /**
+     * The JSON lines of the Guillotine entries of a file, uncompressed.
+     */
+    ByteSource urlset( final int number )
+    {
+        return plain( urlsetFileName( number ) );
+    }
+
+    /**
+     * The digest of the content of a file: its XML, or the JSON lines of a Guillotine sitemap.
+     */
+    String fileDigest( final int number )
+    {
+        return digests.get( number - 1 );
     }
 
     private String plainRootFile()

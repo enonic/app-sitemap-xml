@@ -86,15 +86,20 @@ final class SitemapRenderer
     String url( final SitemapEntry entry, final String loc )
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
+        return url( loc, entry.lastModified(), setting.changefreq(), setting.priority() );
+    }
+
+    String url( final String loc, final @Nullable Instant lastModified, final String changefreq, final String priority )
+    {
         return element( () -> {
             xml.writeStartElement( "url" );
             textElement( "loc", loc );
-            if ( entry.lastModified() != null )
+            if ( lastModified != null )
             {
-                textElement( "lastmod", DATE.format( entry.lastModified() ) );
+                textElement( "lastmod", DATE.format( lastModified ) );
             }
-            textElement( "changefreq", setting.changefreq() );
-            textElement( "priority", setting.priority() );
+            textElement( "changefreq", changefreq );
+            textElement( "priority", priority );
             xml.writeEndElement();
         } );
     }

@@ -70,22 +70,61 @@ public final class SitemapService
     public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
         final Context context = ContextAccessor.current();
+        return sitemap( context, resolve( context, requested, siteUrlFromRequest ).key() );
+    }
+
+    private Sitemap sitemap( final Context context, final SitemapCache.Key key )
+    {
+        if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
+        {
+            final SitemapCache.Source draft = key.params().sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
+            return cache.uncached( key, context.getAuthInfo(), draft );
+        }
+        return cache.get( key );
+    }
+
+    /**
+     * The files of {@code sitemap.xml} for the request. A public sitemap whose URLs are taken from the request, as no Base URL or virtual
+     * host matching its host exactly gives them, is converted from the site's Guillotine sitemap with the request's site URL, instead of
+     * being generated for each host: the Guillotine sitemap is the same for every host and generated again without a request.
+     *
+     * @throws InvalidSiteUrlException when such a site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH}
+     */
+    public SitemapFiles files( final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
+        final Context context = ContextAccessor.current();
+        final Resolved resolved = resolve( context, requested, siteUrlFromRequest );
+        final SitemapCache.Key key = resolved.key();
+        if ( !ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) && key.isPublic() && siteUrlFromRequest &&
+            !resolved.baseUrl() && !siteUrls.isVirtualHostUrl( key.params(), servedVirtualHost() ) )
+        {
+            final SitemapParams guillotine = key.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE );
+            return new ConvertedSitemap(
+                cache.get( new SitemapCache.Key( key.repositoryId(), key.branch(), key.principals(), guillotine ) ), key.params() );
+        }
+        return sitemap( context, key );
+    }
+
+    /**
+     * The key of the sitemap for the request: with the Base URL configured for the site in XP when the site URL would be taken from the
+     * request, and for the principals the sitemap is generated for.
+     *
+     * @param baseUrl whether the site URL is the Base URL configured for the site in XP
+     */
+    private record Resolved(SitemapCache.Key key, boolean baseUrl)
+    {
+    }
+
+    private Resolved resolve( final Context context, final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
         final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
         final Branch branch = ContentConstants.BRANCH_MASTER;
-
         final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
         final SitemapParams params =
             baseUrl.map( requested::withSiteUrl ).orElseGet( () -> siteUrlFromRequest ? requested.forRequestSiteUrl() : requested );
         final AuthenticationInfo authInfo = sitemapAuthInfo( context, repositoryId, params.sitePath() );
-        final SitemapCache.Key key = new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals( authInfo ), params );
-
-        if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
-        {
-            final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
-            return cache.uncached( key, context.getAuthInfo(), draft );
-        }
-        return cache.get( key, !authInfo.isAuthenticated() &&
-            ( !siteUrlFromRequest || baseUrl.isPresent() || siteUrls.isVirtualHostUrl( params, servedVirtualHost() ) ) );
+        return new Resolved( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals( authInfo ), params ),
+                             baseUrl.isPresent() );
     }
 
     private static @Nullable VirtualHost servedVirtualHost()

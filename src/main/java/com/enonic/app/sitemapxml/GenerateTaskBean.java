@@ -29,11 +29,11 @@ public final class GenerateTaskBean
         this.cache = context.getService( SitemapCache.class ).get();
     }
 
-    public void run( final String key, final boolean regen, final @Nullable String changedAt )
+    public void run( final String key, final @Nullable String changedAt )
         throws JsonProcessingException
     {
         Objects.requireNonNull( cache, "Bean not initialized" )
-            .runTask( SitemapCache.Key.restore( MAPPER.readTree( key ) ), regen,
+            .runTask( SitemapCache.Key.restore( MAPPER.readTree( key ) ),
                       changedAt == null || changedAt.isEmpty() ? null : Instant.parse( changedAt ), TaskProgressReporterContext.current() );
     }
 }

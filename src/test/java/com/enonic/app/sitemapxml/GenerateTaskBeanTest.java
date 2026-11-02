@@ -31,10 +31,10 @@ class GenerateTaskBeanTest
         bean.initialize( context );
         final String key = new ObjectMapper().writeValueAsString( KEY.store() );
 
-        bean.run( key, true, "2024-01-01T00:00:00Z" );
-        bean.run( key, false, null );
+        bean.run( key, "2024-01-01T00:00:00Z" );
+        bean.run( key, null );
 
-        verify( cache ).runTask( KEY, true, Instant.parse( "2024-01-01T00:00:00Z" ), null );
-        verify( cache ).runTask( KEY, false, null, null );
+        verify( cache ).runTask( KEY, Instant.parse( "2024-01-01T00:00:00Z" ), null );
+        verify( cache ).runTask( KEY, null, null );
     }
 }

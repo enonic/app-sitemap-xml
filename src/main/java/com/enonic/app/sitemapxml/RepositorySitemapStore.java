@@ -42,6 +42,7 @@ import com.enonic.xp.node.NodeVersionId;
 import com.enonic.xp.node.RefreshMode;
 import com.enonic.xp.node.UpdateNodeParams;
 import com.enonic.xp.node.VersionAttributesResolver;
+import com.enonic.xp.query.filter.BooleanFilter;
 import com.enonic.xp.query.filter.RangeFilter;
 import com.enonic.xp.query.filter.ValueFilter;
 import com.enonic.xp.repository.CreateRepositoryParams;
@@ -95,7 +96,6 @@ final class RepositorySitemapStore
         .add( "key.sitePath", IndexConfig.MINIMAL )
         .add( "key.principals", IndexConfig.MINIMAL )
         .add( "generatedAt", IndexConfig.MINIMAL )
-        .add( "regen", IndexConfig.MINIMAL )
         .build();
 
     private final NodeService nodeService;
@@ -148,7 +148,7 @@ final class RepositorySitemapStore
     }
 
     @Override
-    public boolean claimNew( final String id, final SitemapCache.Key key, final boolean regen, final String member,
+    public boolean claimNew( final String id, final SitemapCache.Key key, final String member,
                              final Instant now )
     {
         return call( () -> {
@@ -157,7 +157,7 @@ final class RepositorySitemapStore
                 nodeService.create( CreateNodeParams.create()
                                         .parent( NodePath.ROOT )
                                         .name( id )
-                                        .data( data( key, regen, null, null, null, null ) )
+                                        .data( data( key, null, null, null, null ) )
                                         .indexConfigDocument( INDEX_CONFIG )
                                         .permissions( PERMISSIONS )
                                         .versionAttributesResolver(
@@ -214,11 +214,11 @@ final class RepositorySitemapStore
     }
 
     @Override
-    public Stored save( final String id, final SitemapCache.Key key, final boolean regen, final Sitemap sitemap,
+    public Stored save( final String id, final SitemapCache.Key key, final Sitemap sitemap,
                         final @Nullable Instant validUntil, final Instant startedAt, final Instant now )
     {
         final Map<String, ByteSource> files = sitemap.storedFiles();
-        final PropertyTree data = data( key, regen, sitemap, validUntil, startedAt, now );
+        final PropertyTree data = data( key, sitemap, validUntil, startedAt, now );
         files.keySet().forEach( name -> data.addBinaryReference( "file", reference( name ) ) );
         final VersionAttributesResolver noAttributes = VersionAttributesResolver.of( Attributes.create().build() );
         return call( () -> {
@@ -316,7 +316,7 @@ final class RepositorySitemapStore
     {
         return query( NodeQuery.create()
                           .parent( NodePath.ROOT )
-                          .addQueryFilter( ValueFilter.create().fieldName( "regen" ).addValue( ValueFactory.newBoolean( false ) ).build() )
+                          .addQueryFilter( BooleanFilter.create().mustNot( filter( "key.principals", SitemapCache.Key.ANONYMOUS ) ).build() )
                           .addQueryFilter(
                               RangeFilter.create().fieldName( "generatedAt" ).lt( ValueFactory.newDateTime( time ) ).build() ) );
     }
@@ -390,7 +390,7 @@ final class RepositorySitemapStore
         final Instant startedAt = later( data.getInstant( "startedAt" ), checked );
         final Instant obsolete = instant( attributes, OBSOLETE );
         return new Stored( node.name().toString(), node.getNodeVersionId().toString(), key,
-                           Boolean.TRUE.equals( data.getBoolean( "regen" ) ), sitemap, data.getInstant( "validUntil" ), startedAt,
+                           sitemap, data.getInstant( "validUntil" ), startedAt,
                            later( data.getInstant( "generatedAt" ), checked ),
                            obsolete != null && startedAt != null && obsolete.isBefore( startedAt ) ? null : obsolete,
                            generation( attributes, GENERATING ), generation( attributes, QUEUED ) );
@@ -418,7 +418,7 @@ final class RepositorySitemapStore
         };
     }
 
-    private static PropertyTree data( final SitemapCache.Key key, final boolean regen, final @Nullable Sitemap sitemap,
+    private static PropertyTree data( final SitemapCache.Key key, final @Nullable Sitemap sitemap,
                                       final @Nullable Instant validUntil, final @Nullable Instant startedAt,
                                       final @Nullable Instant generatedAt )
     {
@@ -428,7 +428,6 @@ final class RepositorySitemapStore
         {
             SitemapNodeData.writeSitemap( data.getRoot(), sitemap );
         }
-        data.setBoolean( "regen", regen );
         if ( validUntil != null )
         {
             data.setInstant( "validUntil", validUntil );

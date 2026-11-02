@@ -86,14 +86,14 @@ public final class SitemapBean
             .sitemap( toParams( params.getMap() ).withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE ), false );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body,
-                                     final Function<Sitemap, Optional<String>> etag )
+    private SitemapResponse respond( final ScriptValue params, final Function<SitemapFiles, Optional<ByteSource>> body,
+                                     final Function<SitemapFiles, Optional<String>> etag )
     {
         final Map<String, Object> map = params.getMap();
         try
         {
-            final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
-                .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
+            final SitemapFiles sitemap = Objects.requireNonNull( service, "Bean not initialized" )
+                .files( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
             final Optional<ByteSource> content = body.apply( sitemap );
             if ( content.isEmpty() )
             {

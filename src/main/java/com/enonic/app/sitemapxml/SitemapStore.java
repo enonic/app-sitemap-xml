@@ -22,7 +22,7 @@ interface SitemapStore
      *
      * @return false when the sitemap exists already: another member stored or started it
      */
-    boolean claimNew( String id, SitemapCache.Key key, boolean regen, String member, Instant now );
+    boolean claimNew( String id, SitemapCache.Key key, String member, Instant now );
 
     /**
      * Records that the given generation starts generating the stored sitemap again, and drops its place in the queue.
@@ -54,7 +54,7 @@ interface SitemapStore
      * @param startedAt when the generation started: the sitemap includes the content changes up to then
      * @return the stored sitemap, with its files read from the store
      */
-    Stored save( String id, SitemapCache.Key key, boolean regen, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
+    Stored save( String id, SitemapCache.Key key, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
                  Instant now );
 
     /**
@@ -69,7 +69,7 @@ interface SitemapStore
     void markObsolete( Stored stored, Instant now );
 
     /**
-     * The sitemaps generated on request (not regen) before the given time.
+     * The sitemaps generated on request (not public) before the given time.
      */
     List<Stored> generatedOnRequestBefore( Instant time );
 
@@ -99,7 +99,7 @@ interface SitemapStore
      * @param generatedAt when the sitemap was stored, or found unchanged; null while the first generation is running
      * @param obsolete    the latest content change since {@code startedAt}, if any
      */
-    record Stored(String id, String version, SitemapCache.Key key, boolean regen, @Nullable Sitemap sitemap,
+    record Stored(String id, String version, SitemapCache.Key key, @Nullable Sitemap sitemap,
                   @Nullable Instant validUntil, @Nullable Instant startedAt, @Nullable Instant generatedAt, @Nullable Instant obsolete,
                   @Nullable Generating generating, @Nullable Generating queued)
     {
