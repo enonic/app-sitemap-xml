@@ -75,11 +75,6 @@ public final class SitemapBean
         return guillotineSitemap( params ).fileUrlsetJson( number ).orElse( null );
     }
 
-    public @Nullable String portalBaseUrl( final String sitePath )
-    {
-        return Objects.requireNonNull( service, "Bean not initialized" ).portalBaseUrl( sitePath ).orElse( null );
-    }
-
     private Sitemap guillotineSitemap( final ScriptValue params )
     {
         return Objects.requireNonNull( service, "Bean not initialized" )

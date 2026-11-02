@@ -36,7 +36,6 @@ export interface SitemapBean {
 	guillotineFiles(params: ScriptValue): string
 	guillotineUrlset(params: ScriptValue, count: number): string
 	guillotineFile(params: ScriptValue, number: number): string | null
-	portalBaseUrl(sitePath: string): string | null
 }
 
 export function toSitemapParams({

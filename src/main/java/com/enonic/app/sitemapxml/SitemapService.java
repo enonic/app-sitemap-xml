@@ -197,16 +197,6 @@ public final class SitemapService
         return null;
     }
 
-    /**
-     * The Base URL configured in XP for the site at the given path, or for the project without one, without trailing slash: what headless
-     * clients put in front of the sitemap's paths when the app has no "Base URL" override.
-     */
-    public Optional<String> portalBaseUrl( final String sitePath )
-    {
-        final RepositoryId repositoryId = Objects.requireNonNull( ContextAccessor.current().getRepositoryId(), "No repository in context" );
-        return baseUrl( repositoryId, ContentConstants.BRANCH_MASTER, sitePath ).map( url -> url.replaceAll( "/+$", "" ) );
-    }
-
     private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
     {
         return siteUrls.baseUrl( repositoryId, branch, sitePath );

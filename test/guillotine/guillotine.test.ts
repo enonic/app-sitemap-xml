@@ -50,7 +50,6 @@ const bean = {
 	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
 	guillotineFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
 	guillotineFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
-	portalBaseUrl: jest.fn((_sitePath: string) => 'https://portal.example.com'),
 };
 
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
@@ -280,13 +279,13 @@ describe('guillotine extensions', () => {
 			jest.mocked(getProject).mockReturnValueOnce({
 				siteConfig: [{applicationKey: 'com.enonic.app.sitemapxml', config: {...projectConfig, overrideDomain: ''}}]
 			} as unknown as ReturnType<typeof getProject>);
-			const portalResult = sitemapResolver({
+			const withoutOverride = sitemapResolver({
 				args: {},
 				localContext: {branch: 'master', project: 'project'},
 				source: null
 			});
-			expect(portalResult.source).toEqual({baseUrl: 'https://portal.example.com'});
-			expect(bean.portalBaseUrl).toHaveBeenLastCalledWith('');
+			// the Base URL configured for the site in XP is not exposed
+			expect(withoutOverride.source).toEqual({baseUrl: null});
 
 			const urlsetResolverResult = urlsetResolver({
 				args: {
