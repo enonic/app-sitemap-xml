@@ -123,7 +123,7 @@ class SitemapServiceTest
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean() );
+        verify( cache ).get( key.capture(), eq( false ) );
         assertThat( key.getValue().principals() ).contains( "user:system:editor" );
         verify( cache, never() ).uncached( any(), any(), any() );
     }
@@ -139,7 +139,7 @@ class SitemapServiceTest
         asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean() );
+        verify( cache ).get( key.capture(), eq( true ) );
         assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
                                                                              RoleKeys.EVERYONE.toString() );
     }
@@ -308,12 +308,12 @@ class SitemapServiceTest
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
-    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean autogen )
+    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean regen )
     {
         inContext(
             () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( autogen ) );
+        verify( cache ).get( key.capture(), eq( regen ) );
         return key.getValue();
     }
 

@@ -122,7 +122,7 @@ class RepositorySitemapStoreTest
         assertThat( stored.id() ).isEqualTo( KEY.id() );
         assertThat( stored.version() ).isEqualTo( versionId.toString() );
         assertThat( stored.key() ).isEqualTo( KEY );
-        assertThat( stored.autogen() ).isTrue();
+        assertThat( stored.regen() ).isTrue();
         assertThat( stored.validUntil() ).isEqualTo( NOW.plusSeconds( 3600 ) );
         assertThat( stored.startedAt() ).isEqualTo( NOW.minusSeconds( 5 ) );
         assertThat( stored.generatedAt() ).isEqualTo( NOW );
@@ -194,7 +194,6 @@ class RepositorySitemapStoreTest
         when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
         final NodeVersion version = version( Attributes.create()
                                                  .attribute( "obsolete", GenericValue.stringValue( NOW.toString() ) )
-                                                 .attribute( "accessed", GenericValue.stringValue( NOW.minusSeconds( 60 ).toString() ) )
                                                  .attribute( "generating", GenericValue.newObject()
                                                      .put( "member", "other" )
                                                      .put( "since", NOW.toString() )
@@ -206,7 +205,6 @@ class RepositorySitemapStoreTest
 
         assertThat( stored.sitemap() ).isNull();
         assertThat( stored.obsolete() ).isEqualTo( NOW );
-        assertThat( stored.accessed() ).isEqualTo( NOW.minusSeconds( 60 ) );
         assertThat( stored.generating() ).isEqualTo( new SitemapStore.Generating( "other", NOW ) );
 
         assertThat( store().claim( stored, "me", NOW.plusSeconds( 60 ), Duration.ofMinutes( 10 ) ) ).isFalse();
@@ -214,7 +212,7 @@ class RepositorySitemapStoreTest
         assertThat( store().claim( stored, "me", NOW.plusSeconds( 601 ), Duration.ofMinutes( 10 ) ) ).isTrue();
 
         store().markObsolete( new SitemapStore.Stored( stored.id(), stored.version(), stored.key(), false, null, null, null, null, null, null,
-                                                       null, null ), NOW );
+                                                       null ), NOW );
         final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
         verify( nodeService, times( 2 ) ).applyVersionAttributes( apply.capture() );
         assertThat( apply.getAllValues().get( 0 ).getAddAttributes().get( "generating" ).property( "member" ).asString() ).isEqualTo( "me" );
@@ -226,7 +224,7 @@ class RepositorySitemapStoreTest
     void obsoleteMarkKeepsLatestChange()
     {
         final SitemapStore.Stored marked =
-            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000001", KEY, false, null, null, null, null, NOW, null, null,
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000001", KEY, false, null, null, null, null, NOW, null,
                                      null );
 
         store().markObsolete( marked, NOW );

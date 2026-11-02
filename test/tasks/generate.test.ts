@@ -19,7 +19,7 @@ describe('generate task', () => {
 	it('runs the generation of the key in the bean', async () => {
 		const {run} = await import('/tasks/generate/generate');
 
-		run({key: '{"repository":"com.enonic.cms.project"}', autogen: true, changedAt: '2024-01-01T00:00:00Z'});
+		run({key: '{"repository":"com.enonic.cms.project"}', regen: true, changedAt: '2024-01-01T00:00:00Z'});
 		run({key: '{"repository":"com.enonic.cms.project"}'});
 
 		expect(newBean).toHaveBeenCalledWith('com.enonic.app.sitemapxml.GenerateTaskBean');

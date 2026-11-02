@@ -31,15 +31,15 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final boolean autogen, final String member,
+    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final boolean regen, final String member,
                                           final Instant now )
     {
         if ( stored.containsKey( id ) )
         {
             return false;
         }
-        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, autogen, null, null, null, null, null,
-                                    new Generating( member, now ), null, null ) );
+        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, regen, null, null, null, null, null,
+                                    new Generating( member, now ), null ) );
         return true;
     }
 
@@ -58,7 +58,7 @@ final class InMemorySitemapStore
         }
         final Generating queued = latest.queued();
         stored.put( latest.id(), with( latest, latest.obsolete(), new Generating( member, now ),
-                                       queued != null && queued.member().equals( member ) ? null : queued, latest.accessed() ) );
+                                       queued != null && queued.member().equals( member ) ? null : queued ) );
         return true;
     }
 
@@ -75,12 +75,12 @@ final class InMemorySitemapStore
         {
             return false;
         }
-        stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), new Generating( member, now ), latest.accessed() ) );
+        stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), new Generating( member, now ) ) );
         return true;
     }
 
     @Override
-    public synchronized Stored save( final String id, final SitemapCache.Key key, final boolean autogen, final Sitemap sitemap,
+    public synchronized Stored save( final String id, final SitemapCache.Key key, final boolean regen, final Sitemap sitemap,
                                      final @Nullable Instant validUntil, final Instant startedAt, final Instant now )
     {
         final Map<String, byte[]> files = new HashMap<>();
@@ -96,9 +96,9 @@ final class InMemorySitemapStore
         } );
         final Stored previous = stored.get( id );
         final Instant obsolete = previous == null ? null : previous.obsolete();
-        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, autogen,
+        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, regen,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,
-                                         obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null, null );
+                                         obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null );
         stored.put( id, saved );
         saves.incrementAndGet();
         return saved;
@@ -118,7 +118,7 @@ final class InMemorySitemapStore
         }
         else
         {
-            stored.put( id, with( latest, latest.obsolete(), null, latest.queued(), latest.accessed() ) );
+            stored.put( id, with( latest, latest.obsolete(), null, latest.queued() ) );
         }
     }
 
@@ -129,17 +129,7 @@ final class InMemorySitemapStore
         if ( latest != null && latest.version().equals( current.version() ) &&
             ( latest.obsolete() == null || latest.obsolete().isBefore( now ) ) )
         {
-            stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued(), latest.accessed() ) );
-        }
-    }
-
-    @Override
-    public synchronized void touch( final Stored current, final Instant now )
-    {
-        final Stored latest = stored.get( current.id() );
-        if ( latest != null && latest.version().equals( current.version() ) )
-        {
-            stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), latest.queued(), now ) );
+            stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued() ) );
         }
     }
 
@@ -180,9 +170,9 @@ final class InMemorySitemapStore
     }
 
     private static Stored with( final Stored s, final @Nullable Instant obsolete, final @Nullable Generating generating,
-                                final @Nullable Generating queued, final @Nullable Instant accessed )
+                                final @Nullable Generating queued )
     {
-        return new Stored( s.id(), s.version(), s.key(), s.autogen(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
-                           obsolete, generating, queued, accessed );
+        return new Stored( s.id(), s.version(), s.key(), s.regen(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
+                           obsolete, generating, queued );
     }
 }

@@ -247,7 +247,7 @@ class SitemapCacheTest
         assertThat( text( first.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/1" );
         awaitUntil( () -> generated.get() == 2 && store.load( KEY.id() ).generating() == null );
         assertThat( store.load( KEY.id() ).obsolete() ).isNull();
-        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+        awaitUntil( () -> text( node.cache.get( KEY, true ) ).contains( "https://example.com/2" ) );
     }
 
     @Test
@@ -431,17 +431,15 @@ class SitemapCacheTest
     }
 
     @Test
-    void idleBackgroundSitemapIsGeneratedAgainOnNextRequestInstead()
+    void regenSitemapIsGeneratedAgainWithoutRequestAlsoWhenNotRequestedForLong()
     {
-        final Node node = node();
-        final Sitemap first = node.cache.get( KEY, true );
-        clock.advance( SitemapCache.IDLE_TIMEOUT.plusSeconds( 1 ) );
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( KEY, true );
+        clock.advance( Duration.ofDays( 7 ) );
 
-        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
-        node.awaitIdle();
-        assertThat( generated ).hasValue( 1 );
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
 
-        assertThat( node.cache.get( KEY, true ) ).isSameAs( first );
         awaitUntil( () -> generated.get() == 2 );
     }
 
@@ -558,21 +556,25 @@ class SitemapCacheTest
     }
 
     @Test
-    void deletesSitemapsGeneratedMoreThanRetentionAgoExceptThoseBeingGenerated()
+    void deletesSitemapsGeneratedOnRequestMoreThanRetentionAgoExceptThoseBeingGenerated()
     {
         final Node node = node();
         final SitemapCache.Key old = key( "/old" );
         final SitemapCache.Key busy = key( "/busy" );
+        final SitemapCache.Key regen = key( "/regen" );
         node.cache.get( old, false );
         node.cache.get( busy, false );
+        node.cache.get( regen, true );
         assertThat( store.claim( store.load( busy.id() ), "other", clock.instant().plus( SitemapCache.RETENTION ).plusSeconds( 1 ),
                                  SitemapCache.STALE_GENERATION ) ).isTrue();
 
         clock.advance( SitemapCache.RETENTION.plusSeconds( 1 ) );
         node.cache.get( KEY, false );
+        node.awaitIdle();
 
-        assertThat( store.load( old.id() ) ).isNull();
+        awaitUntil( () -> store.load( old.id() ) == null );
         assertThat( store.load( busy.id() ) ).isNotNull();
+        assertThat( store.load( regen.id() ) ).isNotNull();
         assertThat( store.load( KEY.id() ) ).isNotNull();
         assertThat( text( node.cache.get( old, false ) ) ).contains( "https://example.com/" );
         assertThat( store.load( old.id() ) ).isNotNull();
@@ -772,14 +774,14 @@ class SitemapCacheTest
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
-        final SitemapCache.Tasks tasks = ( key, autogen, changedAt ) -> {
+        final SitemapCache.Tasks tasks = ( key, regen, changedAt ) -> {
             final RuntimeException failure = submitFailure.getAndSet( null );
             if ( failure != null )
             {
                 throw failure;
             }
             ( taskExecutor != null ? taskExecutor : executor ).execute(
-                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, autogen, changedAt, null ) );
+                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, regen, changedAt, null ) );
         };
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,

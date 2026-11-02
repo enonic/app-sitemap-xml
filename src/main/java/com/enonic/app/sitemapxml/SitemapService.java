@@ -79,7 +79,7 @@ public final class SitemapService
             final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
             return cache.uncached( key, context.getAuthInfo(), draft );
         }
-        return cache.get( key, !siteUrlFromRequest || baseUrl.isPresent() );
+        return cache.get( key, !authInfo.isAuthenticated() && ( !siteUrlFromRequest || baseUrl.isPresent() ) );
     }
 
     /**

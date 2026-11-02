@@ -9,8 +9,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * Where generated sitemaps are kept, shared by all cluster nodes. A sitemap is stored under the id of its key; storing it again replaces
  * it. Besides the sitemap, the stored state tells whether its content changed after it was generated ({@link Stored#obsolete()}),
- * whether a cluster node is generating it ({@link Stored#generating()}), whether another generation waits for that one to finish
- * ({@link Stored#queued()}) and when it was last requested ({@link Stored#accessed()}).
+ * whether a cluster node is generating it ({@link Stored#generating()}) and whether another generation waits for that one to finish
+ * ({@link Stored#queued()}).
  * None of these is locked: two nodes may occasionally generate the same sitemap, which costs work but gives the same result.
  */
 interface SitemapStore
@@ -22,7 +22,7 @@ interface SitemapStore
      *
      * @return false when the sitemap exists already: another member stored or started it
      */
-    boolean claimNew( String id, SitemapCache.Key key, boolean autogen, String member, Instant now );
+    boolean claimNew( String id, SitemapCache.Key key, boolean regen, String member, Instant now );
 
     /**
      * Records that the given generation starts generating the stored sitemap again, and drops its place in the queue.
@@ -45,7 +45,7 @@ interface SitemapStore
      * @param startedAt when the generation started: the sitemap includes the content changes up to then
      * @return the stored sitemap, with its files read from the store
      */
-    Stored save( String id, SitemapCache.Key key, boolean autogen, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
+    Stored save( String id, SitemapCache.Key key, boolean regen, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
                  Instant now );
 
     /**
@@ -58,8 +58,6 @@ interface SitemapStore
      * since is not marked.
      */
     void markObsolete( Stored stored, Instant now );
-
-    void touch( Stored stored, Instant now );
 
     /**
      * The sitemaps generated before the given time.
@@ -84,15 +82,10 @@ interface SitemapStore
      * @param startedAt   when the generation of the sitemap started, null while the first generation is running
      * @param generatedAt when the sitemap was stored, null while the first generation is running
      */
-    record Stored(String id, String version, SitemapCache.Key key, boolean autogen, @Nullable Sitemap sitemap,
+    record Stored(String id, String version, SitemapCache.Key key, boolean regen, @Nullable Sitemap sitemap,
                   @Nullable Instant validUntil, @Nullable Instant startedAt, @Nullable Instant generatedAt, @Nullable Instant obsolete,
-                  @Nullable Generating generating, @Nullable Generating queued, @Nullable Instant accessed)
+                  @Nullable Generating generating, @Nullable Generating queued)
     {
-        Instant lastAccess()
-        {
-            final Instant time = accessed != null ? accessed : generatedAt;
-            return time != null ? time : Instant.EPOCH;
-        }
     }
 
     record Generating(String member, Instant since)

@@ -80,10 +80,9 @@ import com.enonic.xp.task.TaskService;
  * waiting for sitemaps that were never generated, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps
  * are always answered right away.
  * <p>
- * When content changes, only the node where it changed reacts: it marks the sitemaps of the project as obsolete, and generates again those
- * whose URLs do not depend on the request ("Base URL", or Guillotine) a few seconds later, unless they were not requested for
- * {@link #IDLE_TIMEOUT}; the delay lets a series of publications end in one generation. Other sitemaps are generated again on their next
- * request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
+ * When content changes, only the node where it changed reacts: it marks the sitemaps of the project as obsolete, and generates the regen
+ * ones again a few seconds later: public sitemaps whose URLs do not depend on the request ("Base URL", or Guillotine); the delay lets a
+ * series of publications end in one generation. Other sitemaps are generated again on their next request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
  * content may have changed while no node was running.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
@@ -98,15 +97,11 @@ public final class SitemapCache
 
     static final Duration REGENERATION_DELAY = Duration.ofSeconds( 5 );
 
-    static final Duration IDLE_TIMEOUT = Duration.ofHours( 1 );
-
     static final Duration STALE_GENERATION = Duration.ofMinutes( 10 );
 
     static final Duration SUBMIT_INTERVAL = Duration.ofSeconds( 30 );
 
     static final Duration RELEASE_POLL = Duration.ofSeconds( 2 );
-
-    static final Duration TOUCH_INTERVAL = Duration.ofMinutes( 10 );
 
     static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
 
@@ -118,7 +113,7 @@ public final class SitemapCache
 
     private static final Comparator<SitemapStore.Stored> EVICTION_ORDER =
         Comparator.<SitemapStore.Stored, Boolean>comparing( stored -> !stored.key().params().hasExplicitPort() )
-            .thenComparing( SitemapStore.Stored::lastAccess );
+            .thenComparing( SitemapStore.Stored::generatedAt, Comparator.nullsFirst( Comparator.naturalOrder() ) );
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
@@ -246,20 +241,19 @@ public final class SitemapCache
     /**
      * Returns the sitemap of the given key, generating it first when it was never generated.
      *
-     * @param autogen whether the sitemap may be generated again without a request: its URLs do not depend on the request
+     * @param regen whether the sitemap may be generated again without a request: its URLs do not depend on the request
      * @throws SitemapBusyException when the sitemap was never generated and too many requests are already waiting
      */
-    public Sitemap get( final Key key, final boolean autogen )
+    public Sitemap get( final Key key, final boolean regen )
     {
         while ( true )
         {
             final Instant now = clock.instant();
             final Entry entry = entry( key );
-            entry.autogen = autogen;
+            entry.regen = regen;
             final SitemapStore.Stored stored = current( key, entry );
             if ( stored != null && stored.sitemap() != null )
             {
-                touch( entry, stored, now );
                 if ( shouldRegenerate( entry, stored, now ) )
                 {
                     generate( key, entry, Duration.ZERO, false, entry.sitemapChanges != entry.changes ? entry.changedAt : null );
@@ -295,12 +289,12 @@ public final class SitemapCache
      * Generates and stores the sitemap of the key, unless another node is generating it or it is up to date. Run by the
      * {@code generate} task, on whichever node XP runs it.
      *
-     * @param autogen   whether the sitemap is generated again without a request
+     * @param regen   whether the sitemap is generated again without a request
      * @param changedAt  when the node that submitted the task saw its content change, if it did: the sitemap is not up to date unless its
      *                   generation started after that
      * @param progress   receives what the task does and how many contents it has read
      */
-    public void runTask( final Key key, final boolean autogen, final @Nullable Instant changedAt,
+    public void runTask( final Key key, final boolean regen, final @Nullable Instant changedAt,
                          final @Nullable ProgressReporter progress )
     {
         if ( stopped )
@@ -339,14 +333,14 @@ public final class SitemapCache
                     continue;
                 }
                 if ( previous == null
-                    ? store.claimNew( id, key, autogen, generation, now )
+                    ? store.claimNew( id, key, regen, generation, now )
                     : store.claim( previous, generation, now, STALE_GENERATION ) )
                 {
                     final Semaphore project = projects.computeIfAbsent( key.repositoryId(), repository -> new Semaphore( 1, true ) );
                     project.acquireUninterruptibly();
                     try
                     {
-                        generateAndStore( key, autogen, generation, previous, now, progress );
+                        generateAndStore( key, regen, generation, previous, now, progress );
                     }
                     finally
                     {
@@ -472,7 +466,6 @@ public final class SitemapCache
                 final SitemapStore.Stored stored = store.load( key.id() );
                 entry.stored = stored;
                 entry.sitemapChanges = entry.changes;
-                entry.idleWhenChanged = false;
                 entry.loaded = true;
                 if ( stored != null && stored.sitemap() != null )
                 {
@@ -484,10 +477,9 @@ public final class SitemapCache
     }
 
     /**
-     * Whether a request for the stored sitemap should start generating it again. A sitemap generated again in the background is left to
-     * the node where its content changed, unless it was generated before the cluster started, was not requested for
-     * {@link #IDLE_TIMEOUT} when its content changed, or that node failed to generate it: no newer version arrived while the change, as
-     * marked in the store or seen by this node, is overdue.
+     * Whether a request for the stored sitemap should start generating it again. A regen sitemap is left to the node where its
+     * content changed, unless it was generated before the cluster started or that node failed to generate it: no newer version arrived
+     * while the change, as marked in the store or seen by this node, is overdue.
      */
     private boolean shouldRegenerate( final Entry entry, final SitemapStore.Stored stored, final Instant now )
     {
@@ -503,12 +495,10 @@ public final class SitemapCache
             return true;
         }
         final Instant obsolete = stored.obsolete();
-        if ( stored.autogen() )
+        if ( stored.regen() )
         {
             final Instant seen = entry.sitemapChanges != entry.changes ? entry.firstChangedAt : null;
-            return entry.idleWhenChanged && entry.sitemapChanges != entry.changes || obsolete != null &&
-                ( !stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( obsolete ) || overdue( obsolete, now ) ) ||
-                seen != null && overdue( seen, now );
+            return obsolete != null && overdue( obsolete, now ) || seen != null && overdue( seen, now );
         }
         return obsolete != null || entry.sitemapChanges != entry.changes;
     }
@@ -533,26 +523,6 @@ public final class SitemapCache
         return stored.sitemap() != null && stored.obsolete() == null && ( validUntil == null || now.isBefore( validUntil ) ) &&
             generatedAt != null && !generatedAt.isBefore( clusterStarted ) &&
             ( changedAt == null || startedAt != null && startedAt.isAfter( changedAt ) );
-    }
-
-    private static Instant lastAccess( final Entry entry )
-    {
-        final SitemapStore.Stored stored = entry.stored;
-        final Instant accessed = stored == null ? Instant.EPOCH : stored.lastAccess();
-        final Instant requested = entry.requested;
-        return requested != null && requested.isAfter( accessed ) ? requested : accessed;
-    }
-
-    private void touch( final Entry entry, final SitemapStore.Stored stored, final Instant now )
-    {
-        entry.requested = now;
-        final Instant touched = entry.touched;
-        if ( touched != null && touched.plus( TOUCH_INTERVAL ).isAfter( now ) )
-        {
-            return;
-        }
-        entry.touched = now;
-        execute( () -> store.touch( stored, now ) );
     }
 
     /**
@@ -600,7 +570,6 @@ public final class SitemapCache
                     }
                     entry.changes++;
                     entry.changedAt = changedAt;
-                    entry.idleWhenChanged |= lastAccess( entry ).plus( IDLE_TIMEOUT ).isBefore( changedAt );
                 }
             }
         } );
@@ -615,11 +584,10 @@ public final class SitemapCache
                         continue;
                     }
                     store.markObsolete( stored, changedAt );
-                    if ( stored.autogen() &&
-                        ( stored.sitemap() == null || stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( changedAt ) ) )
+                    if ( stored.regen() )
                     {
                         final Entry entry = entry( stored.key() );
-                        entry.autogen = true;
+                        entry.regen = true;
                         generate( stored.key(), entry, regenerationDelay, true, changedAt );
                     }
                 }
@@ -680,7 +648,7 @@ public final class SitemapCache
         entry.submitted = clock.instant();
         try
         {
-            tasks.submit( key, entry.autogen, changedAt );
+            tasks.submit( key, entry.regen, changedAt );
         }
         catch ( RuntimeException e )
         {
@@ -696,7 +664,7 @@ public final class SitemapCache
     /**
      * Generates and stores the sitemap of the key, claimed by the given generation.
      */
-    private void generateAndStore( final Key key, final boolean autogen, final String generation,
+    private void generateAndStore( final Key key, final boolean regen, final String generation,
                                    final SitemapStore.@Nullable Stored previous, final Instant startedAt,
                                    final @Nullable ProgressReporter progress )
     {
@@ -721,7 +689,7 @@ public final class SitemapCache
             final SitemapStore.Stored stored;
             try
             {
-                stored = store.save( id, key, autogen, generated, validUntil, startedAt, clock.instant() );
+                stored = store.save( id, key, regen, generated, validUntil, startedAt, clock.instant() );
             }
             finally
             {
@@ -732,10 +700,10 @@ public final class SitemapCache
             deleteOld();
             LOG.debug( "Generated sitemap {}", key );
             report( progress, "Generated " + summary( generated ) );
-            if ( autogen && validUntil != null )
+            if ( regen && validUntil != null )
             {
                 final Entry entry = entry( key );
-                entry.autogen = true;
+                entry.regen = true;
                 generate( key, entry, Duration.between( clock.instant(), validUntil ), true, null );
             }
         }
@@ -850,7 +818,6 @@ public final class SitemapCache
             {
                 entry.sitemapChanges = changes;
                 entry.firstChangedAt = changes == entry.changes ? null : entry.changedAt;
-                entry.idleWhenChanged = false;
             }
         }
         entry.ready.complete( stored.sitemap() );
@@ -914,14 +881,15 @@ public final class SitemapCache
     }
 
     /**
-     * Deletes stored sitemaps generated more than {@link #RETENTION} ago, unless they are being generated: sitemaps of principals no
-     * request has any longer, after a change of roles or groups, of deleted users, or of hosts no longer used. A sitemap still requested
-     * is generated again on its next request.
+     * Deletes stored sitemaps generated on request more than {@link #RETENTION} ago, unless they are being generated: sitemaps of
+     * principals no request has any longer, after a change of roles or groups, of deleted users, or of hosts no longer used. A sitemap
+     * still requested is generated again on its next request. Regen sitemaps are kept, as they are public and do not depend on the
+     * request host.
      */
     private void deleteOld()
     {
         final Instant now = clock.instant();
-        store.generatedBefore( now.minus( RETENTION ) ).stream().filter( stored -> {
+        store.generatedBefore( now.minus( RETENTION ) ).stream().filter( stored -> !stored.regen() ).filter( stored -> {
             final SitemapStore.Generating generating = stored.generating();
             return generating == null || !generating.since().plus( STALE_GENERATION ).isAfter( now );
         } ).forEach( this::delete );
@@ -1016,14 +984,14 @@ public final class SitemapCache
     @FunctionalInterface
     interface Tasks
     {
-        void submit( Key key, boolean autogen, @Nullable Instant changedAt );
+        void submit( Key key, boolean regen, @Nullable Instant changedAt );
 
         /**
          * Submits the {@code generate} task of this app, which XP may offload to another cluster node.
          */
         static Tasks of( final TaskService taskService )
         {
-            return ( key, autogen, changedAt ) -> {
+            return ( key, regen, changedAt ) -> {
                 final PropertyTree data = new PropertyTree();
                 try
                 {
@@ -1033,7 +1001,7 @@ public final class SitemapCache
                 {
                     throw new IllegalStateException( e );
                 }
-                data.setBoolean( "autogen", autogen );
+                data.setBoolean( "regen", regen );
                 if ( changedAt != null )
                 {
                     data.setString( "changedAt", changedAt.toString() );
@@ -1190,7 +1158,7 @@ public final class SitemapCache
     {
         final CompletableFuture<Sitemap> ready = new CompletableFuture<>();
 
-        volatile boolean autogen;
+        volatile boolean regen;
 
         volatile boolean loaded;
 
@@ -1199,16 +1167,6 @@ public final class SitemapCache
         volatile @Nullable Pending pending;
 
         volatile @Nullable Instant submitted;
-
-        volatile @Nullable Instant touched;
-
-        volatile @Nullable Instant requested;
-
-        /**
-         * Whether a background sitemap was not requested for {@link #IDLE_TIMEOUT} when its content changed: the node where it changed
-         * leaves it to the next request.
-         */
-        volatile boolean idleWhenChanged;
 
         /**
          * Number of changes of the content seen by this node, and the number the stored sitemap includes.
