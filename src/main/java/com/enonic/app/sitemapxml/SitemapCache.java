@@ -92,6 +92,8 @@ public final class SitemapCache
 {
     static final int MAX_PER_SITE = 10;
 
+    static final Duration RETENTION = Duration.ofDays( 1 );
+
     static final int MAX_WAITING = 10;
 
     static final Duration REGENERATION_DELAY = Duration.ofSeconds( 5 );
@@ -244,16 +246,16 @@ public final class SitemapCache
     /**
      * Returns the sitemap of the given key, generating it first when it was never generated.
      *
-     * @param background whether the sitemap may be generated again in the background: its URLs do not depend on the request
+     * @param autogen whether the sitemap may be generated again without a request: its URLs do not depend on the request
      * @throws SitemapBusyException when the sitemap was never generated and too many requests are already waiting
      */
-    public Sitemap get( final Key key, final boolean background )
+    public Sitemap get( final Key key, final boolean autogen )
     {
         while ( true )
         {
             final Instant now = clock.instant();
             final Entry entry = entry( key );
-            entry.background = background;
+            entry.autogen = autogen;
             final SitemapStore.Stored stored = current( key, entry );
             if ( stored != null && stored.sitemap() != null )
             {
@@ -293,12 +295,12 @@ public final class SitemapCache
      * Generates and stores the sitemap of the key, unless another node is generating it or it is up to date. Run by the
      * {@code generate} task, on whichever node XP runs it.
      *
-     * @param background whether the sitemap is generated again in the background
+     * @param autogen   whether the sitemap is generated again without a request
      * @param changedAt  when the node that submitted the task saw its content change, if it did: the sitemap is not up to date unless its
      *                   generation started after that
      * @param progress   receives what the task does and how many contents it has read
      */
-    public void runTask( final Key key, final boolean background, final @Nullable Instant changedAt,
+    public void runTask( final Key key, final boolean autogen, final @Nullable Instant changedAt,
                          final @Nullable ProgressReporter progress )
     {
         if ( stopped )
@@ -337,14 +339,14 @@ public final class SitemapCache
                     continue;
                 }
                 if ( previous == null
-                    ? store.claimNew( id, key, background, generation, now )
+                    ? store.claimNew( id, key, autogen, generation, now )
                     : store.claim( previous, generation, now, STALE_GENERATION ) )
                 {
                     final Semaphore project = projects.computeIfAbsent( key.repositoryId(), repository -> new Semaphore( 1, true ) );
                     project.acquireUninterruptibly();
                     try
                     {
-                        generateAndStore( key, background, generation, previous, now, progress );
+                        generateAndStore( key, autogen, generation, previous, now, progress );
                     }
                     finally
                     {
@@ -501,7 +503,7 @@ public final class SitemapCache
             return true;
         }
         final Instant obsolete = stored.obsolete();
-        if ( stored.background() )
+        if ( stored.autogen() )
         {
             final Instant seen = entry.sitemapChanges != entry.changes ? entry.firstChangedAt : null;
             return entry.idleWhenChanged && entry.sitemapChanges != entry.changes || obsolete != null &&
@@ -613,11 +615,11 @@ public final class SitemapCache
                         continue;
                     }
                     store.markObsolete( stored, changedAt );
-                    if ( stored.background() &&
+                    if ( stored.autogen() &&
                         ( stored.sitemap() == null || stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( changedAt ) ) )
                     {
                         final Entry entry = entry( stored.key() );
-                        entry.background = true;
+                        entry.autogen = true;
                         generate( stored.key(), entry, regenerationDelay, true, changedAt );
                     }
                 }
@@ -678,7 +680,7 @@ public final class SitemapCache
         entry.submitted = clock.instant();
         try
         {
-            tasks.submit( key, entry.background, changedAt );
+            tasks.submit( key, entry.autogen, changedAt );
         }
         catch ( RuntimeException e )
         {
@@ -694,7 +696,7 @@ public final class SitemapCache
     /**
      * Generates and stores the sitemap of the key, claimed by the given generation.
      */
-    private void generateAndStore( final Key key, final boolean background, final String generation,
+    private void generateAndStore( final Key key, final boolean autogen, final String generation,
                                    final SitemapStore.@Nullable Stored previous, final Instant startedAt,
                                    final @Nullable ProgressReporter progress )
     {
@@ -719,7 +721,7 @@ public final class SitemapCache
             final SitemapStore.Stored stored;
             try
             {
-                stored = store.save( id, key, background, generated, validUntil, startedAt, clock.instant() );
+                stored = store.save( id, key, autogen, generated, validUntil, startedAt, clock.instant() );
             }
             finally
             {
@@ -727,12 +729,13 @@ public final class SitemapCache
             }
             published( key, stored, changes );
             evictOverflow( key );
+            deleteOld();
             LOG.debug( "Generated sitemap {}", key );
             report( progress, "Generated " + summary( generated ) );
-            if ( background && validUntil != null )
+            if ( autogen && validUntil != null )
             {
                 final Entry entry = entry( key );
-                entry.background = true;
+                entry.autogen = true;
                 generate( key, entry, Duration.between( clock.instant(), validUntil ), true, null );
             }
         }
@@ -907,14 +910,31 @@ public final class SitemapCache
             .sorted( EVICTION_ORDER )
             .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
             .toList()
-            .forEach( stored -> {
-                store.delete( stored.id() );
-                final Entry entry = entries.get( stored.key() );
-                if ( entry != null )
-                {
-                    remove( stored.key(), entry );
-                }
-            } );
+            .forEach( this::delete );
+    }
+
+    /**
+     * Deletes stored sitemaps generated more than {@link #RETENTION} ago, unless they are being generated: sitemaps of principals no
+     * request has any longer, after a change of roles or groups, of deleted users, or of hosts no longer used. A sitemap still requested
+     * is generated again on its next request.
+     */
+    private void deleteOld()
+    {
+        final Instant now = clock.instant();
+        store.generatedBefore( now.minus( RETENTION ) ).stream().filter( stored -> {
+            final SitemapStore.Generating generating = stored.generating();
+            return generating == null || !generating.since().plus( STALE_GENERATION ).isAfter( now );
+        } ).forEach( this::delete );
+    }
+
+    private void delete( final SitemapStore.Stored stored )
+    {
+        store.delete( stored.id() );
+        final Entry entry = entries.get( stored.key() );
+        if ( entry != null )
+        {
+            remove( stored.key(), entry );
+        }
     }
 
     private void execute( final Runnable runnable )
@@ -996,14 +1016,14 @@ public final class SitemapCache
     @FunctionalInterface
     interface Tasks
     {
-        void submit( Key key, boolean background, @Nullable Instant changedAt );
+        void submit( Key key, boolean autogen, @Nullable Instant changedAt );
 
         /**
          * Submits the {@code generate} task of this app, which XP may offload to another cluster node.
          */
         static Tasks of( final TaskService taskService )
         {
-            return ( key, background, changedAt ) -> {
+            return ( key, autogen, changedAt ) -> {
                 final PropertyTree data = new PropertyTree();
                 try
                 {
@@ -1013,7 +1033,7 @@ public final class SitemapCache
                 {
                     throw new IllegalStateException( e );
                 }
-                data.setBoolean( "background", background );
+                data.setBoolean( "autogen", autogen );
                 if ( changedAt != null )
                 {
                     data.setString( "changedAt", changedAt.toString() );
@@ -1170,7 +1190,7 @@ public final class SitemapCache
     {
         final CompletableFuture<Sitemap> ready = new CompletableFuture<>();
 
-        volatile boolean background;
+        volatile boolean autogen;
 
         volatile boolean loaded;
 

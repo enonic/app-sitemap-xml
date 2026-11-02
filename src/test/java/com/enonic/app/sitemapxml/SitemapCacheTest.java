@@ -558,6 +558,27 @@ class SitemapCacheTest
     }
 
     @Test
+    void deletesSitemapsGeneratedMoreThanRetentionAgoExceptThoseBeingGenerated()
+    {
+        final Node node = node();
+        final SitemapCache.Key old = key( "/old" );
+        final SitemapCache.Key busy = key( "/busy" );
+        node.cache.get( old, false );
+        node.cache.get( busy, false );
+        assertThat( store.claim( store.load( busy.id() ), "other", clock.instant().plus( SitemapCache.RETENTION ).plusSeconds( 1 ),
+                                 SitemapCache.STALE_GENERATION ) ).isTrue();
+
+        clock.advance( SitemapCache.RETENTION.plusSeconds( 1 ) );
+        node.cache.get( KEY, false );
+
+        assertThat( store.load( old.id() ) ).isNull();
+        assertThat( store.load( busy.id() ) ).isNotNull();
+        assertThat( store.load( KEY.id() ) ).isNotNull();
+        assertThat( text( node.cache.get( old, false ) ) ).contains( "https://example.com/" );
+        assertThat( store.load( old.id() ) ).isNotNull();
+    }
+
+    @Test
     void evictsSitemapsOfSiteBeyondLimitWithPortsFirstThenLeastRecentlyRequested()
     {
         final Node node = node();
@@ -751,14 +772,14 @@ class SitemapCacheTest
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
-        final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> {
+        final SitemapCache.Tasks tasks = ( key, autogen, changedAt ) -> {
             final RuntimeException failure = submitFailure.getAndSet( null );
             if ( failure != null )
             {
                 throw failure;
             }
             ( taskExecutor != null ? taskExecutor : executor ).execute(
-                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt, null ) );
+                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, autogen, changedAt, null ) );
         };
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,

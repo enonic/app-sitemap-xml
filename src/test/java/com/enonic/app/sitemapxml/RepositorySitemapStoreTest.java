@@ -33,6 +33,7 @@ import com.enonic.xp.node.NodeVersion;
 import com.enonic.xp.node.NodeVersionId;
 import com.enonic.xp.node.Nodes;
 import com.enonic.xp.node.UpdateNodeParams;
+import com.enonic.xp.query.filter.RangeFilter;
 import com.enonic.xp.query.filter.ValueFilter;
 import com.enonic.xp.repository.RepositoryService;
 import com.enonic.xp.security.RoleKeys;
@@ -121,7 +122,7 @@ class RepositorySitemapStoreTest
         assertThat( stored.id() ).isEqualTo( KEY.id() );
         assertThat( stored.version() ).isEqualTo( versionId.toString() );
         assertThat( stored.key() ).isEqualTo( KEY );
-        assertThat( stored.background() ).isTrue();
+        assertThat( stored.autogen() ).isTrue();
         assertThat( stored.validUntil() ).isEqualTo( NOW.plusSeconds( 3600 ) );
         assertThat( stored.startedAt() ).isEqualTo( NOW.minusSeconds( 5 ) );
         assertThat( stored.generatedAt() ).isEqualTo( NOW );
@@ -266,6 +267,22 @@ class RepositorySitemapStoreTest
             filter -> filter.getFieldName() + "=" + filter.getValues().iterator().next().asString() ).containsExactlyInAnyOrder(
             "key.repository=com.enonic.cms.project", "key.branch=master", "key.sitePath=/mysite", "key.principals=role:system.everyone",
             "key.principals=user:system:anonymous" );
+    }
+
+    @Test
+    void findsSitemapsGeneratedBeforeTimeByIndexedGenerationTime()
+    {
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( FindNodesByQueryResult.create().build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.empty() );
+
+        assertThat( store().generatedBefore( NOW ) ).isEmpty();
+
+        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
+        verify( nodeService ).findByQuery( query.capture() );
+        final RangeFilter range = (RangeFilter) query.getValue().getQueryFilters().first();
+        assertThat( range.getFieldName() ).isEqualTo( "generatedAt" );
+        assertThat( range.getTo().asInstant() ).isEqualTo( NOW );
+        assertThat( range.isIncludeUpper() ).isFalse();
     }
 
     @Test

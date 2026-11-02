@@ -31,14 +31,14 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final boolean background, final String member,
+    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final boolean autogen, final String member,
                                           final Instant now )
     {
         if ( stored.containsKey( id ) )
         {
             return false;
         }
-        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, background, null, null, null, null, null,
+        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, autogen, null, null, null, null, null,
                                     new Generating( member, now ), null, null ) );
         return true;
     }
@@ -80,7 +80,7 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized Stored save( final String id, final SitemapCache.Key key, final boolean background, final Sitemap sitemap,
+    public synchronized Stored save( final String id, final SitemapCache.Key key, final boolean autogen, final Sitemap sitemap,
                                      final @Nullable Instant validUntil, final Instant startedAt, final Instant now )
     {
         final Map<String, byte[]> files = new HashMap<>();
@@ -96,7 +96,7 @@ final class InMemorySitemapStore
         } );
         final Stored previous = stored.get( id );
         final Instant obsolete = previous == null ? null : previous.obsolete();
-        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, background,
+        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, autogen,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,
                                          obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null, null );
         stored.put( id, saved );
@@ -144,6 +144,12 @@ final class InMemorySitemapStore
     }
 
     @Override
+    public synchronized List<Stored> generatedBefore( final Instant time )
+    {
+        return stored.values().stream().filter( s -> s.generatedAt() != null && s.generatedAt().isBefore( time ) ).toList();
+    }
+
+    @Override
     public synchronized List<Stored> find( final String repositoryId, final @Nullable String branch )
     {
         return stored.values()
@@ -176,7 +182,7 @@ final class InMemorySitemapStore
     private static Stored with( final Stored s, final @Nullable Instant obsolete, final @Nullable Generating generating,
                                 final @Nullable Generating queued, final @Nullable Instant accessed )
     {
-        return new Stored( s.id(), s.version(), s.key(), s.background(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
+        return new Stored( s.id(), s.version(), s.key(), s.autogen(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
                            obsolete, generating, queued, accessed );
     }
 }

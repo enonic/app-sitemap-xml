@@ -308,12 +308,12 @@ class SitemapServiceTest
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
     }
 
-    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean background )
+    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean autogen )
     {
         inContext(
             () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( background ) );
+        verify( cache ).get( key.capture(), eq( autogen ) );
         return key.getValue();
     }
 

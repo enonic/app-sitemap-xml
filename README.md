@@ -178,6 +178,8 @@ A request for a sitemap that is being generated again gets the previous one righ
 
 Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently requested. A Base URL makes the sitemap the same for every host.
 
+Sitemaps generated more than a day ago are deleted (except while they are being generated), so sitemaps nothing requests anymore do not stay: those of a user whose roles or groups changed (a user's sitemap belongs to the exact set of principals of their requests), of deleted users, or of hosts no longer used. A sitemap still requested is generated again on its next request.
+
 ### URLs in the sitemap
 
 URLs are resolved in this order:

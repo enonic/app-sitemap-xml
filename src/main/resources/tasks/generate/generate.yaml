@@ -8,8 +8,8 @@ form:
       min: 1
       max: 1
   - type: "Checkbox"
-    name: "background"
-    label: "Generated again in the background"
+    name: "autogen"
+    label: "Generated again automatically"
   - type: "TextLine"
     name: "changedAt"
     label: "Content changed at"

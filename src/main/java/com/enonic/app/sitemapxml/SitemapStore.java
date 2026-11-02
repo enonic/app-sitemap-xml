@@ -22,7 +22,7 @@ interface SitemapStore
      *
      * @return false when the sitemap exists already: another member stored or started it
      */
-    boolean claimNew( String id, SitemapCache.Key key, boolean background, String member, Instant now );
+    boolean claimNew( String id, SitemapCache.Key key, boolean autogen, String member, Instant now );
 
     /**
      * Records that the given generation starts generating the stored sitemap again, and drops its place in the queue.
@@ -45,7 +45,7 @@ interface SitemapStore
      * @param startedAt when the generation started: the sitemap includes the content changes up to then
      * @return the stored sitemap, with its files read from the store
      */
-    Stored save( String id, SitemapCache.Key key, boolean background, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
+    Stored save( String id, SitemapCache.Key key, boolean autogen, Sitemap sitemap, @Nullable Instant validUntil, Instant startedAt,
                  Instant now );
 
     /**
@@ -60,6 +60,11 @@ interface SitemapStore
     void markObsolete( Stored stored, Instant now );
 
     void touch( Stored stored, Instant now );
+
+    /**
+     * The sitemaps generated before the given time.
+     */
+    List<Stored> generatedBefore( Instant time );
 
     /**
      * The sitemaps of the given repository, of the given branch only if not null.
@@ -79,7 +84,7 @@ interface SitemapStore
      * @param startedAt   when the generation of the sitemap started, null while the first generation is running
      * @param generatedAt when the sitemap was stored, null while the first generation is running
      */
-    record Stored(String id, String version, SitemapCache.Key key, boolean background, @Nullable Sitemap sitemap,
+    record Stored(String id, String version, SitemapCache.Key key, boolean autogen, @Nullable Sitemap sitemap,
                   @Nullable Instant validUntil, @Nullable Instant startedAt, @Nullable Instant generatedAt, @Nullable Instant obsolete,
                   @Nullable Generating generating, @Nullable Generating queued, @Nullable Instant accessed)
     {
