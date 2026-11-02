@@ -6,7 +6,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.jspecify.annotations.Nullable;
@@ -136,12 +135,12 @@ public final class SitemapService
         return authInfo.getPrincipals().stream().map( PrincipalKey::toString ).collect( Collectors.toUnmodifiableSet() );
     }
 
-    private static @Nullable Instant nothing( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    private static @Nullable Instant nothing( final SitemapSink sink, final BooleanSupplier cancelled )
     {
         return null;
     }
 
-    private static @Nullable Instant siteOnly( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    private static @Nullable Instant siteOnly( final SitemapSink sink, final BooleanSupplier cancelled )
     {
         sink.accept( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
         return null;

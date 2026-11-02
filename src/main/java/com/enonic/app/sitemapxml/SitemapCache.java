@@ -31,7 +31,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.jspecify.annotations.Nullable;
@@ -63,6 +62,8 @@ import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 import com.enonic.xp.shared.SharedMap;
 import com.enonic.xp.shared.SharedMapService;
+import com.enonic.xp.task.ProgressReportParams;
+import com.enonic.xp.task.ProgressReporter;
 import com.enonic.xp.task.SubmitTaskParams;
 import com.enonic.xp.task.TaskService;
 
@@ -295,8 +296,10 @@ public final class SitemapCache
      * @param background whether the sitemap is generated again in the background
      * @param changedAt  when the node that submitted the task saw its content change, if it did: the sitemap is not up to date unless its
      *                   generation started after that
+     * @param progress   receives what the task does and how many contents it has read
      */
-    public void runTask( final Key key, final boolean background, final @Nullable Instant changedAt )
+    public void runTask( final Key key, final boolean background, final @Nullable Instant changedAt,
+                         final @Nullable ProgressReporter progress )
     {
         if ( stopped )
         {
@@ -315,6 +318,7 @@ public final class SitemapCache
                 if ( previous != null && isUpToDate( previous, now, changedAt ) )
                 {
                     LOG.debug( "Sitemap {} is up to date", key );
+                    report( progress, "Sitemap is up to date" );
                     published( key, previous, -1 );
                     return;
                 }
@@ -325,8 +329,10 @@ public final class SitemapCache
                     if ( !store.queue( previous, generation, now, STALE_GENERATION ) )
                     {
                         LOG.debug( "Sitemap {} is generated and queued elsewhere", key );
+                        report( progress, "Another generation of the sitemap is queued" );
                         return;
                     }
+                    report( progress, "Waiting for the running generation of the sitemap" );
                     awaitRelease( id );
                     continue;
                 }
@@ -338,7 +344,7 @@ public final class SitemapCache
                     project.acquireUninterruptibly();
                     try
                     {
-                        generateAndStore( key, background, generation, previous, now );
+                        generateAndStore( key, background, generation, previous, now, progress );
                     }
                     finally
                     {
@@ -672,8 +678,10 @@ public final class SitemapCache
      * Generates and stores the sitemap of the key, claimed by the given generation.
      */
     private void generateAndStore( final Key key, final boolean background, final String generation,
-                                   final SitemapStore.@Nullable Stored previous, final Instant startedAt )
+                                   final SitemapStore.@Nullable Stored previous, final Instant startedAt,
+                                   final @Nullable ProgressReporter progress )
     {
+        report( progress, "Reading contents" );
         final String id = key.id();
         final Entry local = entries.get( key );
         final long changes = local == null ? -1 : local.changes;
@@ -684,12 +692,13 @@ public final class SitemapCache
                 .branch( key.branch() )
                 .authInfo( authInfo( key ) )
                 .build()
-                .callWith( () -> sources.apply( key ).write( builder::add, () -> stopped ) );
+                .callWith( () -> sources.apply( key ).write( sink( builder, progress ), () -> stopped ) );
             if ( stopped )
             {
                 throw new CancellationException();
             }
             final Sitemap generated = builder.build( previous == null ? null : previous.sitemap(), clock.instant() );
+            report( progress, "Storing " + summary( generated ) );
             final SitemapStore.Stored stored;
             try
             {
@@ -702,6 +711,7 @@ public final class SitemapCache
             published( key, stored, changes );
             evictOverflow( key );
             LOG.debug( "Generated sitemap {}", key );
+            report( progress, "Generated " + summary( generated ) );
             if ( background && validUntil != null )
             {
                 final Entry entry = entry( key );
@@ -713,11 +723,48 @@ public final class SitemapCache
         {
             release( key, generation );
             LOG.debug( "Generation of sitemap {} halted", key );
+            report( progress, "Generation halted" );
         }
         catch ( RuntimeException e )
         {
             release( key, generation );
             failed( key, e );
+            report( progress, "Generation failed: " + e.getMessage() );
+        }
+    }
+
+    private static SitemapSink sink( final Sitemap.Builder builder, final @Nullable ProgressReporter progress )
+    {
+        return new SitemapSink()
+        {
+            @Override
+            public void accept( final SitemapEntry entry )
+            {
+                builder.add( entry );
+            }
+
+            @Override
+            public void progress( final long read, final long total )
+            {
+                if ( progress != null )
+                {
+                    progress.progress( ProgressReportParams.create( (int) Math.min( read, Integer.MAX_VALUE ),
+                                                                    (int) Math.min( total, Integer.MAX_VALUE ) ).build() );
+                }
+            }
+        };
+    }
+
+    private static String summary( final Sitemap sitemap )
+    {
+        return sitemap.size() + " URLs in " + sitemap.fileCount() + ( sitemap.fileCount() == 1 ? " file" : " files" );
+    }
+
+    private static void report( final @Nullable ProgressReporter progress, final String message )
+    {
+        if ( progress != null )
+        {
+            progress.progress( ProgressReportParams.create( message ).build() );
         }
     }
 
@@ -915,7 +962,7 @@ public final class SitemapCache
          * @param cancelled returns true once the generation is halted
          * @return when the sitemap must be generated again, or null
          */
-        @Nullable Instant write( Consumer<SitemapEntry> sink, BooleanSupplier cancelled );
+        @Nullable Instant write( SitemapSink sink, BooleanSupplier cancelled );
     }
 
     /**

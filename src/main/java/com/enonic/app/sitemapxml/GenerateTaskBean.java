@@ -10,9 +10,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.script.bean.ScriptBean;
+import com.enonic.xp.task.TaskProgressReporterContext;
 
 /**
- * Runs the {@code generate} task: generates and stores the sitemap of the given key on the node XP runs the task on.
+ * Runs the {@code generate} task: generates and stores the sitemap of the given key on the node XP runs the task on, and reports its
+ * progress to the task.
  */
 public final class GenerateTaskBean
     implements ScriptBean
@@ -32,6 +34,6 @@ public final class GenerateTaskBean
     {
         Objects.requireNonNull( cache, "Bean not initialized" )
             .runTask( SitemapCache.Key.restore( MAPPER.readTree( key ) ), background,
-                      changedAt == null || changedAt.isEmpty() ? null : Instant.parse( changedAt ) );
+                      changedAt == null || changedAt.isEmpty() ? null : Instant.parse( changedAt ), TaskProgressReporterContext.current() );
     }
 }

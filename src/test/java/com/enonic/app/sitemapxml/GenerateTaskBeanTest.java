@@ -34,7 +34,7 @@ class GenerateTaskBeanTest
         bean.run( key, true, "2024-01-01T00:00:00Z" );
         bean.run( key, false, null );
 
-        verify( cache ).runTask( KEY, true, Instant.parse( "2024-01-01T00:00:00Z" ) );
-        verify( cache ).runTask( KEY, false, null );
+        verify( cache ).runTask( KEY, true, Instant.parse( "2024-01-01T00:00:00Z" ), null );
+        verify( cache ).runTask( KEY, false, null, null );
     }
 }

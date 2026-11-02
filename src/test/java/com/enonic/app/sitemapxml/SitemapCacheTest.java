@@ -36,9 +36,16 @@ import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.task.ProgressReportParams;
+import com.enonic.xp.task.ProgressReporter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class SitemapCacheTest
 {
@@ -596,11 +603,36 @@ class SitemapCacheTest
         final Node node = node();
         node.cache.get( KEY, false );
 
-        node.cache.runTask( KEY, false, null );
+        final ProgressReporter progress = mock( ProgressReporter.class );
+        node.cache.runTask( KEY, false, null, progress );
         assertThat( generated ).hasValue( 1 );
+        verify( progress ).progress( argThat( params -> "Sitemap is up to date".equals( params.getMessage() ) ) );
 
-        node.cache.runTask( KEY, false, clock.instant() );
+        node.cache.runTask( KEY, false, clock.instant(), null );
         assertThat( generated ).hasValue( 2 );
+    }
+
+    @Test
+    void reportsProgressOfTask()
+    {
+        source.set( ( sink, cancelled ) -> {
+            sink.progress( 0, 2 );
+            sink.accept( new SitemapEntry( "/a", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            sink.accept( new SitemapEntry( "/b", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            sink.progress( 2, 2 );
+            return null;
+        } );
+        final List<String> reports = new ArrayList<>();
+        final ProgressReporter progress = mock( ProgressReporter.class );
+        doAnswer( invocation -> {
+            final ProgressReportParams params = invocation.getArgument( 0 );
+            reports.add( params.getMessage() != null ? params.getMessage() : params.getCurrent() + "/" + params.getTotal() );
+            return null;
+        } ).when( progress ).progress( any( ProgressReportParams.class ) );
+
+        node().cache.runTask( KEY, false, null, progress );
+
+        assertThat( reports ).containsExactly( "Reading contents", "0/2", "2/2", "Storing 2 URLs in 1 file", "Generated 2 URLs in 1 file" );
     }
 
     @Test
@@ -637,7 +669,7 @@ class SitemapCacheTest
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
         final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> ( taskExecutor != null ? taskExecutor : executor ).execute(
-            () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt ) );
+            () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt, null ) );
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,
                                                      temp.resolve( "node-" + nodes.size() ) );

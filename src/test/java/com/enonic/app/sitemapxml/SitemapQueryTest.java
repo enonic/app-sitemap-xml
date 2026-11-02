@@ -86,9 +86,26 @@ class SitemapQueryTest
         answerGetByIds( contents );
 
         final List<SitemapEntry> entries = new ArrayList<>();
-        final Instant validUntil = draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
+        final List<String> progress = new ArrayList<>();
+        final SitemapSink sink = new SitemapSink()
+        {
+            @Override
+            public void accept( final SitemapEntry entry )
+            {
+                entries.add( entry );
+            }
+
+            @Override
+            public void progress( final long read, final long total )
+            {
+                progress.add( read + "/" + total );
+            }
+        };
+        final Instant validUntil = draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( sink, () -> false ) );
 
         assertThat( entries ).hasSize( count + 1 );
+        assertThat( progress ).containsExactly( "0/" + ( count + 2 ), SitemapQuery.FETCH_BATCH_SIZE + "/" + ( count + 2 ),
+                                                ( count + 2 ) + "/" + ( count + 2 ) );
         assertThat( entries.getFirst() ).isEqualTo( new SitemapEntry( "/item-0", "base:folder", NOW ) );
         assertThat( entries.get( count - 1 ).path() ).isEqualTo( "/item-" + ( count - 1 ) );
         assertThat( entries.getLast() ).isEqualTo( new SitemapEntry( "", "base:folder", NOW ) );

@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -125,13 +124,15 @@ public final class SitemapQuery
      * @param cancelled checked between batches, the query stops with a {@link CancellationException} once it returns true
      * @return when the sitemap must be generated again because scheduled content goes online or offline, or null
      */
-    public @Nullable Instant execute( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    public @Nullable Instant execute( final SitemapSink sink, final BooleanSupplier cancelled )
     {
         final FindContentIdsByQueryResult overview = histogram( List.of(), 0, 0 );
         final long total = overview.getTotalHits();
+        final Progress progress = new Progress( sink, total );
+        progress.report( 0 );
         if ( total <= Sitemap.MAX_URLS_PER_FILE )
         {
-            emitByPath( sink, cancelled );
+            emitByPath( sink, progress, cancelled );
         }
         else
         {
@@ -141,7 +142,7 @@ public final class SitemapQuery
             for ( final Slice slice : slices )
             {
                 emit( find( slice.filters(), CREATION_ORDER, slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE ), sink,
-                      cancelled );
+                      progress, cancelled );
             }
         }
 
@@ -254,7 +255,7 @@ public final class SitemapQuery
      * Reads all contents sorted by path, {@value #PAGE_SIZE} at a time: each page continues after the last path of the previous one.
      * Paths are compared as indexed, in lower case.
      */
-    private void emitByPath( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    private void emitByPath( final SitemapSink sink, final Progress progress, final BooleanSupplier cancelled )
     {
         String after = null;
         while ( true )
@@ -262,7 +263,7 @@ public final class SitemapQuery
             final List<Filter> filters =
                 after == null ? List.of() : List.of( RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
             final List<ContentId> ids = find( filters, List.of( FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) ), PAGE_SIZE );
-            final String last = emit( ids, sink, cancelled );
+            final String last = emit( ids, sink, progress, cancelled );
             if ( ids.size() < PAGE_SIZE || last == null )
             {
                 return;
@@ -283,7 +284,8 @@ public final class SitemapQuery
      *
      * @return the indexed path of the last content loaded, or null if none was
      */
-    private @Nullable String emit( final List<ContentId> ids, final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
+    private @Nullable String emit( final List<ContentId> ids, final SitemapSink sink, final Progress progress,
+                                   final BooleanSupplier cancelled )
     {
         String last = null;
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
@@ -313,6 +315,7 @@ public final class SitemapQuery
                                                    content.getType().toString(), content.getModifiedTime() ) );
                 }
             }
+            progress.report( batch.size() );
         }
         return last;
     }
@@ -401,5 +404,29 @@ public final class SitemapQuery
      */
     record Slice(List<Filter> filters, long count)
     {
+    }
+
+    /**
+     * Counts the contents read and passes the count to the sink.
+     */
+    private static final class Progress
+    {
+        private final SitemapSink sink;
+
+        private final long total;
+
+        private long read;
+
+        Progress( final SitemapSink sink, final long total )
+        {
+            this.sink = sink;
+            this.total = total;
+        }
+
+        void report( final int count )
+        {
+            read += count;
+            sink.progress( read, Math.max( read, total ) );
+        }
     }
 }
