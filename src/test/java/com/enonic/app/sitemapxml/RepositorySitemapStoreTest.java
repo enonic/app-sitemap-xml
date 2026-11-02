@@ -30,6 +30,9 @@ import com.enonic.xp.node.NodeVersion;
 import com.enonic.xp.node.NodeVersionId;
 import com.enonic.xp.node.UpdateNodeParams;
 import com.enonic.xp.repository.RepositoryService;
+import com.enonic.xp.security.RoleKeys;
+import com.enonic.xp.security.acl.AccessControlEntry;
+import com.enonic.xp.security.acl.AccessControlList;
 import com.enonic.xp.util.BinaryReference;
 import com.enonic.xp.util.GenericValue;
 
@@ -102,6 +105,8 @@ class RepositorySitemapStoreTest
             .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz",
                                         "urlset-1.jsonl.gz", "urlset-2.jsonl.gz" );
         assertThat( create.getValue().getBinaryAttachments().getSize() ).isEqualTo( 6 );
+        assertThat( create.getValue().getPermissions() ).isEqualTo(
+            AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() ) );
 
         assertThat( stored.id() ).isEqualTo( KEY.id() );
         assertThat( stored.version() ).isEqualTo( versionId.toString() );
@@ -113,6 +118,42 @@ class RepositorySitemapStoreTest
         assertThat( new String( stored.sitemap().file( 2 ).orElseThrow().read(), StandardCharsets.UTF_8 ) ).contains(
             "https://example.com/b" );
         assertThat( stored.sitemap().rootETag( false ) ).isEqualTo( local.rootETag( false ) );
+    }
+
+    @Test
+    void claimOfNewSitemapCreatesNodeOnlyAdministratorsCanAccess()
+    {
+        when( nodeService.create( any() ) ).thenReturn( node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) ) );
+
+        assertThat( store().claimNew( KEY.id(), KEY, false, "me", NOW ) ).isTrue();
+
+        final ArgumentCaptor<CreateNodeParams> create = ArgumentCaptor.forClass( CreateNodeParams.class );
+        verify( nodeService ).create( create.capture() );
+        assertThat( create.getValue().getPermissions() ).isEqualTo(
+            AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() ) );
+        assertThat( create.getValue().isInheritPermissions() ).isFalse();
+    }
+
+    @Test
+    void newVersionStaysObsoleteForChangeSinceGenerationStarted()
+    {
+        final Sitemap local = SitemapTest.write( temp.resolve( "local" ), PARAMS, List.of( new SitemapEntry( "/a", "portal:site", null ) ), 10,
+                                                 Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES );
+        final NodeVersionId previous = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final NodeVersionId next = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000002" );
+        final Node existing = node( previous );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( existing );
+        when( nodeService.update( any() ) ).thenReturn( node( next ) );
+        final NodeVersion obsolete =
+            version( Attributes.create().attribute( "obsolete", GenericValue.stringValue( NOW.plusSeconds( 1 ).toString() ) ).build() );
+        when( nodeService.getVersion( existing.id(), previous ) ).thenReturn( obsolete );
+
+        store().save( KEY.id(), KEY, false, local, null, NOW, NOW.plusSeconds( 5 ) );
+
+        final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
+        verify( nodeService ).applyVersionAttributes( apply.capture() );
+        assertThat( apply.getValue().getNodeVersionId() ).isEqualTo( next );
+        assertThat( apply.getValue().getAddAttributes().get( "obsolete" ).asString() ).isEqualTo( NOW.plusSeconds( 1 ).toString() );
     }
 
     @Test

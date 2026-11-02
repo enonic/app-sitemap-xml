@@ -78,6 +78,9 @@ final class RepositorySitemapStore
 
     private static final Logger LOG = LoggerFactory.getLogger( RepositorySitemapStore.class );
 
+    private static final AccessControlList PERMISSIONS =
+        AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() );
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final PatternIndexConfigDocument INDEX_CONFIG = PatternIndexConfigDocument.create()
@@ -113,10 +116,7 @@ final class RepositorySitemapStore
                     repositoryService.createRepository( CreateRepositoryParams.create()
                                                             .repositoryId( REPOSITORY )
                                                             .transientFlag( true )
-                                                            .rootPermissions( AccessControlList.of( AccessControlEntry.create()
-                                                                                                        .principal( RoleKeys.ADMIN )
-                                                                                                        .allowAll()
-                                                                                                        .build() ) )
+                                                            .rootPermissions( PERMISSIONS )
                                                             .build() );
                 }
                 catch ( RepositoryAlreadyExistsException e )
@@ -149,6 +149,7 @@ final class RepositorySitemapStore
                                         .name( id )
                                         .data( data( key, background, null, null, null, null ) )
                                         .indexConfigDocument( INDEX_CONFIG )
+                                        .permissions( PERMISSIONS )
                                         .versionAttributesResolver(
                                             VersionAttributesResolver.of( generating( member, now ) ) )
                                         .refresh( RefreshMode.ALL )
@@ -220,6 +221,7 @@ final class RepositorySitemapStore
                     .name( id )
                     .data( data )
                     .indexConfigDocument( INDEX_CONFIG )
+                    .permissions( PERMISSIONS )
                     .versionAttributesResolver( noAttributes )
                     .refresh( RefreshMode.ALL );
                 files.forEach( ( name, content ) -> create.attachBinary( reference( name ), content ) );
@@ -234,6 +236,12 @@ final class RepositorySitemapStore
                     .refresh( RefreshMode.ALL );
                 files.forEach( ( name, content ) -> update.attachBinary( reference( name ), content ) );
                 node = nodeService.update( update.build() );
+                final Instant obsolete = obsolete( existing );
+                if ( obsolete != null && !obsolete.isBefore( startedAt ) )
+                {
+                    apply( node.getNodeVersionId(),
+                           Attributes.create().attribute( OBSOLETE, GenericValue.stringValue( obsolete.toString() ) ).build(), null );
+                }
             }
             return toStored( node );
         } );
@@ -333,6 +341,15 @@ final class RepositorySitemapStore
                            Boolean.TRUE.equals( data.getBoolean( "background" ) ), sitemap, data.getInstant( "validUntil" ),
                            data.getInstant( "startedAt" ), data.getInstant( "generatedAt" ), instant( attributes, OBSOLETE ),
                            generation( attributes, GENERATING ), generation( attributes, QUEUED ), instant( attributes, ACCESSED ) );
+    }
+
+    /**
+     * When the version of the node was marked as obsolete, read after it was replaced, so a mark applied meanwhile is included.
+     */
+    private @Nullable Instant obsolete( final Node node )
+    {
+        final NodeVersion version = nodeService.getVersion( node.id(), node.getNodeVersionId() );
+        return version == null || version.getAttributes() == null ? null : instant( version.getAttributes(), OBSOLETE );
     }
 
     private Sitemap.FileSource files( final NodeId nodeId, final NodeVersionId versionId )

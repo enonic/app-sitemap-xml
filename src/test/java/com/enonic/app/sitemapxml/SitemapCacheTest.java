@@ -157,6 +157,7 @@ class SitemapCacheTest
     @Test
     void onlyNodeWhereContentChangedGeneratesBackgroundSitemapsAgain()
     {
+        regenerationDelay = Duration.ofMillis( 100 );
         final Node origin = node();
         final Node other = node();
         origin.cache.get( KEY, true );
@@ -164,6 +165,8 @@ class SitemapCacheTest
 
         origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        origin.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
         awaitUntil( () -> generated.get() == 2 );
         origin.awaitIdle();
         other.awaitIdle();
@@ -189,11 +192,77 @@ class SitemapCacheTest
         assertThat( store.load( KEY.id() ).obsolete() ).isEqualTo( clock.instant() );
         assertThat( generated ).hasValue( 1 );
 
+        clock.advance( Duration.ofSeconds( 1 ) );
         final Node fresh = node();
         fresh.cache.get( KEY, false );
         awaitUntil( () -> generated.get() == 2 );
         fresh.awaitIdle();
         assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+    }
+
+    @Test
+    void permissionsUpdatedEventMarksSitemapsObsolete()
+    {
+        final Node node = node();
+        node.cache.get( KEY, false );
+
+        node.cache.onEvent( Event.create( "node.permissionsUpdated" )
+                                .localOrigin( true )
+                                .value( "id", "1" )
+                                .value( "path", "/content/mysite/a" )
+                                .value( "branch", "master" )
+                                .value( "repo", "com.enonic.cms.project" )
+                                .build() );
+        node.awaitIdle();
+
+        assertThat( store.load( KEY.id() ).obsolete() ).isEqualTo( clock.instant() );
+    }
+
+    @Test
+    void changeDuringFirstGenerationOfBackgroundSitemapIsIncluded()
+        throws Exception
+    {
+        final ExecutorService pool = Executors.newCachedThreadPool();
+        executors.add( pool );
+        final Node node = node( Duration.ZERO, pool );
+        final CountDownLatch started = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        source.set( ( sink, cancelled ) -> {
+            source.set( this::generate );
+            started.countDown();
+            await( release );
+            return generate( sink, cancelled );
+        } );
+
+        final Future<Sitemap> first = requests.submit( () -> node.cache.get( KEY, true ) );
+        await( started );
+        clock.advance( Duration.ofSeconds( 1 ) );
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        node.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
+        release.countDown();
+
+        assertThat( text( first.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/1" );
+        awaitUntil( () -> generated.get() == 2 && store.load( KEY.id() ).generating() == null );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+    }
+
+    @Test
+    void otherNodeGeneratesBackgroundSitemapWhenNodeWhereContentChangedDidNotInTime()
+    {
+        final Node other = node();
+        other.cache.get( KEY, true );
+
+        clock.advance( Duration.ofSeconds( 1 ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        other.cache.get( KEY, true );
+        other.awaitIdle();
+        assertThat( generated ).hasValue( 1 );
+
+        clock.advance( SitemapCache.STALE_GENERATION.plusSeconds( 1 ) );
+        other.cache.get( KEY, true );
+        awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test

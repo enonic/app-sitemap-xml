@@ -413,9 +413,10 @@ public final class SitemapCache
         final Set<List<String>> changed = new LinkedHashSet<>();
         if ( type.startsWith( "node." ) )
         {
-            if ( event.getData().get( "nodes" ) instanceof List<?> nodes )
+            final Object data = event.getData().get( "nodes" );
+            if ( data instanceof List<?> || event.getData().containsKey( "repo" ) )
             {
-                for ( final Object node : nodes )
+                for ( final Object node : data instanceof List<?> nodes ? nodes : List.of( event.getData() ) )
                 {
                     if ( node instanceof Map<?, ?> map && map.get( "repo" ) instanceof String repo &&
                         map.get( "branch" ) instanceof String branch )
@@ -483,7 +484,8 @@ public final class SitemapCache
     /**
      * Whether a request for the stored sitemap should start generating it again. A sitemap generated again in the background is left to
      * the node where its content changed, unless it was generated before the cluster started, was not requested for
-     * {@link #IDLE_TIMEOUT} when its content changed, or that node failed to generate it.
+     * {@link #IDLE_TIMEOUT} when its content changed, or that node failed to generate it: no newer version arrived while the change, as
+     * marked in the store or seen by this node, is overdue.
      */
     private boolean shouldRegenerate( final Entry entry, final SitemapStore.Stored stored, final Instant now )
     {
@@ -501,11 +503,20 @@ public final class SitemapCache
         final Instant obsolete = stored.obsolete();
         if ( stored.background() )
         {
+            final Instant seen = entry.sitemapChanges != entry.changes ? entry.firstChangedAt : null;
             return entry.idleWhenChanged && entry.sitemapChanges != entry.changes || obsolete != null &&
-                ( !stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( obsolete ) ||
-                    obsolete.plus( regenerationDelay ).plus( STALE_GENERATION ).isBefore( now ) );
+                ( !stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( obsolete ) || overdue( obsolete, now ) ) ||
+                seen != null && overdue( seen, now );
         }
         return obsolete != null || entry.sitemapChanges != entry.changes;
+    }
+
+    /**
+     * Whether a content change at the given time should have been included by a generation in the background by now.
+     */
+    private boolean overdue( final Instant changedAt, final Instant now )
+    {
+        return changedAt.plus( regenerationDelay ).plus( STALE_GENERATION ).isBefore( now );
     }
 
     /**
@@ -583,6 +594,10 @@ public final class SitemapCache
             {
                 synchronized ( entry )
                 {
+                    if ( entry.changes == entry.sitemapChanges )
+                    {
+                        entry.firstChangedAt = changedAt;
+                    }
                     entry.changes++;
                     entry.changedAt = changedAt;
                     entry.idleWhenChanged |= lastAccess( entry ).plus( IDLE_TIMEOUT ).isBefore( changedAt );
@@ -600,7 +615,8 @@ public final class SitemapCache
                         continue;
                     }
                     store.markObsolete( stored, changedAt );
-                    if ( stored.background() && stored.sitemap() != null && stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( changedAt ) )
+                    if ( stored.background() &&
+                        ( stored.sitemap() == null || stored.lastAccess().plus( IDLE_TIMEOUT ).isAfter( changedAt ) ) )
                     {
                         final Entry entry = entry( stored.key() );
                         entry.background = true;
@@ -829,6 +845,7 @@ public final class SitemapCache
             if ( changes >= 0 )
             {
                 entry.sitemapChanges = changes;
+                entry.firstChangedAt = changes == entry.changes ? null : entry.changedAt;
                 entry.idleWhenChanged = false;
             }
         }
@@ -1173,5 +1190,11 @@ public final class SitemapCache
         volatile long sitemapChanges;
 
         volatile @Nullable Instant changedAt;
+
+        /**
+         * When this node saw the first content change the stored sitemap does not include: a background sitemap is generated again on
+         * request when the node where the content changed did not do it in time.
+         */
+        volatile @Nullable Instant firstChangedAt;
     }
 }

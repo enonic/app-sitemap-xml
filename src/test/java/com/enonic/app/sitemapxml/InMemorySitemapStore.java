@@ -94,9 +94,11 @@ final class InMemorySitemapStore
                 throw new UncheckedIOException( e );
             }
         } );
+        final Stored previous = stored.get( id );
+        final Instant obsolete = previous == null ? null : previous.obsolete();
         final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, background,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,
-                                         null, null, null, null );
+                                         obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null, null );
         stored.put( id, saved );
         saves.incrementAndGet();
         return saved;

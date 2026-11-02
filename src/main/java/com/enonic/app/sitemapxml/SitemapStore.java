@@ -39,7 +39,8 @@ interface SitemapStore
     boolean queue( Stored stored, String member, Instant now, Duration stale );
 
     /**
-     * Stores the generated sitemap, replacing the previous one, and clears its state.
+     * Stores the generated sitemap, replacing the previous one, and clears its state, except that it stays obsolete when the previous one
+     * was marked so for a content change since the generation started.
      *
      * @param startedAt when the generation started: the sitemap includes the content changes up to then
      * @return the stored sitemap, with its files read from the store
