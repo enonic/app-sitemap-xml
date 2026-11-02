@@ -77,6 +77,34 @@ class SitemapQueryTest
     }
 
     @Test
+    void siteWithAccentsIsMatchedByPathAndPrefix()
+    {
+        final SitemapParams params = new SitemapParams( "/blåbær", "https://example.com", List.of(), List.of(), 10 );
+
+        final PropertySet bool = new SitemapQuery( contentService, params, NOW ).dsl().getSet( "boolean" );
+        final List<PropertySet> site = sets( sets( bool, "must" ).get( 1 ).getSet( "boolean" ), "should" );
+
+        assertThat( site.get( 0 ).getSet( "term" ).getString( "field" ) ).isEqualTo( "_path" );
+        assertThat( site.get( 0 ).getSet( "term" ).getString( "value" ) ).isEqualTo( "/content/blåbær" );
+        assertThat( site.get( 1 ).getSet( "like" ).getString( "field" ) ).isEqualTo( "_path" );
+        assertThat( site.get( 1 ).getSet( "like" ).getString( "value" ) ).isEqualTo( "/content/blåbær/*" );
+    }
+
+    @Test
+    void leavesOutContentsOfSiteWhosePathOnlyDiffersByAccents()
+    {
+        final List<Content> contents =
+            List.of( content( "site", "/mysite" ), content( "a", "/mysite/a" ), content( "accented", "/mysíte/a" ) );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( result( contents ) );
+        answerGetByIds( contents );
+
+        final List<SitemapEntry> entries = new ArrayList<>();
+        draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
+
+        assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "", "/a" );
+    }
+
+    @Test
     void streamsContentsLoadedInBatchesNewestFirst()
     {
         final int count = SitemapQuery.FETCH_BATCH_SIZE + 5;

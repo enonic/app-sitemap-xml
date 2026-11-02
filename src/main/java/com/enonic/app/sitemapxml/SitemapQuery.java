@@ -52,7 +52,9 @@ import com.enonic.xp.query.filter.RangeFilter;
  * in memory.
  * <p>
  * Each query only uses filters Elasticsearch evaluates in proportion to the contents it returns: the site is a single term on the path
- * hierarchy, time slices are numeric ranges.
+ * hierarchy, time slices are numeric ranges. XP indexes the path hierarchy with accents folded, so a site path with other than ASCII
+ * characters is matched by its path and a path prefix instead, and contents of a site whose path only differs by accents are left out
+ * when they are loaded.
  */
 public final class SitemapQuery
 {
@@ -374,7 +376,16 @@ public final class SitemapQuery
         in.addString( "field", "type" );
         params.contentTypeNames().forEach( type -> in.addString( "values", type ) );
 
-        term( bool.addSet( "must" ), PATH_HIERARCHY, contentRoot );
+        if ( contentRoot.chars().allMatch( c -> c < 128 ) )
+        {
+            term( bool.addSet( "must" ), PATH_HIERARCHY, contentRoot );
+        }
+        else
+        {
+            final PropertySet site = bool.addSet( "must" ).addSet( "boolean" );
+            term( site.addSet( "should" ), PATH.getPath(), contentRoot );
+            like( site.addSet( "should" ), PATH.getPath(), contentRoot + "/*" );
+        }
 
         final PropertySet blockRobots = bool.addSet( "mustNot" ).addSet( "term" );
         blockRobots.addString( "field", BLOCK_ROBOTS_FIELD );
