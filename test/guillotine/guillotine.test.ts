@@ -260,7 +260,7 @@ describe('guillotine extensions', () => {
 				expect(urls).toEqual(URLS);
 				expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 					sitePath: '',
-					siteUrl: projectConfig.overrideDomain,
+					siteUrl: '',
 				}), 2147483647);
 				const {run} = await import('/lib/xp/context');
 				expect(jest.mocked(run)).toHaveBeenLastCalledWith(
@@ -299,7 +299,7 @@ describe('guillotine extensions', () => {
 			expect(urlsetResolverResult).toEqual(URLS);
 			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 				sitePath: siteContent._path,
-				siteUrl: 'https://enonic.com',
+				siteUrl: '',
 			}), 10);
 
 			expect(urlsetResolver({

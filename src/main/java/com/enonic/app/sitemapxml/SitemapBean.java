@@ -82,7 +82,8 @@ public final class SitemapBean
 
     private Sitemap guillotineSitemap( final ScriptValue params )
     {
-        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ), false );
+        return Objects.requireNonNull( service, "Bean not initialized" )
+            .sitemap( toParams( params.getMap() ).withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE ), false );
     }
 
     private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body,

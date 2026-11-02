@@ -40,15 +40,11 @@ class SiteUrlsTest
     private VirtualHostService virtualHostService;
 
     @Test
-    void guillotineSitemapIsCurrentWhileItsOverrideIs()
+    void guillotineSitemapIsAlwaysCurrentAsItHasNoSiteUrl()
     {
-        scope( null, null );
-        assertThat( current( "" ) ).isTrue();
-        assertThat( current( "https://www.example.com" ) ).isFalse();
-
-        scope( "https://www.example.com", null );
-        assertThat( current( "https://www.example.com" ) ).isTrue();
-        assertThat( current( "" ) ).isFalse();
+        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent(
+            new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone", "user:system:anonymous" ),
+                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ) ) ) ).isTrue();
     }
 
     @Test

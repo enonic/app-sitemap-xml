@@ -7,13 +7,38 @@ import java.util.Map;
 
 import org.jspecify.annotations.Nullable;
 
-public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns)
+/**
+ * What a sitemap lists and how.
+ *
+ * @param format whether the sitemap is served as {@code sitemap.xml} or through Guillotine: each has its own cached sitemap, with the
+ *               files that one needs only
+ */
+public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns,
+                            Format format)
 {
+    public enum Format
+    {
+        /**
+         * {@code sitemap.xml} and its files, with full URLs.
+         */
+        XML,
+        /**
+         * The Guillotine {@code sitemap} field: URLs as paths, kept as JSON lines.
+         */
+        GUILLOTINE
+    }
+
     public static final String SITE_CONTENT_TYPE = "portal:site";
 
     public static final String DEFAULT_CHANGEFREQ = "monthly";
 
     public static final String DEFAULT_PRIORITY = "0.5";
+
+    public SitemapParams( final String sitePath, final String siteUrl, final List<ContentTypeSetting> contentTypes,
+                          final List<String> ignorePatterns )
+    {
+        this( sitePath, siteUrl, contentTypes, ignorePatterns, Format.XML );
+    }
 
     public SitemapParams
     {
@@ -23,7 +48,12 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
 
     public SitemapParams withSiteUrl( final String url )
     {
-        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns );
+        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns, format );
+    }
+
+    public SitemapParams withFormat( final Format format )
+    {
+        return new SitemapParams( sitePath, siteUrl, contentTypes, ignorePatterns, format );
     }
 
     public ContentTypeSetting setting( final String contentType )
@@ -62,7 +92,7 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
             pathEnd++;
         }
         final String url = protocol + "://" + authority.toLowerCase( Locale.ROOT ) + siteUrl.substring( end, pathEnd );
-        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns );
+        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns, format );
     }
 
     /**

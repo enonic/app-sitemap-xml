@@ -45,7 +45,8 @@ class SitemapNodeDataTest
         assertThat( described.getSets( "files" ) ).extracting( file -> file.getInstant( "lastmod" ) )
             .containsExactlyElementsOf( sitemap.lastModified() );
         assertThat( described.getSets( "bytes" ) ).extracting( file -> file.getString( "name" ) ).contains( "sitemap.xml", "sitemap-1.xml" );
-        assertThat( described.getSets( "namedDigests" ) ).extracting( file -> file.getString( "name" ) ).contains( "urlset-1.jsonl" );
+        assertThat( described.getSets( "namedDigests" ) ).extracting( file -> file.getString( "name" ) ).contains( "sitemap-index.xml" );
+        assertThat( key.getString( "format" ) ).isEqualTo( "xml" );
 
         assertThat( SitemapNodeData.readKey( data.getRoot() ) ).isEqualTo( KEY );
         final Sitemap read = SitemapNodeData.readSitemap( data.getRoot(), Sitemap.FileSource.directory( sitemap.directory() ) );

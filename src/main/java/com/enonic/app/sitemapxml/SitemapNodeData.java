@@ -34,6 +34,7 @@ final class SitemapNodeData
         stored.required( "principals" ).forEach( principal -> set.addString( "principals", principal.asText() ) );
         set.addString( "sitePath", stored.required( "sitePath" ).asText() );
         set.addString( "siteUrl", stored.required( "siteUrl" ).asText() );
+        set.addString( "format", stored.required( "format" ).asText() );
         for ( final JsonNode contentType : stored.required( "contentTypes" ) )
         {
             final PropertySet setting = set.addSet( "contentTypes" );
@@ -54,6 +55,7 @@ final class SitemapNodeData
         set.getStrings( "principals" ).forEach( principals::add );
         key.put( "sitePath", set.getString( "sitePath" ) );
         key.put( "siteUrl", set.getString( "siteUrl" ) );
+        key.put( "format", set.getString( "format" ) );
         final ArrayNode contentTypes = key.putArray( "contentTypes" );
         for ( final PropertySet setting : set.getSets( "contentTypes" ) )
         {

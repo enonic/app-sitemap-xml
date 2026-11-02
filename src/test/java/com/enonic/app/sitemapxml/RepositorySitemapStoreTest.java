@@ -119,9 +119,8 @@ class RepositorySitemapStoreTest
         assertThat( create.getValue().getData().getSet( "sitemap" ).getLong( "size" ) ).isEqualTo( 2 );
         assertThat( create.getValue().getData().getSet( "sitemap" ).getSets( "files" ) ).hasSize( 2 );
         assertThat( create.getValue().getData().getBinaryReferences( "file" ) ).extracting( BinaryReference::toString )
-            .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz",
-                                        "urlset-1.jsonl.gz", "urlset-2.jsonl.gz" );
-        assertThat( create.getValue().getBinaryAttachments().getSize() ).isEqualTo( 6 );
+            .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz" );
+        assertThat( create.getValue().getBinaryAttachments().getSize() ).isEqualTo( 4 );
         assertThat( create.getValue().getPermissions() ).isEqualTo(
             AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() ) );
 
@@ -187,7 +186,7 @@ class RepositorySitemapStoreTest
 
         final ArgumentCaptor<UpdateNodeParams> update = ArgumentCaptor.forClass( UpdateNodeParams.class );
         verify( nodeService ).update( update.capture() );
-        assertThat( update.getValue().getBinaryAttachments().getSize() ).isEqualTo( 2 );
+        assertThat( update.getValue().getBinaryAttachments().getSize() ).isEqualTo( 1 );
         assertThat( update.getValue().getVersionAttributesResolver().resolve( existing, existing, Branch.from( "master" ), null ) )
             .isEqualTo( Attributes.create().build() );
     }

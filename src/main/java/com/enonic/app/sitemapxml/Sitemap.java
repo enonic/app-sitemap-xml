@@ -67,6 +67,15 @@ public final class Sitemap
 
     static final int MAX_LOC_LENGTH = 2_048;
 
+    /**
+     * The longest base URL a Guillotine client is assumed to put in front of the paths: a Guillotine sitemap is split, and URLs too long
+     * left out, as if every URL started with one this long, so that the client's files stay within the limits with any base URL up to
+     * this length.
+     */
+    static final int MAX_BASE_URL_LENGTH = 500;
+
+    static final String LONGEST_BASE_URL = "https://" + "a".repeat( MAX_BASE_URL_LENGTH - "https://".length() );
+
     static final String GZIP_EXTENSION = ".gz";
 
     static final String ROOT_FILE = "sitemap.xml";
@@ -622,7 +631,8 @@ public final class Sitemap
         {
             this.directory = directory;
             this.params = params;
-            this.renderer = new SitemapRenderer( params );
+            this.renderer =
+                new SitemapRenderer( params.format() == SitemapParams.Format.XML ? params : params.withSiteUrl( LONGEST_BASE_URL ) );
             this.maxUrlsPerFile = maxUrlsPerFile;
             this.maxFileBytes = maxFileBytes;
             this.maxFiles = maxFiles;
@@ -645,8 +655,14 @@ public final class Sitemap
                     leftOut++;
                     return;
                 }
-                Objects.requireNonNull( file ).write( url );
-                renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
+                if ( xml() )
+                {
+                    Objects.requireNonNull( file ).write( url );
+                }
+                else
+                {
+                    renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
+                }
                 fileUrls++;
                 size++;
             }
@@ -656,10 +672,15 @@ public final class Sitemap
             }
         }
 
+        private boolean xml()
+        {
+            return params.format() == SitemapParams.Format.XML;
+        }
+
         /**
          * Finishes the files. A file keeps the modification time of the same file of the previous sitemap when its content is the same,
-         * also the Guillotine entries of the file, which hold full modification times where the XML holds dates, and gets the given time
-         * otherwise: crawlers and Guillotine clients fetch a file again when its modification time changes.
+         * and gets the given time otherwise: crawlers and Guillotine clients fetch a file again when its modification time changes. The
+         * XML files hold dates, the Guillotine entries full modification times.
          *
          * @param previous the sitemap this one replaces, if any
          * @param now      the modification time of the files that changed
@@ -688,7 +709,7 @@ public final class Sitemap
                 {
                     lastModified.set( i, unchanged( previous, i ) ? previous.lastModified.get( i ) : now );
                 }
-                if ( empty )
+                if ( empty || !xml() )
                 {
                     built = true;
                     return local();
@@ -719,22 +740,21 @@ public final class Sitemap
 
         private boolean unchanged( final @Nullable Sitemap previous, final int index )
         {
-            final String urlset = urlsetFileName( index + 1 );
             return previous != null && index < previous.digests.size() && previous.digests.get( index ).equals( digests.get( index ) ) &&
-                Objects.equals( previous.namedDigests.get( urlset ), namedDigests.get( urlset ) ) &&
                 previous.lastModified.get( index ) != null;
         }
 
         private void writeEmpty()
             throws IOException
         {
-            final CountingWriter root = open( ROOT_FILE );
-            root.write( URLSET_START + URLSET_END );
-            close( root, ROOT_FILE );
+            final String name = xml() ? ROOT_FILE : urlsetFileName( 1 );
+            final CountingWriter root = open( name );
+            if ( xml() )
+            {
+                root.write( URLSET_START + URLSET_END );
+            }
+            close( root, name );
             digests.add( root.digest() );
-            final CountingWriter urlsetFile = open( urlsetFileName( 1 ) );
-            close( urlsetFile, urlsetFileName( 1 ) );
-            namedDigests.put( urlsetFileName( 1 ), urlsetFile.digest() );
             lastModified.add( null );
         }
 
@@ -756,7 +776,7 @@ public final class Sitemap
             throws IOException
         {
             final long available = maxFileBytes - utf8Length( URLSET_START ) - utf8Length( URLSET_END );
-            if ( file != null && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
+            if ( !lastModified.isEmpty() && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
             {
                 fileBytes += urlBytes;
                 return true;
@@ -771,11 +791,18 @@ public final class Sitemap
             }
             closeFile();
             indexBytes += indexEntryBytes;
-            file = open( fileName( number ) );
-            file.write( URLSET_START );
-            urlsetFile = open( urlsetFileName( number ) );
-            urlset = JSON.createGenerator( urlsetFile );
-            urlset.setRootValueSeparator( new SerializedString( "\n" ) );
+            if ( xml() )
+            {
+                file = open( fileName( number ) );
+                file.write( URLSET_START );
+            }
+            else
+            {
+                // split where the XML files would be split, so that a client rendering one per file stays within the limits
+                urlsetFile = open( urlsetFileName( number ) );
+                urlset = JSON.createGenerator( urlsetFile );
+                urlset.setRootValueSeparator( new SerializedString( "\n" ) );
+            }
             lastModified.add( null );
             fileUrls = 0;
             fileBytes = urlBytes;
@@ -791,10 +818,13 @@ public final class Sitemap
                 close( file, fileName( lastModified.size() ) );
                 digests.add( file.digest() );
                 file = null;
-                Objects.requireNonNull( urlset ).close();
+            }
+            if ( urlset != null )
+            {
+                urlset.close();
                 urlset = null;
                 plainSizes.put( urlsetFileName( lastModified.size() ), Objects.requireNonNull( urlsetFile ).bytes() );
-                namedDigests.put( urlsetFileName( lastModified.size() ), urlsetFile.digest() );
+                digests.add( urlsetFile.digest() );
                 urlsetFile = null;
             }
         }

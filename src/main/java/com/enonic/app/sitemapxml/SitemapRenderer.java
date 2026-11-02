@@ -83,7 +83,10 @@ final class SitemapRenderer
             textElement( "loc", loc );
             if ( entry.lastModified() != null )
             {
-                textElement( "lastmod", DATE.format( entry.lastModified() ) );
+                // Guillotine clients get the full time, and may write it as is
+                textElement( "lastmod", params.format() == SitemapParams.Format.XML
+                    ? DATE.format( entry.lastModified() )
+                    : entry.lastModified().toString() );
             }
             textElement( "changefreq", setting.changefreq() );
             textElement( "priority", setting.priority() );

@@ -116,7 +116,52 @@ class SitemapTest
 
         assertThat( sitemap.size() ).isEqualTo( 1 );
         assertThat( text( sitemap.root() ) ).contains( "https://example.com/ok" ).doesNotContain( longName );
-        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( longName );
+    }
+
+    @Test
+    void guillotineLeavesOutUrlsTooLongWithTheLongestBaseUrl()
+    {
+        final String fits = "a".repeat( Sitemap.MAX_LOC_LENGTH - Sitemap.MAX_BASE_URL_LENGTH - 1 );
+        final String tooLong = "b".repeat( Sitemap.MAX_LOC_LENGTH - Sitemap.MAX_BASE_URL_LENGTH );
+        final List<SitemapEntry> entries =
+            List.of( new SitemapEntry( "/" + fits, "base:folder", null ), new SitemapEntry( "/" + tooLong, "base:folder", null ) );
+
+        assertThat( write( params( "https://example.com" ), 10, entries ).size() ).isEqualTo( 2 );
+        final Sitemap guillotine = write( guillotine(), 10, entries );
+        assertThat( guillotine.size() ).isEqualTo( 1 );
+        assertThat( guillotine.urlsetJson( 10 ) ).contains( fits ).doesNotContain( tooLong );
+    }
+
+    @Test
+    void guillotineSplitsAsIfUrlsStartedWithTheLongestBaseUrl()
+    {
+        final List<SitemapEntry> entries = IntStream.range( 0, 20 )
+            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-01T10:00:00.123456Z" ) ) )
+            .toList();
+        final long maxFileBytes = 3_000;
+
+        final Sitemap shortHost =
+            write( temp.resolve( "short" ), params( "https://example.com" ), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
+        final Sitemap guillotine = write( temp.resolve( "guillotine" ), guillotine(), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
+
+        assertThat( guillotine.fileCount() ).isGreaterThan( shortHost.fileCount() );
+        assertThat( guillotine.size() ).isEqualTo( 20 );
+        for ( int number = 1; number <= guillotine.fileCount(); number++ )
+        {
+            final int urls = guillotine.fileUrlsetJson( number ).orElseThrow().split( "\\{" ).length - 1;
+            // what a client writes for the file with the longest base URL and the full times it gets
+            final StringBuilder xml = new StringBuilder( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" ).append(
+                "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" );
+            for ( int i = 0; i < urls; i++ )
+            {
+                xml.append( "<url><loc>" )
+                    .append( Sitemap.LONGEST_BASE_URL )
+                    .append( "/item-00</loc><lastmod>2024-01-01T10:00:00.123456Z</lastmod><changefreq>daily</changefreq>" )
+                    .append( "<priority>0.8</priority></url>" );
+            }
+            xml.append( "</urlset>" );
+            assertThat( SitemapRenderer.utf8Length( xml ) ).isLessThanOrEqualTo( maxFileBytes );
+        }
     }
 
     @Test
@@ -130,7 +175,10 @@ class SitemapTest
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         assertThat( sitemap.size() ).isEqualTo( 6 );
         assertThat( sitemap.file( 4 ) ).isEmpty();
-        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( "item-6" );
+
+        final Sitemap guillotine = write( temp.resolve( "guillotine" ), guillotine(), entries, 2, Sitemap.MAX_FILE_BYTES, 3 );
+        assertThat( guillotine.fileCount() ).isEqualTo( 3 );
+        assertThat( guillotine.urlsetJson( 10 ) ).doesNotContain( "item-6" );
     }
 
     @Test
@@ -240,11 +288,17 @@ class SitemapTest
         {
             assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
                                                                                                        "sitemap-index.xml.gz",
-                                                                                                       "urlset-1.jsonl.gz",
-                                                                                                       "urlset-2.jsonl.gz",
                                                                                                        "sitemap-1.xml.gz",
                                                                                                        "sitemap-2.xml.gz" );
         }
+        assertThat( sitemap.storedFiles() ).containsOnlyKeys( "sitemap.xml", "sitemap-index.xml", "sitemap-1.xml", "sitemap-2.xml" );
+        final Sitemap guillotine = write( guillotine(), 2, entries );
+        try (var files = Files.list( guillotine.directory() ))
+        {
+            assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "urlset-1.jsonl.gz",
+                                                                                                       "urlset-2.jsonl.gz" );
+        }
+        assertThat( guillotine.storedFiles() ).containsOnlyKeys( "urlset-1.jsonl", "urlset-2.jsonl" );
         for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow() ) )
         {
             assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
@@ -259,7 +313,8 @@ class SitemapTest
                                                     new SitemapEntry( "/b c", "other:type", null ) );
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
                                                         List.of( new ContentTypeSetting( "base:folder", "daily", "0.8" ),
-                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of() );
+                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(),
+                                                        SitemapParams.Format.GUILLOTINE );
         final Sitemap sitemap = write( params, 2, entries );
 
         assertThat( sitemap.lastModified() ).containsExactly( NOW, NOW );
@@ -299,7 +354,7 @@ class SitemapTest
     }
 
     @Test
-    void fileChangesWhenOnlyGuillotineTimesChangeWithinTheDay()
+    void guillotineFileChangesWhenOnlyTimesChangeWithinTheDayButXmlFileDoesNot()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-05T10:00:00Z" ) ),
                                                     new SitemapEntry( "/b", "base:folder", Instant.parse( "2024-01-04T10:00:00Z" ) ) );
@@ -313,7 +368,11 @@ class SitemapTest
 
         assertThat( same.lastModified() ).containsExactly( NOW );
         assertThat( changed.rootETag( false ) ).isEqualTo( first.rootETag( false ) );
-        assertThat( changed.lastModified() ).containsExactly( later );
+        assertThat( changed.lastModified() ).containsExactly( NOW );
+
+        final Sitemap guillotine = write( guillotine(), 10, entries );
+        assertThat( build( guillotine(), 10, entries, guillotine, later ).lastModified() ).containsExactly( NOW );
+        assertThat( build( guillotine(), 10, edited, guillotine, later ).lastModified() ).containsExactly( later );
     }
 
     @Test
@@ -345,11 +404,11 @@ class SitemapTest
     @Test
     void urlsetForGuillotineOfSingleAndEmptySitemap()
     {
-        final Sitemap single = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+        final Sitemap single = write( guillotine(), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
         assertThat( single.lastModified() ).hasSize( 1 );
         assertThat( single.fileUrlsetJson( 1 ) ).contains( "[{\"path\":\"/a\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}]" );
 
-        final Sitemap empty = write( params( "https://example.com" ), 10, List.of() );
+        final Sitemap empty = write( guillotine(), 10, List.of() );
         assertThat( empty.lastModified() ).hasSize( 1 );
         assertThat( empty.urlsetJson( 10 ) ).isEqualTo( "[]" );
         assertThat( empty.fileUrlsetJson( 1 ) ).contains( "[]" );
@@ -403,5 +462,10 @@ class SitemapTest
     private static SitemapParams params( final String siteUrl )
     {
         return new SitemapParams( "/mysite", siteUrl, CONTENT_TYPES, List.of() );
+    }
+
+    private static SitemapParams guillotine()
+    {
+        return params( "" ).withFormat( SitemapParams.Format.GUILLOTINE );
     }
 }

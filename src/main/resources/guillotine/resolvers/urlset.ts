@@ -58,7 +58,8 @@ export function withSitemap<T>(
 		principals: principals || []
 	}, () => fn(newSitemapBean(), __.toScriptValue(toSitemapParams({
 		sitePath: site?._path || '',
-		siteUrl: siteConfig?.overrideDomain || '',
+		// Guillotine returns paths, so its sitemap doesn't depend on a base URL
+		siteUrl: '',
 		siteConfig: siteConfig || {},
 	}))));
 }

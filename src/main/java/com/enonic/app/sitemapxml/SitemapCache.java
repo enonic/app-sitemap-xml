@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -1185,6 +1186,7 @@ public final class SitemapCache
             new TreeSet<>( this.principals ).forEach( principals::add );
             key.put( "sitePath", params.sitePath() );
             key.put( "siteUrl", params.siteUrl() );
+            key.put( "format", params.format().name().toLowerCase( Locale.ROOT ) );
             final ArrayNode contentTypes = key.putArray( "contentTypes" );
             for ( final ContentTypeSetting setting : params.contentTypes() )
             {
@@ -1209,7 +1211,8 @@ public final class SitemapCache
             }
             final SitemapParams params =
                 new SitemapParams( key.required( "sitePath" ).asText(), key.required( "siteUrl" ).asText(), contentTypes,
-                                   strings( key.required( "ignorePatterns" ) ) );
+                                   strings( key.required( "ignorePatterns" ) ),
+                                   SitemapParams.Format.valueOf( key.required( "format" ).asText().toUpperCase( Locale.ROOT ) ) );
             return new Key( key.required( "repository" ).asText(), key.required( "branch" ).asText(),
                             Set.copyOf( strings( key.required( "principals" ) ) ), params );
         }

@@ -69,6 +69,11 @@ final class SiteUrls
      */
     boolean isCurrent( final SitemapCache.Key key )
     {
+        if ( key.params().format() == SitemapParams.Format.GUILLOTINE )
+        {
+            // returns paths: no site URL in the key
+            return true;
+        }
         final Optional<PortalScope> scope = ContextBuilder.from( ContextAccessor.current() )
             .authInfo( AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() ).principals( RoleKeys.ADMIN ).build() )
             .build()
@@ -79,11 +84,6 @@ final class SiteUrls
         }
         final String siteUrl = key.params().siteUrl();
         final String override = override( scope.get().getSiteConfigs() );
-        if ( !siteUrl.contains( "://" ) )
-        {
-            // Guillotine: the override, or nothing
-            return siteUrl.equals( override );
-        }
         if ( !override.isEmpty() )
         {
             // the override followed by the site's path: it must end where a path starts, not in the middle of a host or a segment

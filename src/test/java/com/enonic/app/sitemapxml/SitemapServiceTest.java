@@ -337,8 +337,8 @@ class SitemapServiceTest
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
                                                     new SitemapEntry( "/b", "portal:site", null ) );
         when( cache.get( any(), anyBoolean() ) ).thenReturn(
-            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of() ), entries, 1,
-                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
+            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ),
+                               entries, 1, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
         assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
@@ -352,6 +352,8 @@ class SitemapServiceTest
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache, atLeastOnce() ).get( key.capture(), eq( true ) );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.GUILLOTINE );
+        assertThat( key.getValue().params().siteUrl() ).isEmpty();
     }
 
     private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean regen )
