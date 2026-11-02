@@ -51,6 +51,7 @@ export default {
 		'^/guillotine/(.*)': '<rootDir>/src/main/resources/guillotine/$1', // DOES fix: ModuleNotFoundError: Cannot find module '/guillotine/guillotine'
 		'^/lib/app-sitemapxml/(.*)': '<rootDir>/src/main/resources/lib/app-sitemapxml/$1',
 		'^/cms/(.*)': '<rootDir>/src/main/resources/cms/$1',
+		'^/tasks/(.*)': '<rootDir>/src/main/resources/tasks/$1',
 	},
 
 	// modulePathIgnorePatterns [array<string>]
