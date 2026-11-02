@@ -21,14 +21,19 @@ import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
 import com.enonic.xp.node.Attributes;
 import com.enonic.xp.node.CreateNodeParams;
+import com.enonic.xp.node.FindNodesByQueryResult;
 import com.enonic.xp.node.Node;
 import com.enonic.xp.node.NodeAlreadyExistAtPathException;
+import com.enonic.xp.node.NodeHit;
 import com.enonic.xp.node.NodeId;
 import com.enonic.xp.node.NodePath;
+import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.node.NodeService;
 import com.enonic.xp.node.NodeVersion;
 import com.enonic.xp.node.NodeVersionId;
+import com.enonic.xp.node.Nodes;
 import com.enonic.xp.node.UpdateNodeParams;
+import com.enonic.xp.query.filter.ValueFilter;
 import com.enonic.xp.repository.RepositoryService;
 import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.acl.AccessControlEntry;
@@ -99,8 +104,8 @@ class RepositorySitemapStoreTest
         verify( nodeService ).create( create.capture() );
         assertThat( repository.get() ).isEqualTo( "com.enonic.app.sitemapxml " + Branch.from( "master" ) );
         assertThat( create.getValue().getName().toString() ).isEqualTo( KEY.id() );
-        assertThat( create.getValue().getData().getString( "repository" ) ).isEqualTo( "com.enonic.cms.project" );
-        assertThat( create.getValue().getData().getString( "principals" ) ).isEqualTo( "role:system.everyone,user:system:anonymous" );
+        assertThat( create.getValue().getData().hasProperty( "principals" ) ).isFalse();
+        assertThat( create.getValue().getData().getSet( "key" ).getString( "repository" ) ).isEqualTo( "com.enonic.cms.project" );
         assertThat( create.getValue().getData().getSet( "key" ).getString( "sitePath" ) ).isEqualTo( "/mysite" );
         assertThat( create.getValue().getData().getSet( "key" ).getStrings( "principals" ) ).containsExactly( "role:system.everyone",
                                                                                                             "user:system:anonymous" );
@@ -230,6 +235,37 @@ class RepositorySitemapStoreTest
         final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
         verify( nodeService ).applyVersionAttributes( apply.capture() );
         assertThat( apply.getValue().getAddAttributes().get( "obsolete" ).asString() ).isEqualTo( NOW.plusSeconds( 1 ).toString() );
+    }
+
+    @Test
+    void sitemapsOfSiteAreFoundByIndexedKeyAndSamePrincipals()
+    {
+        final SitemapCache.Key editor =
+            new SitemapCache.Key( KEY.repositoryId(), KEY.branch(), Set.of( "role:system.everyone", "user:system:anonymous", "role:editor" ),
+                                  PARAMS );
+        final Node same = node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) );
+        final PropertyTree data = new PropertyTree();
+        SitemapNodeData.writeKey( data.getRoot(), editor );
+        final Node more = Node.create()
+            .id( NodeId.from( "editor" ) )
+            .name( editor.id() )
+            .parentPath( NodePath.ROOT )
+            .data( data )
+            .nodeVersionId( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000002" ) )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn(
+            FindNodesByQueryResult.create().addNodeHit( NodeHit.create().nodeId( same.id() ).build() ).build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.from( same, more ) );
+
+        final List<SitemapStore.Stored> found = store().ofSite( KEY );
+
+        assertThat( found ).extracting( SitemapStore.Stored::key ).containsExactly( KEY );
+        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
+        verify( nodeService ).findByQuery( query.capture() );
+        assertThat( query.getValue().getQueryFilters().stream().map( filter -> (ValueFilter) filter ) ).extracting(
+            filter -> filter.getFieldName() + "=" + filter.getValues().iterator().next().asString() ).containsExactlyInAnyOrder(
+            "key.repository=com.enonic.cms.project", "key.branch=master", "key.sitePath=/mysite", "key.principals=role:system.everyone",
+            "key.principals=user:system:anonymous" );
     }
 
     @Test

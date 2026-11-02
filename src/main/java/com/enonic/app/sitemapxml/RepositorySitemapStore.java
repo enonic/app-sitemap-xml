@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.Callable;
 
 import org.jspecify.annotations.Nullable;
@@ -80,10 +79,10 @@ final class RepositorySitemapStore
 
     private static final PatternIndexConfigDocument INDEX_CONFIG = PatternIndexConfigDocument.create()
         .defaultConfig( IndexConfig.NONE )
-        .add( "repository", IndexConfig.MINIMAL )
-        .add( "branch", IndexConfig.MINIMAL )
-        .add( "sitePath", IndexConfig.MINIMAL )
-        .add( "principals", IndexConfig.MINIMAL )
+        .add( "key.repository", IndexConfig.MINIMAL )
+        .add( "key.branch", IndexConfig.MINIMAL )
+        .add( "key.sitePath", IndexConfig.MINIMAL )
+        .add( "key.principals", IndexConfig.MINIMAL )
         .build();
 
     private final NodeService nodeService;
@@ -284,10 +283,11 @@ final class RepositorySitemapStore
     @Override
     public List<Stored> find( final String repositoryId, final @Nullable String branch )
     {
-        final NodeQuery.Builder query = NodeQuery.create().parent( NodePath.ROOT ).addQueryFilter( filter( "repository", repositoryId ) );
+        final NodeQuery.Builder query =
+            NodeQuery.create().parent( NodePath.ROOT ).addQueryFilter( filter( "key.repository", repositoryId ) );
         if ( branch != null )
         {
-            query.addQueryFilter( filter( "branch", branch ) );
+            query.addQueryFilter( filter( "key.branch", branch ) );
         }
         return query( query );
     }
@@ -295,12 +295,13 @@ final class RepositorySitemapStore
     @Override
     public List<Stored> ofSite( final SitemapCache.Key key )
     {
-        return query( NodeQuery.create()
-                          .parent( NodePath.ROOT )
-                          .addQueryFilter( filter( "repository", key.repositoryId() ) )
-                          .addQueryFilter( filter( "branch", key.branch() ) )
-                          .addQueryFilter( filter( "sitePath", key.params().sitePath() ) )
-                          .addQueryFilter( filter( "principals", principals( key ) ) ) );
+        final NodeQuery.Builder query = NodeQuery.create()
+            .parent( NodePath.ROOT )
+            .addQueryFilter( filter( "key.repository", key.repositoryId() ) )
+            .addQueryFilter( filter( "key.branch", key.branch() ) )
+            .addQueryFilter( filter( "key.sitePath", key.params().sitePath() ) );
+        key.principals().forEach( principal -> query.addQueryFilter( filter( "key.principals", principal ) ) );
+        return query( query ).stream().filter( stored -> stored.key().principals().equals( key.principals() ) ).toList();
     }
 
     @Override
@@ -368,10 +369,6 @@ final class RepositorySitemapStore
         {
             SitemapNodeData.writeSitemap( data.getRoot(), sitemap );
         }
-        data.setString( "repository", key.repositoryId() );
-        data.setString( "branch", key.branch() );
-        data.setString( "sitePath", key.params().sitePath() );
-        data.setString( "principals", principals( key ) );
         data.setBoolean( "background", background );
         if ( validUntil != null )
         {
@@ -431,11 +428,6 @@ final class RepositorySitemapStore
     {
         final GenericValue value = attributes.get( name );
         return value == null ? null : Instant.parse( value.asString() );
-    }
-
-    private static String principals( final SitemapCache.Key key )
-    {
-        return String.join( ",", new TreeSet<>( key.principals() ) );
     }
 
     private static ValueFilter filter( final String field, final String value )
