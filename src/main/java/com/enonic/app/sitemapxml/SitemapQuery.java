@@ -34,7 +34,6 @@ import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
 import com.enonic.xp.index.IndexPath;
-import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
 import com.enonic.xp.query.expr.DslExpr;
 import com.enonic.xp.query.expr.FieldOrderExpr;
@@ -81,13 +80,6 @@ public final class SitemapQuery
 
     private static final IndexPath CREATED_TIME = IndexPath.from( "createdTime" );
 
-    /**
-     * Time the node version was stored, also on publish: practically unique per content, so it splits contents sharing a creation time.
-     */
-    private static final IndexPath TIMESTAMP = IndexPath.from( "_ts" );
-
-    static final List<IndexPath> DIMENSIONS = List.of( CREATED_TIME, TIMESTAMP );
-
     private static final List<OrderExpr> CREATION_ORDER =
         List.of( FieldOrderExpr.create( CREATED_TIME, OrderExpr.Direction.ASC ), FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) );
 
@@ -118,31 +110,37 @@ public final class SitemapQuery
      * A sitemap that fits in one file is read sorted by path, which compresses better. A larger one is read in the order the contents were
      * created, oldest first: new contents are added to the last file and edited ones stay in place, so the other files keep their content
      * and their modification time in the sitemap index. It is read in slices of at most {@value #PAGE_SIZE} contents: one query with a
-     * date histogram of the creation times plans the slices, busy times are split by finer intervals down to milliseconds, then by the
-     * time the contents were stored. Each slice is read with range filters, so each query only touches its own contents.
+     * date histogram of the creation times plans the slices, busy times are split by finer intervals down to milliseconds. Each slice is
+     * read with range filters, so each query only touches its own contents; a millisecond holding more is read by path, page by page.
      *
      * @param cancelled checked between batches, the query stops with a {@link CancellationException} once it returns true
      * @return when the sitemap must be generated again because scheduled content goes online or offline, or null
      */
     public @Nullable Instant execute( final SitemapSink sink, final BooleanSupplier cancelled )
     {
-        final FindContentIdsByQueryResult overview = histogram( List.of(), 0, 0 );
+        final FindContentIdsByQueryResult overview = histogram( List.of(), 0 );
         final long total = overview.getTotalHits();
         final Progress progress = new Progress( sink, total );
         progress.report( 0 );
         if ( total <= Sitemap.MAX_URLS_PER_FILE )
         {
-            emitByPath( sink, progress, cancelled );
+            emitByPath( List.of(), sink, progress, cancelled );
         }
         else
         {
             final List<Slice> slices = new ArrayList<>();
-            addSlices( overview, 0, 0, List.of(), slices );
+            addSlices( overview, 0, slices );
             LOG.debug( "Sitemap of {}: {} contents read in {} slices", params.sitePath(), total, slices.size() );
             for ( final Slice slice : slices )
             {
-                emit( find( slice.filters(), CREATION_ORDER, slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE ), sink,
-                      progress, cancelled );
+                if ( slice.count() > PAGE_SIZE )
+                {
+                    emitByPath( slice.filters(), sink, progress, cancelled );
+                }
+                else
+                {
+                    emit( find( slice.filters(), CREATION_ORDER, PAGE_SIZE ), sink, progress, cancelled );
+                }
             }
         }
 
@@ -154,14 +152,11 @@ public final class SitemapQuery
 
     /**
      * Adds the slices of the histogram buckets in the result, oldest first. Consecutive buckets are merged into one slice while it holds
-     * at most {@value #PAGE_SIZE} contents. A bucket holding more is split by the next finer interval, then by the next dimension. A
-     * bucket that cannot be split further (more than {@value #PAGE_SIZE} contents created and stored in the same millisecond) is read in
-     * one scrolled query.
+     * at most {@value #PAGE_SIZE} contents. A bucket holding more is split by the next finer interval. A millisecond holding more is one
+     * slice, read by path: the order is the same in every generation, as paths only change when contents move.
      */
-    private void addSlices( final FindContentIdsByQueryResult result, final int dimension, final int level, final List<Filter> outer,
-                            final List<Slice> slices )
+    private void addSlices( final FindContentIdsByQueryResult result, final int level, final List<Slice> slices )
     {
-        final IndexPath field = DIMENSIONS.get( dimension );
         final Duration interval = INTERVALS.get( level ).duration();
         final List<DateHistogramBucket> buckets = new ArrayList<>();
         if ( result.getAggregations().get( TIMELINE ) instanceof BucketAggregation timeline )
@@ -182,17 +177,13 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+                    slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
                     pendingFrom = null;
                 }
-                final List<Filter> filters = with( outer, range( field, from, to ) );
+                final List<Filter> filters = List.of( range( from, to ) );
                 if ( level + 1 < INTERVALS.size() )
                 {
-                    addSlices( histogram( filters, dimension, level + 1 ), dimension, level + 1, outer, slices );
-                }
-                else if ( dimension + 1 < DIMENSIONS.size() )
-                {
-                    addSlices( histogram( filters, dimension + 1, 0 ), dimension + 1, 0, filters, slices );
+                    addSlices( histogram( filters, level + 1 ), level + 1, slices );
                 }
                 else
                 {
@@ -208,7 +199,7 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+                    slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
                 }
                 pendingFrom = from;
                 pendingTo = to;
@@ -217,16 +208,16 @@ public final class SitemapQuery
         }
         if ( pendingFrom != null )
         {
-            slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+            slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
         }
     }
 
-    private FindContentIdsByQueryResult histogram( final List<Filter> filters, final int dimension, final int level )
+    private FindContentIdsByQueryResult histogram( final List<Filter> filters, final int level )
     {
         final ContentQuery.Builder query = ContentQuery.create()
             .queryExpr( QueryExpr.from( DslExpr.from( dsl() ) ) )
             .aggregationQuery( DateHistogramAggregationQuery.create( TIMELINE )
-                                   .fieldName( DIMENSIONS.get( dimension ).getPath() )
+                                   .fieldName( CREATED_TIME.getPath() )
                                    .interval( INTERVALS.get( level ).name() )
                                    .minDocCount( 1L )
                                    .build() )
@@ -235,10 +226,10 @@ public final class SitemapQuery
         return contentService.find( query.build() );
     }
 
-    private static RangeFilter range( final IndexPath field, final Instant from, final Instant to )
+    private static RangeFilter range( final Instant from, final Instant to )
     {
         return RangeFilter.create()
-            .fieldName( field.getPath() )
+            .fieldName( CREATED_TIME.getPath() )
             .from( ValueFactory.newDateTime( from ) )
             .lt( ValueFactory.newDateTime( to ) )
             .build();
@@ -252,16 +243,16 @@ public final class SitemapQuery
     }
 
     /**
-     * Reads all contents sorted by path, {@value #PAGE_SIZE} at a time: each page continues after the last path of the previous one.
-     * Paths are compared as indexed, in lower case.
+     * Reads the contents matching the filters sorted by path, {@value #PAGE_SIZE} at a time: each page continues after the last path of
+     * the previous one. Paths are compared as indexed, in lower case.
      */
-    private void emitByPath( final SitemapSink sink, final Progress progress, final BooleanSupplier cancelled )
+    private void emitByPath( final List<Filter> outer, final SitemapSink sink, final Progress progress, final BooleanSupplier cancelled )
     {
         String after = null;
         while ( true )
         {
             final List<Filter> filters =
-                after == null ? List.of() : List.of( RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
+                after == null ? outer : with( outer, RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
             final List<ContentId> ids = find( filters, List.of( FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) ), PAGE_SIZE );
             final String last = emit( ids, sink, progress, cancelled );
             if ( ids.size() < PAGE_SIZE || last == null )

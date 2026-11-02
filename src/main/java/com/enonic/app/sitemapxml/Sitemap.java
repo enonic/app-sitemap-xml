@@ -87,13 +87,13 @@ public final class Sitemap
 
     private final List<String> digests;
 
-    private final Map<String, String> indexDigests;
+    private final Map<String, String> namedDigests;
 
     private Sitemap( final FileSource files, final @Nullable Path directory, final int size, final Map<String, Long> plainSizes,
-                     final List<@Nullable Instant> lastModified, final List<String> digests, final Map<String, String> indexDigests )
+                     final List<@Nullable Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests )
     {
         this.digests = List.copyOf( digests );
-        this.indexDigests = Map.copyOf( indexDigests );
+        this.namedDigests = Map.copyOf( namedDigests );
         this.files = files;
         this.directory = directory;
         this.size = size;
@@ -295,7 +295,7 @@ public final class Sitemap
      */
     Sitemap withFiles( final FileSource files )
     {
-        return new Sitemap( files, null, size, plainSizes, lastModified, digests, indexDigests );
+        return new Sitemap( files, null, size, plainSizes, lastModified, digests, namedDigests );
     }
 
     /**
@@ -328,8 +328,8 @@ public final class Sitemap
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
-        final ObjectNode index = description.putObject( "indexDigests" );
-        new TreeMap<>( indexDigests ).forEach( index::put );
+        final ObjectNode index = description.putObject( "namedDigests" );
+        new TreeMap<>( namedDigests ).forEach( index::put );
         return description;
     }
 
@@ -353,16 +353,16 @@ public final class Sitemap
         {
             plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        final Map<String, String> indexDigests = new HashMap<>();
-        final JsonNode index = description.get( "indexDigests" );
+        final Map<String, String> namedDigests = new HashMap<>();
+        final JsonNode index = description.get( "namedDigests" );
         if ( index != null )
         {
             for ( final Map.Entry<String, JsonNode> file : index.properties() )
             {
-                indexDigests.put( file.getKey(), file.getValue().asText() );
+                namedDigests.put( file.getKey(), file.getValue().asText() );
             }
         }
-        return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, lastModified, digests, indexDigests );
+        return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, lastModified, digests, namedDigests );
     }
 
     static String fileName( final int number )
@@ -387,9 +387,9 @@ public final class Sitemap
 
     private @Nullable String digest( final String name )
     {
-        if ( indexDigests.containsKey( name ) )
+        if ( namedDigests.containsKey( name ) )
         {
-            return indexDigests.get( name );
+            return namedDigests.get( name );
         }
         if ( name.equals( ROOT_FILE ) && !isIndex() )
         {
@@ -591,7 +591,7 @@ public final class Sitemap
 
         private final List<String> digests = new ArrayList<>();
 
-        private final Map<String, String> indexDigests = new HashMap<>();
+        private final Map<String, String> namedDigests = new HashMap<>();
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
@@ -656,7 +656,8 @@ public final class Sitemap
 
         /**
          * Finishes the files. A file keeps the modification time of the same file of the previous sitemap when its content is the same,
-         * and gets the given time otherwise: crawlers fetch a file of a sitemap index again when its modification time changes.
+         * also the Guillotine entries of the file, which hold full modification times where the XML holds dates, and gets the given time
+         * otherwise: crawlers and Guillotine clients fetch a file again when its modification time changes.
          *
          * @param previous the sitemap this one replaces, if any
          * @param now      the modification time of the files that changed
@@ -711,12 +712,14 @@ public final class Sitemap
 
         private Sitemap local()
         {
-            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, indexDigests );
+            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, namedDigests );
         }
 
         private boolean unchanged( final @Nullable Sitemap previous, final int index )
         {
+            final String urlset = urlsetFileName( index + 1 );
             return previous != null && index < previous.digests.size() && previous.digests.get( index ).equals( digests.get( index ) ) &&
+                Objects.equals( previous.namedDigests.get( urlset ), namedDigests.get( urlset ) ) &&
                 previous.lastModified.get( index ) != null;
         }
 
@@ -727,7 +730,9 @@ public final class Sitemap
             root.write( URLSET_START + URLSET_END );
             close( root, ROOT_FILE );
             digests.add( root.digest() );
-            close( open( urlsetFileName( 1 ) ), urlsetFileName( 1 ) );
+            final CountingWriter urlsetFile = open( urlsetFileName( 1 ) );
+            close( urlsetFile, urlsetFileName( 1 ) );
+            namedDigests.put( urlsetFileName( 1 ), urlsetFile.digest() );
             lastModified.add( null );
         }
 
@@ -742,7 +747,7 @@ public final class Sitemap
             }
             index.write( INDEX_END );
             close( index, name );
-            indexDigests.put( name, index.digest() );
+            namedDigests.put( name, index.digest() );
         }
 
         private boolean reserve( final long urlBytes )
@@ -787,6 +792,7 @@ public final class Sitemap
                 Objects.requireNonNull( urlset ).close();
                 urlset = null;
                 plainSizes.put( urlsetFileName( lastModified.size() ), Objects.requireNonNull( urlsetFile ).bytes() );
+                namedDigests.put( urlsetFileName( lastModified.size() ), urlsetFile.digest() );
                 urlsetFile = null;
             }
         }

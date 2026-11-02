@@ -114,6 +114,9 @@ describe('sitemap controller', () => {
 
 		expect(get(request('/mysite/sitemap-2.xml'))).toEqual({body: '<urlset n="2"/>', contentType: 'text/xml; charset=utf-8', headers: {Vary: 'Accept-Encoding'}});
 		expect(get(request('/mysite/sitemap-3.xml'))).toEqual({body: null, status: 404});
+		expect(get(request('/mysite/sitemap-0.xml'))).toEqual({body: null, status: 404});
+		expect(get(request('/mysite/sitemap-0.xml.gz'))).toEqual({body: null, status: 404});
+		expect(get(request('/mysite/sitemap-99999999999.xml'))).toEqual({body: null, status: 404});
 		expect(bean.file).toHaveBeenCalledWith(expect.anything(), 3);
 	});
 

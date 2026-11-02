@@ -36,7 +36,7 @@ The `sitemap` field is served from the same cached, published-only sitemap as `s
 
 The app can also be added to a project instead of a site. When the query is not scoped to a site (no `scopeKey`, or one outside any site), the project's configuration of the app is used, and the sitemap lists all published content of the project, with paths relative to the project root. `sitemap.xml` itself is only served for sites, as projects are not rendered by XP.
 
-* `files { number lastmod }` lists the files of the sitemap with the time each file last changed. A file keeps its `lastmod` while its content stays the same, so crawlers can skip it. Use it to render a sitemap index, or to know how many files to fetch.
+* `files { number lastmod }` lists the files of the sitemap with the time each file last changed. A file keeps its `lastmod` while its content stays the same, including the full modification times Guillotine returns, so clients and crawlers can skip it. Use it to render a sitemap index, or to know how many files to fetch.
 * `file(number: N) { urlset { ... } }` returns the URLs of file `N`, or `null` when there is no such file. Fetch the files one by one, so a huge sitemap never has to be loaded in one response.
 * `urlset(count: N)` returns the first `N` URLs of the sitemap, or all of them without `count`. Fine for small sites.
 

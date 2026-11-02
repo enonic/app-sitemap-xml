@@ -568,11 +568,9 @@ public final class SitemapCache
         if ( type.equals( "node.deleted" ) )
         {
             final SitemapStore.Stored stored = entry.stored;
-            if ( stored == null || stored.sitemap() == null )
-            {
-                entry.ready.completeExceptionally( new IllegalStateException( "Sitemap could not be generated" ) );
-            }
-            remove( key, entry );
+            remove( key, entry, stored == null || stored.sitemap() == null
+                ? new IllegalStateException( "Sitemap could not be generated" )
+                : new CancellationException( "Sitemap removed" ) );
             return;
         }
         entry.loaded = false;
@@ -686,7 +684,10 @@ public final class SitemapCache
         {
             entry.submitted = null;
             LOG.warn( "Could not submit generation of sitemap {}", key, e );
-            entry.ready.completeExceptionally( e );
+            if ( !entry.ready.isDone() )
+            {
+                remove( key, entry, e );
+            }
         }
     }
 
@@ -858,8 +859,7 @@ public final class SitemapCache
         final SitemapStore.Stored stored = entry == null ? null : entry.stored;
         if ( entry != null && ( stored == null || stored.sitemap() == null ) )
         {
-            entry.ready.completeExceptionally( e );
-            remove( key, entry );
+            remove( key, entry, e );
         }
         else
         {
@@ -868,6 +868,14 @@ public final class SitemapCache
     }
 
     private void remove( final Key key, final Entry entry )
+    {
+        remove( key, entry, new CancellationException( "Sitemap removed" ) );
+    }
+
+    /**
+     * Removes the entry before failing requests waiting for it, so a request after them starts over with a new entry.
+     */
+    private void remove( final Key key, final Entry entry, final RuntimeException cause )
     {
         if ( entries.remove( key, entry ) )
         {
@@ -881,7 +889,7 @@ public final class SitemapCache
                     entry.pending = null;
                 }
             }
-            entry.ready.completeExceptionally( new CancellationException( "Sitemap removed" ) );
+            entry.ready.completeExceptionally( cause );
             LOG.debug( "Removed sitemap {}", key );
         }
     }

@@ -212,6 +212,22 @@ class RepositorySitemapStoreTest
     }
 
     @Test
+    void obsoleteMarkKeepsLatestChange()
+    {
+        final SitemapStore.Stored marked =
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000001", KEY, false, null, null, null, null, NOW, null, null,
+                                     null );
+
+        store().markObsolete( marked, NOW );
+        verify( nodeService, never() ).applyVersionAttributes( any() );
+
+        store().markObsolete( marked, NOW.plusSeconds( 1 ) );
+        final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
+        verify( nodeService ).applyVersionAttributes( apply.capture() );
+        assertThat( apply.getValue().getAddAttributes().get( "obsolete" ).asString() ).isEqualTo( NOW.plusSeconds( 1 ).toString() );
+    }
+
+    @Test
     void claimOfNewSitemapFailsWhenItsNodeExists()
     {
         when( nodeService.create( any() ) ).thenThrow(

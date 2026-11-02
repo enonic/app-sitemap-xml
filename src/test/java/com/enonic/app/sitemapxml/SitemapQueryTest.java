@@ -33,7 +33,6 @@ import com.enonic.xp.content.GetContentByIdsParams;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
-import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.aggregation.AggregationQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
 import com.enonic.xp.query.filter.Filter;
@@ -160,7 +159,6 @@ class SitemapQueryTest
         final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
         final Instant hour = day.minus( Duration.ofDays( 2 ) );
         final Instant second = Instant.parse( "2024-01-01T10:20:30Z" );
-        final Instant stored = Instant.parse( "2024-01-03T00:00:00Z" );
         final List<String> requests = new ArrayList<>();
         when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
             final ContentQuery query = invocation.getArgument( 0 );
@@ -189,9 +187,6 @@ class SitemapQueryTest
                 case "createdtime 1s":
                 case "createdtime 1ms":
                     return overview( 30_000, bucket( second, 30_000 ) );
-                case "_ts 1d":
-                    return overview( 30_000, bucket( stored.minus( Duration.ofDays( 2 ) ), 10_000 ), bucket( stored, 10_000 ),
-                                     bucket( stored.minus( Duration.ofDays( 1 ) ), 10_000 ) );
                 default:
                     throw new IllegalStateException( histogram );
             }
@@ -207,24 +202,24 @@ class SitemapQueryTest
                                                 "createdtime 1m createdtime 2024-01-01T10:00:00Z 2024-01-01T11:00:00Z",
                                                 "createdtime 1s createdtime 2024-01-01T10:20:00Z 2024-01-01T10:21:00Z",
                                                 "createdtime 1ms createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:31Z",
-                                                "_ts 1d " + ms,
                                                 "createdtime 1h createdtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
                                                 asc + "createdtime 2023-12-31T00:00:00Z 2024-01-01T00:00:00Z",
-                                                asc + ms + " & _ts 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
-                                                asc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z",
-                                                asc + ms + " & _ts 2024-01-03T00:00:00Z 2024-01-04T00:00:00Z",
+                                                SitemapQuery.PAGE_SIZE + " [_path ASC] " + ms,
                                                 asc + "createdtime 2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
                                                 asc + "createdtime 2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
                                                 asc + "createdtime 2024-04-29T05:00:00Z 2024-04-29T06:00:00Z",
                                                 asc + "createdtime 2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
                                                 asc + "createdtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z" );
-        assertThat( entries ).hasSize( 9 );
+        assertThat( entries ).hasSize( 7 );
     }
 
     @Test
-    void sliceThatCannotBeSplitIsScrolled()
+    void millisecondHoldingMoreThanPageIsReadByPathPageByPage()
     {
         final Instant instant = Instant.parse( "2024-01-01T10:20:30Z" );
+        final List<Content> page =
+            IntStream.range( 0, SitemapQuery.PAGE_SIZE ).mapToObj( i -> content( "c" + i, "/mysite/item-" + i ) ).toList();
+        answerGetByIds( page );
         final List<ContentQuery> reads = new ArrayList<>();
         when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
             final ContentQuery query = invocation.getArgument( 0 );
@@ -233,16 +228,20 @@ class SitemapQueryTest
                 return overview( 60_000, bucket( instant, 60_000 ) );
             }
             reads.add( query );
-            return result( List.of() );
+            return result( reads.size() == 1 ? page : List.of() );
         } );
 
         draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entry -> {
         }, () -> false ) );
 
-        assertThat( reads ).hasSize( 1 );
-        assertThat( reads.get( 0 ).getSize() ).isEqualTo( NodeQuery.ALL_RESULTS_SIZE_FLAG );
-        assertThat( filters( reads.get( 0 ) ) ).isEqualTo(
-            "createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z & _ts 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z" );
+        final String ms = "createdtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
+        assertThat( reads ).hasSize( 2 );
+        assertThat( reads ).allSatisfy( read -> {
+            assertThat( read.getSize() ).isEqualTo( SitemapQuery.PAGE_SIZE );
+            assertThat( read.getQueryExpr().getOrderList() ).extracting( Object::toString ).containsExactly( "_path ASC" );
+        } );
+        assertThat( filters( reads.get( 0 ) ) ).isEqualTo( ms );
+        assertThat( filters( reads.get( 1 ) ) ).startsWith( ms + " & _path " );
     }
 
     @Test

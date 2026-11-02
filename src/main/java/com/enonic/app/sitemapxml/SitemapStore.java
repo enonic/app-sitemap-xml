@@ -54,7 +54,8 @@ interface SitemapStore
     void release( String id, String member );
 
     /**
-     * Marks the version that was loaded as obsolete: a version stored since is not.
+     * Marks the version that was loaded as obsolete for a content change at the given time, keeping the latest change: a version stored
+     * since is not marked.
      */
     void markObsolete( Stored stored, Instant now );
 

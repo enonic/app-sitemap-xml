@@ -126,7 +126,8 @@ final class InMemorySitemapStore
     public synchronized void markObsolete( final Stored current, final Instant now )
     {
         final Stored latest = stored.get( current.id() );
-        if ( latest != null && latest.version().equals( current.version() ) && latest.obsolete() == null )
+        if ( latest != null && latest.version().equals( current.version() ) &&
+            ( latest.obsolete() == null || latest.obsolete().isBefore( now ) ) )
         {
             stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued(), latest.accessed() ) );
         }

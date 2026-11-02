@@ -299,6 +299,24 @@ class SitemapTest
     }
 
     @Test
+    void fileChangesWhenOnlyGuillotineTimesChangeWithinTheDay()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-05T10:00:00Z" ) ),
+                                                    new SitemapEntry( "/b", "base:folder", Instant.parse( "2024-01-04T10:00:00Z" ) ) );
+        final Sitemap first = write( params( "https://example.com" ), 10, entries );
+        final List<SitemapEntry> edited = List.of( new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-05T11:00:00Z" ) ),
+                                                   entries.get( 1 ) );
+        final Instant later = NOW.plusSeconds( 3600 );
+
+        final Sitemap same = build( params( "https://example.com" ), 10, entries, first, later );
+        final Sitemap changed = build( params( "https://example.com" ), 10, edited, same, later );
+
+        assertThat( same.lastModified() ).containsExactly( NOW );
+        assertThat( changed.rootETag( false ) ).isEqualTo( first.rootETag( false ) );
+        assertThat( changed.lastModified() ).containsExactly( later );
+    }
+
+    @Test
     void entityTagsAreDigestsOfContentAndSurviveRestore()
     {
         final List<SitemapEntry> entries =

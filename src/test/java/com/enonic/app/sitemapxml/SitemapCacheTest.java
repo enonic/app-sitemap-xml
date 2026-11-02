@@ -72,6 +72,8 @@ class SitemapCacheTest
 
     private Duration regenerationDelay = Duration.ZERO;
 
+    private final AtomicReference<RuntimeException> submitFailure = new AtomicReference<>();
+
     @TempDir
     private Path temp;
 
@@ -401,6 +403,7 @@ class SitemapCacheTest
         clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         node.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
         release.countDown();
 
         awaitUntil( () -> generated.get() == 3 );
@@ -488,6 +491,17 @@ class SitemapCacheTest
         assertThat( store.load( KEY.id() ) ).isNull();
 
         source.set( this::generate );
+        assertThat( node.cache.get( KEY, false ).size() ).isEqualTo( 1 );
+    }
+
+    @Test
+    void failedSubmissionOfFirstGenerationIsNotKeptForNextRequest()
+    {
+        final Node node = node();
+        submitFailure.set( new IllegalStateException( "no task" ) );
+
+        assertThatThrownBy( () -> node.cache.get( KEY, false ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "no task" );
+
         assertThat( node.cache.get( KEY, false ).size() ).isEqualTo( 1 );
     }
 
@@ -737,8 +751,15 @@ class SitemapCacheTest
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
-        final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> ( taskExecutor != null ? taskExecutor : executor ).execute(
-            () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt, null ) );
+        final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> {
+            final RuntimeException failure = submitFailure.getAndSet( null );
+            if ( failure != null )
+            {
+                throw failure;
+            }
+            ( taskExecutor != null ? taskExecutor : executor ).execute(
+                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt, null ) );
+        };
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,
                                                      temp.resolve( "node-" + nodes.size() ) );

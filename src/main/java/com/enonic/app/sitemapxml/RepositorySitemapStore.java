@@ -273,7 +273,8 @@ final class RepositorySitemapStore
     @Override
     public void markObsolete( final Stored stored, final Instant now )
     {
-        if ( stored.obsolete() == null )
+        final Instant obsolete = stored.obsolete();
+        if ( obsolete == null || obsolete.isBefore( now ) )
         {
             applyTo( stored, OBSOLETE, now );
         }
