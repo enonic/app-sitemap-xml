@@ -162,7 +162,7 @@ class RepositorySitemapStoreTest
         assertThat( store().claim( stored, "me", NOW.plusSeconds( 601 ), Duration.ofMinutes( 10 ) ) ).isTrue();
 
         store().markObsolete( new SitemapStore.Stored( stored.id(), stored.version(), stored.key(), false, null, null, null, null, null, null,
-                                                       null ), NOW );
+                                                       null, null ), NOW );
         final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
         verify( nodeService, times( 2 ) ).applyVersionAttributes( apply.capture() );
         assertThat( apply.getAllValues().get( 0 ).getAddAttributes().get( "generating" ).property( "member" ).asString() ).isEqualTo( "me" );

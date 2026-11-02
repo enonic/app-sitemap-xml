@@ -190,7 +190,7 @@ class SitemapCacheTest
     }
 
     @Test
-    void doesNotGenerateWhatAnotherNodeIsGenerating()
+    void waitsForGenerationOnAnotherNodeAndTakesOverItsStaleClaim()
     {
         node().cache.get( KEY, false );
         store.markObsolete( store.load( KEY.id() ), clock.instant() );
@@ -198,14 +198,86 @@ class SitemapCacheTest
 
         final Node node = node();
         node.cache.get( KEY, false );
-        node.awaitIdle();
+        awaitUntil( () -> store.load( KEY.id() ).queued() != null );
         assertThat( generated ).hasValue( 1 );
 
         clock.advance( SitemapCache.STALE_GENERATION.plusSeconds( 1 ) );
-        node.cache.get( KEY, false );
+        awaitUntil( () -> generated.get() == 2 );
         node.awaitIdle();
-        assertThat( generated ).hasValue( 2 );
         assertThat( store.load( KEY.id() ).generating() ).isNull();
+        assertThat( store.load( KEY.id() ).queued() ).isNull();
+    }
+
+    @Test
+    void queuedGenerationRunsOnceAfterRunningOneForSeveralChanges()
+    {
+        final ExecutorService pool = Executors.newCachedThreadPool();
+        executors.add( pool );
+        final Node node = node( Duration.ZERO, pool );
+        node.cache.get( KEY, true );
+        final CountDownLatch started = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        source.set( ( sink, cancelled ) -> {
+            source.set( this::generate );
+            started.countDown();
+            await( release );
+            return generate( sink, cancelled );
+        } );
+
+        clock.advance( Duration.ofSeconds( 1 ) );
+        node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        await( started );
+        for ( int i = 0; i < 3; i++ )
+        {
+            clock.advance( Duration.ofSeconds( 1 ) );
+            node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+            node.awaitIdle();
+        }
+        awaitUntil( () -> store.load( KEY.id() ).queued() != null );
+        sleep( 100 );
+        assertThat( generated ).hasValue( 1 );
+
+        release.countDown();
+        awaitUntil( () -> generated.get() == 3 );
+        awaitUntil( () -> store.load( KEY.id() ).generating() == null && store.load( KEY.id() ).queued() == null );
+        sleep( 100 );
+        assertThat( generated ).hasValue( 3 );
+        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/3" );
+    }
+
+    @Test
+    void generationsForDifferentUsersOfSiteAreNotQueuedBehindEachOther()
+        throws Exception
+    {
+        final ExecutorService pool = Executors.newCachedThreadPool();
+        executors.add( pool );
+        final Node node = node( Duration.ZERO, pool );
+        final SitemapCache.Key editor =
+            new SitemapCache.Key( KEY.repositoryId(), KEY.branch(), Set.of( "user:system:editor", "role:system.everyone" ), PARAMS );
+        final CountDownLatch blocked = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        source.set( ( sink, cancelled ) -> {
+            if ( ContextAccessor.current().getAuthInfo().getPrincipals().contains( PrincipalKey.from( "user:system:editor" ) ) )
+            {
+                blocked.countDown();
+                await( release );
+            }
+            return generate( sink, cancelled );
+        } );
+
+        final Future<Sitemap> editorSitemap = requests.submit( () -> node.cache.get( editor, false ) );
+        assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
+        final Future<Sitemap> anonymousSitemap = requests.submit( () -> node.cache.get( KEY, false ) );
+        awaitUntil( () -> store.load( KEY.id() ) != null );
+
+        assertThat( store.load( KEY.id() ).generating() ).isNotNull();
+        assertThat( store.load( editor.id() ).queued() ).isNull();
+        assertThat( store.load( KEY.id() ).queued() ).isNull();
+
+        release.countDown();
+        assertThat( editorSitemap.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
+        assertThat( anonymousSitemap.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
+        assertThat( generated ).hasValue( 2 );
     }
 
     @Test

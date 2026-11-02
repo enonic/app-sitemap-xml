@@ -39,7 +39,7 @@ final class InMemorySitemapStore
             return false;
         }
         stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, background, null, null, null, null, null,
-                                    new Generating( member, now ), null ) );
+                                    new Generating( member, now ), null, null ) );
         return true;
     }
 
@@ -56,7 +56,26 @@ final class InMemorySitemapStore
         {
             return false;
         }
-        stored.put( latest.id(), with( latest, latest.obsolete(), new Generating( member, now ), latest.accessed() ) );
+        final Generating queued = latest.queued();
+        stored.put( latest.id(), with( latest, latest.obsolete(), new Generating( member, now ),
+                                       queued != null && queued.member().equals( member ) ? null : queued, latest.accessed() ) );
+        return true;
+    }
+
+    @Override
+    public synchronized boolean queue( final Stored current, final String member, final Instant now, final Duration stale )
+    {
+        final Stored latest = stored.get( current.id() );
+        if ( latest == null )
+        {
+            return false;
+        }
+        final Generating queued = latest.queued();
+        if ( queued != null && !queued.member().equals( member ) && queued.since().plus( stale ).isAfter( now ) )
+        {
+            return false;
+        }
+        stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), new Generating( member, now ), latest.accessed() ) );
         return true;
     }
 
@@ -77,7 +96,7 @@ final class InMemorySitemapStore
         } );
         final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, background,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,
-                                         null, null, null );
+                                         null, null, null, null );
         stored.put( id, saved );
         saves.incrementAndGet();
         return saved;
@@ -97,7 +116,7 @@ final class InMemorySitemapStore
         }
         else
         {
-            stored.put( id, with( latest, latest.obsolete(), null, latest.accessed() ) );
+            stored.put( id, with( latest, latest.obsolete(), null, latest.queued(), latest.accessed() ) );
         }
     }
 
@@ -107,7 +126,7 @@ final class InMemorySitemapStore
         final Stored latest = stored.get( current.id() );
         if ( latest != null && latest.version().equals( current.version() ) && latest.obsolete() == null )
         {
-            stored.put( latest.id(), with( latest, now, latest.generating(), latest.accessed() ) );
+            stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued(), latest.accessed() ) );
         }
     }
 
@@ -117,7 +136,7 @@ final class InMemorySitemapStore
         final Stored latest = stored.get( current.id() );
         if ( latest != null && latest.version().equals( current.version() ) )
         {
-            stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), now ) );
+            stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), latest.queued(), now ) );
         }
     }
 
@@ -152,9 +171,9 @@ final class InMemorySitemapStore
     }
 
     private static Stored with( final Stored s, final @Nullable Instant obsolete, final @Nullable Generating generating,
-                                final @Nullable Instant accessed )
+                                final @Nullable Generating queued, final @Nullable Instant accessed )
     {
         return new Stored( s.id(), s.version(), s.key(), s.background(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
-                           obsolete, generating, accessed );
+                           obsolete, generating, queued, accessed );
     }
 }

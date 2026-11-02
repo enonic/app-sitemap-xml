@@ -9,7 +9,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * Where generated sitemaps are kept, shared by all cluster nodes. A sitemap is stored under the id of its key; storing it again replaces
  * it. Besides the sitemap, the stored state tells whether its content changed after it was generated ({@link Stored#obsolete()}),
- * whether a cluster node is generating it ({@link Stored#generating()}) and when it was last requested ({@link Stored#accessed()}).
+ * whether a cluster node is generating it ({@link Stored#generating()}), whether another generation waits for that one to finish
+ * ({@link Stored#queued()}) and when it was last requested ({@link Stored#accessed()}).
  * None of these is locked: two nodes may occasionally generate the same sitemap, which costs work but gives the same result.
  */
 interface SitemapStore
@@ -24,11 +25,18 @@ interface SitemapStore
     boolean claimNew( String id, SitemapCache.Key key, boolean background, String member, Instant now );
 
     /**
-     * Records that the given member starts generating the stored sitemap again.
+     * Records that the given generation starts generating the stored sitemap again, and drops its place in the queue.
      *
-     * @return false when another member started generating it less than {@code stale} ago
+     * @return false when another generation started less than {@code stale} ago
      */
     boolean claim( Stored stored, String member, Instant now, Duration stale );
+
+    /**
+     * Records that the given generation waits for the one running to finish.
+     *
+     * @return false when another generation queued less than {@code stale} ago waits already: it will include the same changes
+     */
+    boolean queue( Stored stored, String member, Instant now, Duration stale );
 
     /**
      * Stores the generated sitemap, replacing the previous one, and clears its state.
@@ -71,7 +79,7 @@ interface SitemapStore
      */
     record Stored(String id, String version, SitemapCache.Key key, boolean background, @Nullable Sitemap sitemap,
                   @Nullable Instant validUntil, @Nullable Instant startedAt, @Nullable Instant generatedAt, @Nullable Instant obsolete,
-                  @Nullable Generating generating, @Nullable Instant accessed)
+                  @Nullable Generating generating, @Nullable Generating queued, @Nullable Instant accessed)
     {
         Instant lastAccess()
         {

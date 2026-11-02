@@ -72,6 +72,8 @@ final class RepositorySitemapStore
 
     static final String GENERATING = "generating";
 
+    static final String QUEUED = "queued";
+
     static final String ACCESSED = "accessed";
 
     private static final Logger LOG = LoggerFactory.getLogger( RepositorySitemapStore.class );
@@ -174,9 +176,30 @@ final class RepositorySitemapStore
             {
                 return false;
             }
-            apply( node.getNodeVersionId(), generating( member, now ), null );
+            final Generating queued = stored.queued();
+            apply( node.getNodeVersionId(), generating( member, now ),
+                   queued != null && queued.member().equals( member ) ? QUEUED : null );
             return true;
         } );
+    }
+
+    @Override
+    public boolean queue( final Stored stored, final String member, final Instant now, final Duration stale )
+    {
+        final Generating queued = stored.queued();
+        if ( queued != null && queued.member().equals( member ) )
+        {
+            return true;
+        }
+        if ( queued != null && queued.since().plus( stale ).isAfter( now ) )
+        {
+            return false;
+        }
+        call( () -> {
+            apply( NodeVersionId.from( stored.version() ), attribute( QUEUED, member, now ), null );
+            return null;
+        } );
+        return true;
     }
 
     @Override
@@ -306,13 +329,10 @@ final class RepositorySitemapStore
         final String description = data.getString( "sitemap" );
         final Sitemap sitemap =
             description == null ? null : Sitemap.restore( files( node.id(), node.getNodeVersionId() ), MAPPER.readTree( description ) );
-        final GenericValue generating = attributes.get( GENERATING );
         return new Stored( node.name().toString(), node.getNodeVersionId().toString(), key,
                            Boolean.TRUE.equals( data.getBoolean( "background" ) ), sitemap, data.getInstant( "validUntil" ),
                            data.getInstant( "startedAt" ), data.getInstant( "generatedAt" ), instant( attributes, OBSOLETE ),
-                           generating == null ? null : new Generating( generating.property( "member" ).asString(),
-                                                                       Instant.parse( generating.property( "since" ).asString() ) ),
-                           instant( attributes, ACCESSED ) );
+                           generation( attributes, GENERATING ), generation( attributes, QUEUED ), instant( attributes, ACCESSED ) );
     }
 
     private Sitemap.FileSource files( final NodeId nodeId, final NodeVersionId versionId )
@@ -387,9 +407,21 @@ final class RepositorySitemapStore
 
     private static Attributes generating( final String member, final Instant now )
     {
+        return attribute( GENERATING, member, now );
+    }
+
+    private static Attributes attribute( final String name, final String member, final Instant now )
+    {
         return Attributes.create()
-            .attribute( GENERATING, GenericValue.newObject().put( "member", member ).put( "since", now.toString() ).build() )
+            .attribute( name, GenericValue.newObject().put( "member", member ).put( "since", now.toString() ).build() )
             .build();
+    }
+
+    private static @Nullable Generating generation( final Attributes attributes, final String name )
+    {
+        final GenericValue value = attributes.get( name );
+        return value == null ? null : new Generating( value.property( "member" ).asString(),
+                                                      Instant.parse( value.property( "since" ).asString() ) );
     }
 
     private static @Nullable Instant instant( final Attributes attributes, final String name )
