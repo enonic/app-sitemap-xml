@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
@@ -83,6 +84,7 @@ final class RepositorySitemapStore
         .add( "key.sitePath", IndexConfig.MINIMAL )
         .add( "key.principals", IndexConfig.MINIMAL )
         .add( "generatedAt", IndexConfig.MINIMAL )
+        .add( "regen", IndexConfig.MINIMAL )
         .build();
 
     private final NodeService nodeService;
@@ -251,7 +253,7 @@ final class RepositorySitemapStore
         }
         if ( stored.sitemap() == null )
         {
-            delete( id );
+            delete( stored );
             return;
         }
         call( () -> {
@@ -275,10 +277,11 @@ final class RepositorySitemapStore
     }
 
     @Override
-    public List<Stored> generatedBefore( final Instant time )
+    public List<Stored> generatedOnRequestBefore( final Instant time )
     {
         return query( NodeQuery.create()
                           .parent( NodePath.ROOT )
+                          .addQueryFilter( ValueFilter.create().fieldName( "regen" ).addValue( ValueFactory.newBoolean( false ) ).build() )
                           .addQueryFilter(
                               RangeFilter.create().fieldName( "generatedAt" ).lt( ValueFactory.newDateTime( time ) ).build() ) );
     }
@@ -308,9 +311,24 @@ final class RepositorySitemapStore
     }
 
     @Override
-    public void delete( final String id )
+    public boolean delete( final Stored stored )
     {
-        call( () -> nodeService.delete( DeleteNodeParams.create().nodePath( path( id ) ).refresh( RefreshMode.ALL ).build() ) );
+        return call( () -> {
+            final Node node = nodeService.getByPath( path( stored.id() ) );
+            if ( node == null || !node.getNodeVersionId().toString().equals( stored.version() ) )
+            {
+                return false;
+            }
+            final NodeVersion version = nodeService.getVersion( node.id(), node.getNodeVersionId() );
+            final Attributes attributes = version == null ? null : version.getAttributes();
+            if ( attributes != null && ( !Objects.equals( generation( attributes, GENERATING ), stored.generating() ) ||
+                !Objects.equals( generation( attributes, QUEUED ), stored.queued() ) ) )
+            {
+                return false;
+            }
+            nodeService.delete( DeleteNodeParams.create().nodeId( node.id() ).refresh( RefreshMode.ALL ).build() );
+            return true;
+        } );
     }
 
     private List<Stored> query( final NodeQuery.Builder query )

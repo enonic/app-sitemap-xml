@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.enonic.xp.branch.Branch;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.data.PropertyTree;
+import com.enonic.xp.data.ValueFactory;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
 import com.enonic.xp.node.Attributes;
 import com.enonic.xp.node.CreateNodeParams;
@@ -221,6 +222,36 @@ class RepositorySitemapStoreTest
     }
 
     @Test
+    void deletesOnlyUnchangedSitemap()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion version = version( Attributes.create()
+                                                 .attribute( "generating", GenericValue.newObject()
+                                                     .put( "member", "other" )
+                                                     .put( "since", NOW.toString() )
+                                                     .build() )
+                                                 .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( version );
+        final SitemapStore.Stored older =
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000000", KEY, false, null, null, null, NOW, null, null,
+                                     null );
+        final SitemapStore.Stored unclaimed =
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, NOW, null, null, null );
+        final SitemapStore.Stored claimed =
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, NOW, null,
+                                     new SitemapStore.Generating( "other", NOW ), null );
+
+        assertThat( store().delete( older ) ).isFalse();
+        assertThat( store().delete( unclaimed ) ).isFalse();
+        verify( nodeService, never() ).delete( any() );
+
+        assertThat( store().delete( claimed ) ).isTrue();
+        verify( nodeService ).delete( any() );
+    }
+
+    @Test
     void obsoleteMarkKeepsLatestChange()
     {
         final SitemapStore.Stored marked =
@@ -268,16 +299,19 @@ class RepositorySitemapStoreTest
     }
 
     @Test
-    void findsSitemapsGeneratedBeforeTimeByIndexedGenerationTime()
+    void findsSitemapsGeneratedOnRequestBeforeTimeByIndexedFlagAndGenerationTime()
     {
         when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( FindNodesByQueryResult.create().build() );
         when( nodeService.getByIds( any() ) ).thenReturn( Nodes.empty() );
 
-        assertThat( store().generatedBefore( NOW ) ).isEmpty();
+        assertThat( store().generatedOnRequestBefore( NOW ) ).isEmpty();
 
         final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
         verify( nodeService ).findByQuery( query.capture() );
-        final RangeFilter range = (RangeFilter) query.getValue().getQueryFilters().first();
+        final ValueFilter regen = (ValueFilter) query.getValue().getQueryFilters().first();
+        assertThat( regen.getFieldName() ).isEqualTo( "regen" );
+        assertThat( regen.getValues() ).containsExactly( ValueFactory.newBoolean( false ) );
+        final RangeFilter range = (RangeFilter) query.getValue().getQueryFilters().last();
         assertThat( range.getFieldName() ).isEqualTo( "generatedAt" );
         assertThat( range.getTo().asInstant() ).isEqualTo( NOW );
         assertThat( range.isIncludeUpper() ).isFalse();

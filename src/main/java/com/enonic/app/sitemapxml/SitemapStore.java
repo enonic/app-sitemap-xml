@@ -60,9 +60,9 @@ interface SitemapStore
     void markObsolete( Stored stored, Instant now );
 
     /**
-     * The sitemaps generated before the given time.
+     * The sitemaps generated on request (not regen) before the given time.
      */
-    List<Stored> generatedBefore( Instant time );
+    List<Stored> generatedOnRequestBefore( Instant time );
 
     /**
      * The sitemaps of the given repository, of the given branch only if not null.
@@ -74,7 +74,13 @@ interface SitemapStore
      */
     List<Stored> ofSite( SitemapCache.Key key );
 
-    void delete( String id );
+    /**
+     * Deletes the stored sitemap unless it changed since it was loaded: a newer version was stored or its generation was claimed or
+     * queued meanwhile.
+     *
+     * @return whether it was deleted
+     */
+    boolean delete( Stored stored );
 
     /**
      * @param version     the stored version this was loaded from

@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -136,9 +137,12 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized List<Stored> generatedBefore( final Instant time )
+    public synchronized List<Stored> generatedOnRequestBefore( final Instant time )
     {
-        return stored.values().stream().filter( s -> s.generatedAt() != null && s.generatedAt().isBefore( time ) ).toList();
+        return stored.values()
+            .stream()
+            .filter( s -> !s.regen() && s.generatedAt() != null && s.generatedAt().isBefore( time ) )
+            .toList();
     }
 
     @Override
@@ -162,9 +166,16 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized void delete( final String id )
+    public synchronized boolean delete( final Stored stored )
     {
-        stored.remove( id );
+        final Stored current = this.stored.get( stored.id() );
+        if ( current == null || !current.version().equals( stored.version() ) ||
+            !Objects.equals( current.generating(), stored.generating() ) || !Objects.equals( current.queued(), stored.queued() ) )
+        {
+            return false;
+        }
+        this.stored.remove( stored.id() );
+        return true;
     }
 
     synchronized int size()

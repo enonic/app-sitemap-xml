@@ -444,6 +444,21 @@ class SitemapCacheTest
     }
 
     @Test
+    void sitemapReadBeforeChangeIsMarkedIsGeneratedAgainOnRequest()
+    {
+        regenerationDelay = Duration.ofMinutes( 1 );
+        node().cache.get( KEY, false );
+        clock.advance( Duration.ofSeconds( 1 ) );
+        final Node origin = node();
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        origin.cache.get( KEY, false );
+
+        awaitUntil( () -> generated.get() == 2 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+    }
+
+    @Test
     void floodOfChangesMarksAndGeneratesOnce()
     {
         regenerationDelay = Duration.ofMillis( 300 );

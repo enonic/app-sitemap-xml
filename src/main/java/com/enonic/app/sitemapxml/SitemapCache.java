@@ -132,6 +132,12 @@ public final class SitemapCache
      */
     private final ConcurrentMap<List<String>, Instant> unmarked = new ConcurrentHashMap<>();
 
+    /**
+     * The latest content change this node saw per repository, and per repository and branch. A stored sitemap read after it, whose
+     * generation started before it, counts as changed even when it is not marked obsolete yet: the mark comes a few seconds later.
+     */
+    private final ConcurrentMap<List<String>, Instant> lastChanged = new ConcurrentHashMap<>();
+
     private final Semaphore waiting = new Semaphore( MAX_WAITING );
 
     private final Set<CountDownLatch> running = ConcurrentHashMap.newKeySet();
@@ -470,9 +476,20 @@ public final class SitemapCache
         {
             if ( !entry.loaded )
             {
+                final Instant changedAt = lastChanged( key );
                 final SitemapStore.Stored stored = store.load( key.id() );
                 entry.stored = stored;
                 entry.sitemapChanges = entry.changes;
+                if ( changedAt != null && stored != null && stored.obsolete() == null &&
+                    ( stored.startedAt() == null || !stored.startedAt().isAfter( changedAt ) ) )
+                {
+                    entry.firstChangedAt = changedAt;
+                    if ( entry.changedAt == null || changedAt.isAfter( entry.changedAt ) )
+                    {
+                        entry.changedAt = changedAt;
+                    }
+                    entry.changes++;
+                }
                 entry.loaded = true;
                 if ( stored != null && stored.sitemap() != null )
                 {
@@ -481,6 +498,13 @@ public final class SitemapCache
             }
             return entry.stored;
         }
+    }
+
+    private @Nullable Instant lastChanged( final Key key )
+    {
+        final Instant repository = lastChanged.get( List.of( key.repositoryId() ) );
+        final Instant branch = lastChanged.get( List.of( key.repositoryId(), key.branch() ) );
+        return repository == null || branch != null && branch.isAfter( repository ) ? branch : repository;
     }
 
     /**
@@ -566,6 +590,8 @@ public final class SitemapCache
     private void contentChanged( final String repositoryId, final @Nullable String branch, final boolean localOrigin,
                                  final Instant changedAt )
     {
+        final List<String> scope = branch == null ? List.of( repositoryId ) : List.of( repositoryId, branch );
+        lastChanged.merge( scope, changedAt, ( latest, at ) -> at.isAfter( latest ) ? at : latest );
         entries.forEach( ( key, entry ) -> {
             if ( key.repositoryId().equals( repositoryId ) && ( branch == null || key.branch().equals( branch ) ) )
             {
@@ -582,7 +608,6 @@ public final class SitemapCache
         } );
         if ( localOrigin )
         {
-            final List<String> scope = branch == null ? List.of( repositoryId ) : List.of( repositoryId, branch );
             final boolean[] first = {false};
             unmarked.compute( scope, ( changed, latest ) -> {
                 first[0] = latest == null;
@@ -919,7 +944,7 @@ public final class SitemapCache
     private void deleteOld()
     {
         final Instant now = clock.instant();
-        store.generatedBefore( now.minus( RETENTION ) ).stream().filter( stored -> !stored.regen() ).filter( stored -> {
+        store.generatedOnRequestBefore( now.minus( RETENTION ) ).stream().filter( stored -> {
             final SitemapStore.Generating generating = stored.generating();
             return generating == null || !generating.since().plus( STALE_GENERATION ).isAfter( now );
         } ).forEach( this::delete );
@@ -927,7 +952,10 @@ public final class SitemapCache
 
     private void delete( final SitemapStore.Stored stored )
     {
-        store.delete( stored.id() );
+        if ( !store.delete( stored ) )
+        {
+            return;
+        }
         final Entry entry = entries.get( stored.key() );
         if ( entry != null )
         {
