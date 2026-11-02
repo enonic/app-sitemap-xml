@@ -256,9 +256,7 @@ class RepositorySitemapStoreTest
     private static Node node( final NodeVersionId versionId )
     {
         final PropertyTree data = new PropertyTree();
-        data.setString( "key", "{\"repository\":\"com.enonic.cms.project\",\"branch\":\"master\",\"principals\":" +
-            "[\"role:system.everyone\",\"user:system:anonymous\"],\"sitePath\":\"/mysite\",\"siteUrl\":\"https://example.com\"," +
-            "\"contentTypes\":[],\"ignorePatterns\":[]}" );
+        SitemapNodeData.writeKey( data.getRoot(), KEY );
         return Node.create()
             .id( NodeId.from( "sitemap" ) )
             .name( KEY.id() )

@@ -5,27 +5,21 @@ import java.util.Map;
 
 import org.jspecify.annotations.Nullable;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import com.enonic.xp.data.Property;
 import com.enonic.xp.data.PropertySet;
-import com.enonic.xp.data.ValueTypes;
 
 /**
- * The key and the description of a stored sitemap as node properties. Nodes stored before kept them as JSON strings, which are read too.
+ * The key and the description of a stored sitemap as node properties.
  */
 final class SitemapNodeData
 {
     static final String KEY = "key";
 
     static final String SITEMAP = "sitemap";
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private SitemapNodeData()
     {
@@ -51,14 +45,8 @@ final class SitemapNodeData
     }
 
     static SitemapCache.Key readKey( final PropertySet data )
-        throws JsonProcessingException
     {
-        final Property property = data.getProperty( KEY );
-        if ( property.getType().equals( ValueTypes.STRING ) )
-        {
-            return SitemapCache.Key.restore( MAPPER.readTree( property.getString() ) );
-        }
-        final PropertySet set = property.getSet();
+        final PropertySet set = data.getSet( KEY );
         final ObjectNode key = JsonNodeFactory.instance.objectNode();
         key.put( "repository", set.getString( "repository" ) );
         key.put( "branch", set.getString( "branch" ) );
@@ -113,18 +101,12 @@ final class SitemapNodeData
     }
 
     static @Nullable Sitemap readSitemap( final PropertySet data, final Sitemap.FileSource files )
-        throws JsonProcessingException
     {
-        final Property property = data.getProperty( SITEMAP );
-        if ( property == null )
+        final PropertySet set = data.getSet( SITEMAP );
+        if ( set == null )
         {
             return null;
         }
-        if ( property.getType().equals( ValueTypes.STRING ) )
-        {
-            return Sitemap.restore( files, MAPPER.readTree( property.getString() ) );
-        }
-        final PropertySet set = property.getSet();
         final ObjectNode description = JsonNodeFactory.instance.objectNode();
         description.put( "size", set.getLong( "size" ) );
         final ArrayNode described = description.putArray( "files" );

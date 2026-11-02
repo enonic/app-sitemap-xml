@@ -15,7 +15,6 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.io.ByteSource;
 
 import com.enonic.xp.context.Context;
@@ -324,7 +323,6 @@ final class RepositorySitemapStore
     }
 
     private Stored toStored( final Node node )
-        throws JsonProcessingException
     {
         final PropertyTree data = node.data();
         final NodeVersion version = nodeService.getVersion( node.id(), node.getNodeVersionId() );

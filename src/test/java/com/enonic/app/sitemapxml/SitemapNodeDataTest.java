@@ -7,8 +7,6 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.data.PropertyTree;
 
@@ -28,7 +26,6 @@ class SitemapNodeDataTest
 
     @Test
     void keyAndSitemapAreNodeProperties()
-        throws Exception
     {
         final Sitemap sitemap = sitemap();
         final PropertyTree data = new PropertyTree();
@@ -57,23 +54,7 @@ class SitemapNodeDataTest
     }
 
     @Test
-    void readsKeyAndSitemapStoredAsJsonStrings()
-        throws Exception
-    {
-        final Sitemap sitemap = sitemap();
-        final ObjectMapper mapper = new ObjectMapper();
-        final PropertyTree data = new PropertyTree();
-        data.setString( "key", mapper.writeValueAsString( KEY.store() ) );
-        data.setString( "sitemap", mapper.writeValueAsString( sitemap.store() ) );
-
-        assertThat( SitemapNodeData.readKey( data.getRoot() ) ).isEqualTo( KEY );
-        assertThat( SitemapNodeData.readSitemap( data.getRoot(), Sitemap.FileSource.directory( sitemap.directory() ) ).store() ).isEqualTo(
-            sitemap.store() );
-    }
-
-    @Test
     void placeholderHasNoSitemap()
-        throws Exception
     {
         final PropertyTree data = new PropertyTree();
         SitemapNodeData.writeKey( data.getRoot(), KEY );
