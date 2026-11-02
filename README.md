@@ -159,15 +159,15 @@ The sitemap lists published content only: it is generated from the `master` bran
 
 ### Storage, shared by the cluster
 
-Generated sitemaps are kept in the transient repository `com.enonic.app.sitemapxml`, created by the app: one node per sitemap, with the sitemap files as attachments, stored gzip-compressed only. A transient repository is left out of dumps and snapshots, and its old versions are vacuumed early. Its files are in XP's blob store, which all cluster nodes share, so a sitemap is generated once for the whole cluster and every node serves the same files. `.xml.gz` requests stream the stored files as they are, so do plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly.
+Generated sitemaps are kept in the transient repository `com.enonic.app.sitemapxml`, created by the app and readable by administrators only: one node per sitemap, with the sitemap files as attachments, stored gzip-compressed only. A transient repository is left out of dumps and snapshots, and its old versions are vacuumed early. Its files are in XP's blob store, which all cluster nodes share, so a sitemap is generated once for the whole cluster and every node serves the same files. `.xml.gz` requests stream the stored files as they are, so do plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly.
 
 A generated sitemap is served until a newer one replaces it, also after content changed and after XP or the app is restarted. Replacing it creates a new version of its node: requests still reading the previous files keep reading them. Whether a sitemap's content changed since it was generated, whether a node is generating it, and when it was last requested are attributes of its current version.
 
 ### Generating again
 
-When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move or delete), only the cluster node where it changed reacts: it marks the sitemaps of the project as obsolete, and:
+When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move, delete or a permission change), only the cluster node where it changed reacts: it marks the sitemaps of the project as obsolete, and:
 
-* with a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: generates the sitemap again a few seconds after the change. A generation still running when content changes again is halted and started over. Sitemaps not requested for an hour are generated again on their next request instead;
+* with a `Base URL` (in this app's site configuration or the one configured for the site in XP), and for Guillotine, which returns paths: generates the sitemap again a few seconds after the change. When content changes while the sitemap is being generated, also the first time, another generation follows. Sitemaps not requested for an hour are generated again on their next request instead. If no sitemap with the change arrives within about 10 minutes, for example because that node could not start the generation, the next request on any node generates it;
 * without a `Base URL`, the URLs depend on the host of the request: the sitemap is generated again on its next request, by whichever node gets it.
 
 Sitemaps are also generated again when scheduled content goes online or offline (`Online from` / `Online to`), and on their first request when they were generated before the cluster started, as content may have changed while no node was running.
