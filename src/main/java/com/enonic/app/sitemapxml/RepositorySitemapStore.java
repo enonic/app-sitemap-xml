@@ -219,7 +219,8 @@ final class RepositorySitemapStore
     {
         final Map<String, ByteSource> files = sitemap.storedFiles();
         final PropertyTree data = data( key, sitemap, validUntil, startedAt, now );
-        files.keySet().forEach( name -> data.addBinaryReference( "file", reference( name ) ) );
+        // files kept from the previous version are referenced without being attached again: the node keeps their binaries
+        sitemap.fileNames().forEach( name -> data.addBinaryReference( "file", reference( name ) ) );
         final VersionAttributesResolver noAttributes = VersionAttributesResolver.of( Attributes.create().build() );
         return call( () -> {
             final Node existing = nodeService.getByPath( path( id ) );

@@ -70,7 +70,7 @@ final class ConvertedSitemap
     @Override
     public ByteSource root()
     {
-        return isIndex() ? index( ".xml" ) : urlset( 1 );
+        return isIndex() ? index( ".xml" ) : urlset( first() );
     }
 
     @Override
@@ -82,7 +82,7 @@ final class ConvertedSitemap
     @Override
     public ByteSource rootGzip()
     {
-        return gzip( isIndex() ? index( ".xml" + Sitemap.GZIP_EXTENSION ) : urlset( 1 ) );
+        return gzip( isIndex() ? index( ".xml" + Sitemap.GZIP_EXTENSION ) : urlset( first() ) );
     }
 
     @Override
@@ -100,7 +100,7 @@ final class ConvertedSitemap
     @Override
     public @Nullable String rootETag( final boolean encoded )
     {
-        return isIndex() ? etag( "index", indexDigest(), encoded ) : etag( "file", source.fileDigest( 1 ), encoded );
+        return isIndex() ? etag( "index", indexDigest(), encoded ) : etag( "file", source.fileDigest( first() ), encoded );
     }
 
     @Override
@@ -127,17 +127,29 @@ final class ConvertedSitemap
         return source.lastModified();
     }
 
+    @Override
+    public List<Integer> fileNumbers()
+    {
+        return source.fileNumbers();
+    }
+
+    private int first()
+    {
+        return source.fileNumbers().get( 0 );
+    }
+
     private boolean validFile( final int number )
     {
-        return isIndex() && number >= 1 && number <= source.fileCount();
+        return isIndex() && source.fileNumbers().contains( number );
     }
 
     private String indexDigest()
     {
         final StringBuilder digests = new StringBuilder();
-        for ( int number = 1; number <= source.fileCount(); number++ )
+        for ( final Sitemap.SitemapFile file : source.files() )
         {
-            digests.append( source.fileDigest( number ) ).append( ' ' ).append( source.lastModified().get( number - 1 ) ).append( '\n' );
+            digests.append( file.number() ).append( ' ' ).append( file.digest() ).append( ' ' ).append( file.lastModified() ).append(
+                '\n' );
         }
         return digests.toString();
     }
@@ -165,6 +177,7 @@ final class ConvertedSitemap
     private ByteSource index( final String extension )
     {
         final List<@Nullable Instant> lastModified = source.lastModified();
+        final List<Integer> numbers = source.fileNumbers();
         return new ByteSource()
         {
             @Override
@@ -185,7 +198,7 @@ final class ConvertedSitemap
                         }
                         if ( number <= lastModified.size() )
                         {
-                            return renderer.indexEntry( renderer.fileUrl( "sitemap-" + number + extension ),
+                            return renderer.indexEntry( renderer.fileUrl( "sitemap-" + numbers.get( number - 1 ) + extension ),
                                                         lastModified.get( number - 1 ) );
                         }
                         return number == lastModified.size() + 1 ? INDEX_END : null;

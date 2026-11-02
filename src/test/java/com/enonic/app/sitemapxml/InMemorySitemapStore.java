@@ -100,6 +100,21 @@ final class InMemorySitemapStore
             }
         } );
         final Stored previous = stored.get( id );
+        // files kept from the previous version
+        for ( final String name : sitemap.fileNames() )
+        {
+            if ( !files.containsKey( name ) && previous != null && previous.sitemap() != null )
+            {
+                try
+                {
+                    files.put( name, previous.sitemap().gzipped( name ).read() );
+                }
+                catch ( IOException e )
+                {
+                    throw new UncheckedIOException( e );
+                }
+            }
+        }
         final Instant obsolete = previous == null ? null : previous.obsolete();
         final Stored saved = new Stored( id, UUID.randomUUID().toString(), key,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,

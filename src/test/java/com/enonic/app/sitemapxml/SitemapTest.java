@@ -432,6 +432,71 @@ class SitemapTest
     }
 
     @Test
+    void filesReadInCreationOrderAreGroupedByTheCreationTimeOfTheirFirstEntry()
+    {
+        final Instant t1 = Instant.parse( "2024-01-01T00:00:00Z" );
+        final Instant t2 = Instant.parse( "2024-01-02T00:00:00Z" );
+        final Instant t3 = Instant.parse( "2024-01-03T00:00:00Z" );
+        // the second file starts in the millisecond the first one ends: one group
+        final List<SitemapEntry> entries =
+            List.of( entry( "/a", t1 ), entry( "/b", t2 ), entry( "/c", t2 ), entry( "/d", t3 ), entry( "/e", t3.plusMillis( 1 ) ) );
+
+        final Sitemap sitemap = write( params( "https://example.com" ), 2, entries );
+
+        assertThat( sitemap.fileNumbers() ).containsExactly( 1, 2, 3 );
+        assertThat( sitemap.files() ).extracting( Sitemap.SitemapFile::range ).containsExactly( null, null, t3.plusMillis( 1 ) );
+        assertThat( sitemap.groupStarts() ).containsExactly( null, t3.plusMillis( 1 ) );
+        assertThat( sitemap.groups() ).extracting( List::size ).containsExactly( 2, 1 );
+        assertThat( sitemap.files() ).extracting( Sitemap.SitemapFile::urls ).containsExactly( 2, 2, 1 );
+        assertThat( sitemap.hasRanges() ).isFalse();
+
+        final Sitemap counted = sitemap.withCounts( t3, List.of( 4L, 1L ) );
+        assertThat( counted.hasRanges() ).isTrue();
+        assertThat( counted.groupCounts() ).containsExactly( 4L, 1L );
+        final Sitemap restored = Sitemap.restore( Sitemap.FileSource.directory( sitemap.directory() ), counted.store() );
+        assertThat( restored.store() ).isEqualTo( counted.store() );
+        assertThat( restored.cutoff() ).isEqualTo( t3 );
+    }
+
+    @Test
+    void groupsWrittenAgainKeepTheirNumbersAndOthersAreKept()
+    {
+        final Instant t = Instant.parse( "2024-01-01T00:00:00Z" );
+        final List<SitemapEntry> entries =
+            IntStream.range( 0, 6 ).mapToObj( i -> entry( "/item-" + i, t.plusSeconds( i ) ) ).toList();
+        final Sitemap first = write( params( "https://example.com" ), 2, entries );
+        assertThat( first.groupStarts() ).containsExactly( null, t.plusSeconds( 2 ), t.plusSeconds( 4 ) );
+
+        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( "again" ), params( "https://example.com" ), 2, Sitemap.MAX_FILE_BYTES,
+                                                        Sitemap.MAX_FILES ))
+        {
+            builder.numbersFrom( 4 );
+            builder.reuse( first.files().get( 0 ), first );
+            // the second group is gone
+            builder.beginGroup( t.plusSeconds( 2 ), 2 );
+            // the last one grows into a new file
+            builder.beginGroup( t.plusSeconds( 4 ), 3 );
+            List.of( entry( "/item-4", t.plusSeconds( 4 ) ), entry( "/item-5", t.plusSeconds( 5 ) ), entry( "/item-6", t.plusSeconds( 6 ) ) )
+                .forEach( builder::add );
+            final Sitemap again = builder.build( first, NOW.plusSeconds( 60 ) );
+
+            assertThat( again.fileNumbers() ).containsExactly( 1, 3, 4 );
+            assertThat( again.files() ).extracting( Sitemap.SitemapFile::range ).containsExactly( null, t.plusSeconds( 4 ), t.plusSeconds( 6 ) );
+            assertThat( again.lastModified() ).containsExactly( NOW, NOW, NOW.plusSeconds( 60 ) );
+            assertThat( again.size() ).isEqualTo( 5 );
+            assertThat( again.storedFiles() ).containsOnlyKeys( "sitemap-3.xml", "sitemap-4.xml", "sitemap.xml", "sitemap-index.xml" );
+            assertThat( again.fileNames() ).contains( "sitemap-1.xml" );
+            assertThat( text( again.root() ) ).contains( "sitemap-1.xml", "sitemap-3.xml", "sitemap-4.xml" ).doesNotContain( "sitemap-2.xml" );
+            assertThat( again.file( 2 ) ).isEmpty();
+        }
+    }
+
+    private static SitemapEntry entry( final String path, final Instant created )
+    {
+        return new SitemapEntry( path, "base:folder", null, created );
+    }
+
+    @Test
     void utf8Length()
     {
         assertThat( SitemapRenderer.utf8Length( "aæ€😀" ) ).isEqualTo( "aæ€😀".getBytes( StandardCharsets.UTF_8 ).length );

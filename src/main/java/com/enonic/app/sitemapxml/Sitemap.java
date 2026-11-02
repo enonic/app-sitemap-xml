@@ -17,15 +17,17 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -101,22 +103,46 @@ public final class Sitemap
 
     private final Map<String, Long> plainSizes;
 
-    private final List<@Nullable Instant> lastModified;
-
-    private final List<String> digests;
+    private final List<SitemapFile> fileList;
 
     private final Map<String, String> namedDigests;
 
+    /**
+     * The files written to the local directory: the others are kept from the sitemap this one replaces.
+     */
+    private final Set<String> local;
+
+    private final @Nullable Instant cutoff;
+
     private Sitemap( final FileSource files, final @Nullable Path directory, final int size, final Map<String, Long> plainSizes,
-                     final List<@Nullable Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests )
+                     final List<SitemapFile> fileList, final Map<String, String> namedDigests, final Set<String> local,
+                     final @Nullable Instant cutoff )
     {
-        this.digests = List.copyOf( digests );
+        this.fileList = List.copyOf( fileList );
         this.namedDigests = Map.copyOf( namedDigests );
         this.files = files;
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
-        this.lastModified = Collections.unmodifiableList( new ArrayList<>( lastModified ) );
+        this.local = Set.copyOf( local );
+        this.cutoff = cutoff;
+    }
+
+    /**
+     * A file of the sitemap.
+     *
+     * @param number       its number, which stays the same while its range is not generated again; numbers of files that became empty
+     *                     are left out
+     * @param lastModified when its content last changed
+     * @param digest       of its content: its XML, or the JSON lines of a Guillotine sitemap
+     * @param range        when the creation time range of the contents of its group of files starts, null for the first group, or for
+     *                     a sitemap read by path. A group holds the contents created from its start until the start of the next group,
+     *                     in one or more files
+     * @param count        the contents of its group that had not changed at the {@link #cutoff()}, or -1 when not counted
+     * @param urls         the URLs in the file
+     */
+    public record SitemapFile(int number, @Nullable Instant lastModified, String digest, @Nullable Instant range, long count, int urls)
+    {
     }
 
     /**
@@ -149,12 +175,103 @@ public final class Sitemap
 
     public int fileCount()
     {
-        return lastModified.size();
+        return fileList.size();
     }
 
+    @Override
     public boolean isIndex()
     {
-        return lastModified.size() > 1;
+        return fileList.size() > 1;
+    }
+
+    List<SitemapFile> files()
+    {
+        return fileList;
+    }
+
+    /**
+     * When the counts of the groups of files were taken: contents changed after it are not counted.
+     */
+    @Nullable Instant cutoff()
+    {
+        return cutoff;
+    }
+
+    /**
+     * Whether the groups of files are counted, so that a generation can tell which groups changed: only those need to be generated again.
+     */
+    boolean hasRanges()
+    {
+        return cutoff != null && fileList.stream().allMatch( file -> file.count() >= 0 );
+    }
+
+    /**
+     * The same sitemap with the counts of its groups of files, in order, taken at the given time.
+     */
+    Sitemap withCounts( final Instant cutoff, final List<Long> counts )
+    {
+        final List<SitemapFile> counted = new ArrayList<>();
+        int group = -1;
+        for ( int i = 0; i < fileList.size(); i++ )
+        {
+            final SitemapFile file = fileList.get( i );
+            if ( i == 0 || !Objects.equals( file.range(), fileList.get( i - 1 ).range() ) )
+            {
+                group++;
+            }
+            counted.add(
+                new SitemapFile( file.number(), file.lastModified(), file.digest(), file.range(), counts.get( group ), file.urls() ) );
+        }
+        return new Sitemap( files, directory, size, plainSizes, counted, namedDigests, local, cutoff );
+    }
+
+    /**
+     * The counts of the groups of files, in order.
+     */
+    List<Long> groupCounts()
+    {
+        final List<Long> counts = new ArrayList<>();
+        for ( int i = 0; i < fileList.size(); i++ )
+        {
+            if ( i == 0 || !Objects.equals( fileList.get( i ).range(), fileList.get( i - 1 ).range() ) )
+            {
+                counts.add( fileList.get( i ).count() );
+            }
+        }
+        return counts;
+    }
+
+    /**
+     * The files of each group, in order.
+     */
+    List<List<SitemapFile>> groups()
+    {
+        final List<List<SitemapFile>> groups = new ArrayList<>();
+        for ( int i = 0; i < fileList.size(); i++ )
+        {
+            if ( i == 0 || !Objects.equals( fileList.get( i ).range(), fileList.get( i - 1 ).range() ) )
+            {
+                groups.add( new ArrayList<>() );
+            }
+            groups.get( groups.size() - 1 ).add( fileList.get( i ) );
+        }
+        return groups;
+    }
+
+    /**
+     * The starts of the creation time ranges of the groups of files, in order: null for the first.
+     */
+    List<@Nullable Instant> groupStarts()
+    {
+        final List<@Nullable Instant> starts = new ArrayList<>();
+        for ( int i = 0; i < fileList.size(); i++ )
+        {
+            if ( i == 0 || !Objects.equals( fileList.get( i ).range(), fileList.get( i - 1 ).range() ) )
+            {
+                starts.add( fileList.get( i ).range() );
+            }
+        }
+        return starts;
     }
 
     public ByteSource root()
@@ -205,9 +322,21 @@ public final class Sitemap
         return validFile( number ).map( name -> etag( name, gzip ) );
     }
 
+    @Override
     public List<@Nullable Instant> lastModified()
     {
-        return lastModified;
+        return fileList.stream().map( SitemapFile::lastModified ).toList();
+    }
+
+    @Override
+    public List<Integer> fileNumbers()
+    {
+        return fileList.stream().map( SitemapFile::number ).toList();
+    }
+
+    private boolean hasFile( final int number )
+    {
+        return fileList.stream().anyMatch( file -> file.number() == number );
     }
 
     /**
@@ -217,9 +346,9 @@ public final class Sitemap
     {
         return jsonArray( json -> {
             int remaining = count;
-            for ( int number = 1; number <= lastModified.size() && remaining > 0; number++ )
+            for ( int i = 0; i < fileList.size() && remaining > 0; i++ )
             {
-                remaining -= copyUrlset( json, number, remaining );
+                remaining -= copyUrlset( json, fileList.get( i ).number(), remaining );
             }
         } );
     }
@@ -229,7 +358,7 @@ public final class Sitemap
      */
     public Optional<String> fileUrlsetJson( final int number )
     {
-        if ( number < 1 || number > lastModified.size() )
+        if ( !hasFile( number ) )
         {
             return Optional.empty();
         }
@@ -242,11 +371,11 @@ public final class Sitemap
     public String filesJson()
     {
         return jsonArray( json -> {
-            for ( int i = 0; i < lastModified.size(); i++ )
+            for ( final SitemapFile file : fileList )
             {
                 json.writeStartObject();
-                json.writeNumberField( "number", i + 1 );
-                final Instant lastmod = lastModified.get( i );
+                json.writeNumberField( "number", file.number() );
+                final Instant lastmod = file.lastModified();
                 if ( lastmod != null )
                 {
                     json.writeStringField( "lastmod", lastmod.toString() );
@@ -313,17 +442,26 @@ public final class Sitemap
      */
     Sitemap withFiles( final FileSource files )
     {
-        return new Sitemap( files, null, size, plainSizes, lastModified, digests, namedDigests );
+        return new Sitemap( files, null, size, plainSizes, fileList, namedDigests, Set.of(), cutoff );
     }
 
     /**
-     * The gzip-compressed files of the sitemap by name, without the {@code .gz} extension.
+     * The gzip-compressed files of the sitemap written to its local directory, by name, without the {@code .gz} extension: the others are
+     * those of the sitemap it replaces, already stored.
      */
     Map<String, ByteSource> storedFiles()
     {
         final Map<String, ByteSource> stored = new TreeMap<>();
-        plainSizes.keySet().forEach( name -> stored.put( name, gzip( name ) ) );
+        local.forEach( name -> stored.put( name, gzip( name ) ) );
         return stored;
+    }
+
+    /**
+     * The names of all files of the sitemap, without the {@code .gz} extension.
+     */
+    Set<String> fileNames()
+    {
+        return new TreeSet<>( plainSizes.keySet() );
     }
 
     /**
@@ -334,15 +472,28 @@ public final class Sitemap
         final ObjectNode description = JsonNodeFactory.instance.objectNode();
         description.put( "size", size );
         final ArrayNode files = description.putArray( "files" );
-        for ( int i = 0; i < lastModified.size(); i++ )
+        for ( final SitemapFile sitemapFile : fileList )
         {
             final ObjectNode file = files.addObject();
-            final Instant lastmod = lastModified.get( i );
-            if ( lastmod != null )
+            file.put( "number", sitemapFile.number() );
+            if ( sitemapFile.lastModified() != null )
             {
-                file.put( "lastmod", lastmod.toString() );
+                file.put( "lastmod", sitemapFile.lastModified().toString() );
             }
-            file.put( "digest", digests.get( i ) );
+            file.put( "digest", sitemapFile.digest() );
+            if ( sitemapFile.range() != null )
+            {
+                file.put( "range", sitemapFile.range().toString() );
+            }
+            if ( sitemapFile.count() >= 0 )
+            {
+                file.put( "count", sitemapFile.count() );
+            }
+            file.put( "urls", sitemapFile.urls() );
+        }
+        if ( cutoff != null )
+        {
+            description.put( "cutoff", cutoff.toString() );
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
@@ -358,13 +509,15 @@ public final class Sitemap
      */
     static Sitemap restore( final FileSource files, final JsonNode description )
     {
-        final List<@Nullable Instant> lastModified = new ArrayList<>();
-        final List<String> digests = new ArrayList<>();
+        final List<SitemapFile> fileList = new ArrayList<>();
         for ( final JsonNode file : description.required( "files" ) )
         {
             final JsonNode lastmod = file.get( "lastmod" );
-            lastModified.add( lastmod == null ? null : Instant.parse( lastmod.asText() ) );
-            digests.add( file.required( "digest" ).asText() );
+            final JsonNode range = file.get( "range" );
+            final JsonNode count = file.get( "count" );
+            fileList.add( new SitemapFile( file.required( "number" ).asInt(), lastmod == null ? null : Instant.parse( lastmod.asText() ),
+                                           file.required( "digest" ).asText(), range == null ? null : Instant.parse( range.asText() ),
+                                           count == null ? -1 : count.asLong(), file.required( "urls" ).asInt() ) );
         }
         final Map<String, Long> plainSizes = new HashMap<>();
         for ( final Map.Entry<String, JsonNode> file : description.required( "bytes" ).properties() )
@@ -380,7 +533,9 @@ public final class Sitemap
                 namedDigests.put( file.getKey(), file.getValue().asText() );
             }
         }
-        return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, lastModified, digests, namedDigests );
+        final JsonNode cutoff = description.get( "cutoff" );
+        return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, fileList, namedDigests, Set.of(),
+                            cutoff == null ? null : Instant.parse( cutoff.asText() ) );
     }
 
     static String fileName( final int number )
@@ -411,13 +566,13 @@ public final class Sitemap
         }
         if ( name.equals( ROOT_FILE ) && !isIndex() )
         {
-            return digests.isEmpty() ? null : digests.get( 0 );
+            return fileList.isEmpty() ? null : fileList.get( 0 ).digest();
         }
-        for ( int number = 1; number <= digests.size(); number++ )
+        for ( final SitemapFile file : fileList )
         {
-            if ( name.equals( fileName( number ) ) )
+            if ( name.equals( fileName( file.number() ) ) )
             {
-                return digests.get( number - 1 );
+                return file.digest();
             }
         }
         return null;
@@ -436,7 +591,16 @@ public final class Sitemap
      */
     String fileDigest( final int number )
     {
-        return digests.get( number - 1 );
+        return fileList.stream()
+            .filter( file -> file.number() == number )
+            .findFirst()
+            .orElseThrow( () -> new IllegalArgumentException( "No sitemap file " + number ) )
+            .digest();
+    }
+
+    long plainSize( final String name )
+    {
+        return Objects.requireNonNull( plainSizes.get( name ), name );
     }
 
     private String plainRootFile()
@@ -446,7 +610,7 @@ public final class Sitemap
 
     private Optional<String> validFile( final int number )
     {
-        if ( !isIndex() || number < 1 || number > lastModified.size() )
+        if ( !isIndex() || !hasFile( number ) )
         {
             return Optional.empty();
         }
@@ -456,6 +620,14 @@ public final class Sitemap
     private ByteSource gzip( final String fileName )
     {
         return files.gzipped( fileName );
+    }
+
+    /**
+     * A file of the sitemap, gzip-compressed, by name without the {@code .gz} extension.
+     */
+    ByteSource gzipped( final String fileName )
+    {
+        return gzip( fileName );
     }
 
     private ByteSource plain( final String fileName )
@@ -604,6 +776,12 @@ public final class Sitemap
     /**
      * Writes the files of a sitemap as entries are added, so a sitemap is never held in memory. Files are split by the limits of the
      * sitemap protocol: at most 50 000 URLs and 50MB (uncompressed) per file, at most 50 000 files and 50MB in the index.
+     * <p>
+     * Entries read in the order the contents were created are split in groups by creation time: a file holds the contents created from
+     * the creation time of its first entry, unless that is the creation time of the last entry of the file before, which then belongs to
+     * the same group. A sitemap generated again can keep the files of the groups whose contents did not change ({@link #reuse}) and write
+     * the others again ({@link #beginGroup}), each under the number it had; files they need beyond those get new numbers.
+     * <p>
      * Closing a builder that is not built deletes what was written.
      */
     public static final class Builder
@@ -621,19 +799,31 @@ public final class Sitemap
 
         private final int maxFiles;
 
-        private final List<@Nullable Instant> lastModified = new ArrayList<>();
-
-        private final List<String> digests = new ArrayList<>();
+        private final List<SitemapFile> files = new ArrayList<>();
 
         private final Map<String, String> namedDigests = new HashMap<>();
 
         private final Map<String, Long> plainSizes = new HashMap<>();
+
+        private final Set<String> local = new HashSet<>();
 
         private @Nullable CountingWriter file;
 
         private @Nullable CountingWriter urlsetFile;
 
         private @Nullable JsonGenerator urlset;
+
+        private int number;
+
+        private @Nullable Instant range;
+
+        private @Nullable Instant lastCreated;
+
+        private int nextNumber = 1;
+
+        private @Nullable Integer groupNumber;
+
+        private @Nullable Instant groupRange;
 
         private int size;
 
@@ -661,6 +851,62 @@ public final class Sitemap
             this.indexBytes = utf8Length( INDEX_START ) + utf8Length( INDEX_END );
         }
 
+        /**
+         * Gives files beyond those of the groups written again numbers from the given one on.
+         */
+        public Builder numbersFrom( final int number )
+        {
+            this.nextNumber = number;
+            return this;
+        }
+
+        /**
+         * Keeps a file of the sitemap this one replaces as it is, with its group.
+         */
+        public void reuse( final SitemapFile previousFile, final Sitemap previous )
+        {
+            try
+            {
+                closeFile();
+            }
+            catch ( IOException e )
+            {
+                throw new UncheckedIOException( e );
+            }
+            endGroup();
+            final String name = xml() ? fileName( previousFile.number() ) : urlsetFileName( previousFile.number() );
+            plainSizes.put( name, previous.plainSize( name ) );
+            files.add( previousFile );
+            size += previousFile.urls();
+            indexBytes += indexEntryBytes( previousFile.number() );
+        }
+
+        /**
+         * Starts writing a group of files again: its first file gets the given number and the given range, entries added next go in it.
+         * When none are added, the group is gone.
+         */
+        public void beginGroup( final @Nullable Instant range, final int number )
+        {
+            try
+            {
+                closeFile();
+            }
+            catch ( IOException e )
+            {
+                throw new UncheckedIOException( e );
+            }
+            endGroup();
+            this.groupNumber = number;
+            this.groupRange = range;
+        }
+
+        private void endGroup()
+        {
+            groupNumber = null;
+            groupRange = null;
+            lastCreated = null;
+        }
+
         public void add( final SitemapEntry entry )
         {
             try
@@ -674,7 +920,7 @@ public final class Sitemap
                 }
                 final String url = xml() ? renderer.url( entry, loc ) : null;
                 final long urlBytes = xml() ? utf8Length( Objects.requireNonNull( url ) ) : utf8Length( loc ) + RESERVED_BYTES_PER_URL;
-                if ( leftOut > 0 || !reserve( urlBytes ) )
+                if ( leftOut > 0 || !reserve( urlBytes, entry.createdTime() ) )
                 {
                     leftOut++;
                     return;
@@ -687,6 +933,7 @@ public final class Sitemap
                 {
                     renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
                 }
+                lastCreated = entry.createdTime();
                 fileUrls++;
                 size++;
             }
@@ -724,32 +971,36 @@ public final class Sitemap
                               leftOut, maxFiles, MAX_FILE_BYTES );
                 }
 
-                final boolean empty = lastModified.isEmpty();
+                final boolean empty = files.isEmpty();
                 if ( empty )
                 {
                     writeEmpty();
                 }
-                for ( int i = 0; i < lastModified.size(); i++ )
+                for ( int i = 0; i < files.size(); i++ )
                 {
-                    lastModified.set( i, unchanged( previous, i ) ? previous.lastModified.get( i ) : now );
+                    final SitemapFile written = files.get( i );
+                    if ( written.lastModified() == null )
+                    {
+                        files.set( i, new SitemapFile( written.number(), unchanged( previous, written ) ? previousLastModified( previous,
+                                                                                                                             written ) : now,
+                                                       written.digest(), written.range(), written.count(), written.urls() ) );
+                    }
                 }
-                if ( empty || !xml() )
+                if ( !empty && xml() && files.size() == 1 )
                 {
-                    built = true;
-                    return local();
+                    final String name = fileName( files.get( 0 ).number() );
+                    Files.move( gzPath( name ), gzPath( ROOT_FILE ) );
+                    plainSizes.put( ROOT_FILE, plainSizes.remove( name ) );
+                    local.remove( name );
+                    local.add( ROOT_FILE );
                 }
-                if ( lastModified.size() == 1 )
-                {
-                    Files.move( gzPath( fileName( 1 ) ), gzPath( ROOT_FILE ) );
-                    plainSizes.put( ROOT_FILE, plainSizes.remove( fileName( 1 ) ) );
-                }
-                else
+                else if ( !empty && xml() )
                 {
                     writeIndex( ROOT_FILE, ".xml" + GZIP_EXTENSION );
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return local();
+                return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, files, namedDigests, local, null );
             }
             catch ( IOException e )
             {
@@ -757,15 +1008,24 @@ public final class Sitemap
             }
         }
 
-        private Sitemap local()
+        private static boolean unchanged( final @Nullable Sitemap previous, final SitemapFile written )
         {
-            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, namedDigests );
+            return previousLastModified( previous, written ) != null;
         }
 
-        private boolean unchanged( final @Nullable Sitemap previous, final int index )
+        private static @Nullable Instant previousLastModified( final @Nullable Sitemap previous, final SitemapFile written )
         {
-            return previous != null && index < previous.digests.size() && previous.digests.get( index ).equals( digests.get( index ) ) &&
-                previous.lastModified.get( index ) != null;
+            if ( previous == null )
+            {
+                return null;
+            }
+            return previous.files()
+                .stream()
+                .filter( file -> file.number() == written.number() && file.digest().equals( written.digest() ) )
+                .map( SitemapFile::lastModified )
+                .filter( Objects::nonNull )
+                .findFirst()
+                .orElse( null );
         }
 
         private void writeEmpty()
@@ -778,8 +1038,7 @@ public final class Sitemap
                 root.write( URLSET_START + URLSET_END );
             }
             close( root, name );
-            digests.add( root.digest() );
-            lastModified.add( null );
+            files.add( new SitemapFile( 1, null, root.digest(), null, -1, 0 ) );
         }
 
         private void writeIndex( final String name, final String extension )
@@ -787,35 +1046,57 @@ public final class Sitemap
         {
             final CountingWriter index = open( name );
             index.write( INDEX_START );
-            for ( int number = 1; number <= lastModified.size(); number++ )
+            for ( final SitemapFile sitemapFile : files )
             {
-                index.write( renderer.indexEntry( renderer.fileUrl( "sitemap-" + number + extension ), lastModified.get( number - 1 ) ) );
+                index.write( renderer.indexEntry( renderer.fileUrl( "sitemap-" + sitemapFile.number() + extension ),
+                                                  sitemapFile.lastModified() ) );
             }
             index.write( INDEX_END );
             close( index, name );
             namedDigests.put( name, index.digest() );
         }
 
-        private boolean reserve( final long urlBytes )
+        private long indexEntryBytes( final int number )
+        {
+            return xml()
+                ? utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES
+                : RESERVED_BYTES_PER_URL;
+        }
+
+        private boolean reserve( final long urlBytes, final @Nullable Instant created )
             throws IOException
         {
             final long available = maxFileBytes - utf8Length( URLSET_START ) - utf8Length( URLSET_END );
-            if ( !lastModified.isEmpty() && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
+            if ( ( file != null || urlset != null ) && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
             {
                 fileBytes += urlBytes;
                 return true;
             }
 
-            final int number = lastModified.size() + 1;
-            final long indexEntryBytes = xml()
-                ? utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES
-                : RESERVED_BYTES_PER_URL;
-            if ( number > maxFiles || indexBytes + indexEntryBytes > MAX_FILE_BYTES )
+            final int newNumber = groupNumber != null ? groupNumber : nextNumber;
+            final long entryBytes = indexEntryBytes( newNumber );
+            final boolean open = file != null || urlset != null;
+            if ( files.size() + ( open ? 1 : 0 ) + 1 > maxFiles || indexBytes + entryBytes > MAX_FILE_BYTES )
             {
                 return false;
             }
+            final @Nullable Instant previousRange = range;
             closeFile();
-            indexBytes += indexEntryBytes;
+            if ( groupNumber != null )
+            {
+                range = groupRange;
+                groupNumber = null;
+                groupRange = null;
+            }
+            else
+            {
+                nextNumber++;
+                // a new group starts with this file, unless its first content was created in the same millisecond as the last one before
+                range = !open && files.isEmpty() || created == null ? null
+                    : created.equals( lastCreated ) ? previousRange : created;
+            }
+            number = newNumber;
+            indexBytes += entryBytes;
             if ( xml() )
             {
                 file = open( fileName( number ) );
@@ -823,12 +1104,10 @@ public final class Sitemap
             }
             else
             {
-                // split where the XML files would be split, so that a client rendering one per file stays within the limits
                 urlsetFile = open( urlsetFileName( number ) );
                 urlset = JSON.createGenerator( urlsetFile );
                 urlset.setRootValueSeparator( new SerializedString( "\n" ) );
             }
-            lastModified.add( null );
             fileUrls = 0;
             fileBytes = urlBytes;
             return true;
@@ -840,16 +1119,18 @@ public final class Sitemap
             if ( file != null )
             {
                 file.write( URLSET_END );
-                close( file, fileName( lastModified.size() ) );
-                digests.add( file.digest() );
+                close( file, fileName( number ) );
+                files.add( new SitemapFile( number, null, file.digest(), range, -1, fileUrls ) );
                 file = null;
             }
             if ( urlset != null )
             {
                 urlset.close();
                 urlset = null;
-                plainSizes.put( urlsetFileName( lastModified.size() ), Objects.requireNonNull( urlsetFile ).bytes() );
-                digests.add( urlsetFile.digest() );
+                final String name = urlsetFileName( number );
+                plainSizes.put( name, Objects.requireNonNull( urlsetFile ).bytes() );
+                local.add( name );
+                files.add( new SitemapFile( number, null, urlsetFile.digest(), range, -1, fileUrls ) );
                 urlsetFile = null;
             }
         }
@@ -866,6 +1147,7 @@ public final class Sitemap
         {
             writer.close();
             plainSizes.put( name, writer.bytes() );
+            local.add( name );
         }
 
         private Path gzPath( final String name )

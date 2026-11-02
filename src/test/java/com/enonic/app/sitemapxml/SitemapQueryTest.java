@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.enonic.xp.aggregation.Aggregation;
 import com.enonic.xp.aggregation.Aggregations;
+import com.enonic.xp.aggregation.Bucket;
 import com.enonic.xp.aggregation.Buckets;
 import com.enonic.xp.aggregation.DateHistogramBucket;
 import com.enonic.xp.content.Content;
@@ -35,6 +36,7 @@ import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.query.aggregation.AggregationQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
+import com.enonic.xp.query.aggregation.DateRangeAggregationQuery;
 import com.enonic.xp.query.filter.Filter;
 import com.enonic.xp.query.filter.RangeFilter;
 import com.enonic.xp.schema.content.ContentTypeName;
@@ -239,6 +241,77 @@ class SitemapQueryTest
                                                 asc + "createdtime 2024-04-30T00:00:00Z 2024-05-01T00:00:00Z",
                                                 asc + "createdtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z" );
         assertThat( entries ).hasSize( 7 );
+    }
+
+    @Test
+    void rangeIsReadInCreationOrderWithinItsCreationTimes()
+    {
+        final Instant from = Instant.parse( "2024-01-01T06:00:00Z" );
+        final Instant to = Instant.parse( "2024-01-01T18:00:00Z" );
+        final Instant created = Instant.parse( "2024-01-01T07:00:00Z" );
+        final List<String> requests = new ArrayList<>();
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            final String histogram = histogram( query );
+            requests.add( ( histogram != null ? histogram : query.getSize() + " " + query.getQueryExpr().getOrderList() ) + " " +
+                              filters( query ) );
+            if ( histogram != null )
+            {
+                return overview( 1, bucket( Instant.parse( "2024-01-01T00:00:00Z" ), 1 ) );
+            }
+            final Content content = Content.create( content( "c", "/mysite/c" ) ).createdTime( created ).build();
+            answerGetByIds( List.of( content ) );
+            return result( List.of( content ) );
+        } );
+
+        final List<SitemapEntry> entries = new ArrayList<>();
+        draft( () -> {
+            new SitemapQuery( contentService, params(), NOW ).executeRange( from, to, entries::add, () -> false );
+            return null;
+        } );
+
+        final String range = "createdtime 2024-01-01T06:00:00Z 2024-01-01T18:00:00Z";
+        assertThat( requests ).containsExactly( "createdtime 1d " + range, SitemapQuery.PAGE_SIZE + " [createdtime ASC, _path ASC] " + range +
+            " & createdtime 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z" );
+        assertThat( entries ).containsExactly( new SitemapEntry( "/c", "base:folder", NOW, created ) );
+    }
+
+    @Test
+    void countsContentsOfRangesAndThoseChangedSince()
+    {
+        final Instant second = Instant.parse( "2024-01-01T00:00:00Z" );
+        final Instant third = Instant.parse( "2024-02-01T00:00:00Z" );
+        final Instant since = Instant.parse( "2024-03-01T00:00:00Z" );
+        final Buckets.Builder ranges = Buckets.create();
+        ranges.add( Bucket.create().key( "0" ).docCount( 5 ).build() );
+        ranges.add( Bucket.create().key( "2" ).docCount( 7 ).addAggregations( Aggregations.from(
+            Aggregation.bucketAggregation( SitemapQuery.CHANGED )
+                .buckets( Buckets.create().add( Bucket.create().key( SitemapQuery.CHANGED ).docCount( 2 ).build() ).build() )
+                .build() ) ).build() );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( FindContentIdsByQueryResult.create()
+                                                                                 .contents( ContentIds.empty() )
+                                                                                 .totalHits( 12 )
+                                                                                 .aggregations( Aggregations.from(
+                                                                                     Aggregation.bucketAggregation( SitemapQuery.RANGES )
+                                                                                         .buckets( ranges.build() )
+                                                                                         .build() ) )
+                                                                                 .build() );
+
+        final List<SitemapQuery.RangeCount> counts = new SitemapQuery( contentService, params(), NOW ).counts(
+            java.util.Arrays.asList( null, second, third ), since );
+
+        assertThat( counts ).containsExactly( new SitemapQuery.RangeCount( 5, 0 ), new SitemapQuery.RangeCount( 0, 0 ),
+                                              new SitemapQuery.RangeCount( 7, 2 ) );
+        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
+        verify( contentService ).find( query.capture() );
+        assertThat( query.getValue().getSize() ).isZero();
+        final DateRangeAggregationQuery aggregation = (DateRangeAggregationQuery) query.getValue().getAggregationQueries().first();
+        assertThat( aggregation.getFieldName() ).isEqualTo( "createdtime" );
+        assertThat( aggregation.getRanges() ).extracting( range -> range.getKey() + " " + range.getFrom() + " " + range.getTo() )
+            .containsExactlyInAnyOrder( "0 null " + second, "1 " + second + " " + third, "2 " + third + " null" );
+        final DateRangeAggregationQuery changed = (DateRangeAggregationQuery) aggregation.getSubQueries().first();
+        assertThat( changed.getFieldName() ).isEqualTo( "_ts" );
+        assertThat( changed.getRanges() ).extracting( range -> range.getFrom() + " " + range.getTo() ).containsExactly( since + " null" );
     }
 
     @Test

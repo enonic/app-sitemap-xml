@@ -46,6 +46,11 @@ public interface SitemapFiles
     List<@Nullable Instant> lastModified();
 
     /**
+     * The number of each file, in order: numbers stay the same as files are generated again, files that became empty are left out.
+     */
+    List<Integer> fileNumbers();
+
+    /**
      * When the root last changed: that of its only file, or the latest of the files a sitemap index lists.
      */
     default @Nullable Instant rootLastModified()
@@ -55,8 +60,7 @@ public interface SitemapFiles
 
     default Optional<Instant> fileLastModified( final int number )
     {
-        return isIndex() && number >= 1 && number <= lastModified().size()
-            ? Optional.ofNullable( lastModified().get( number - 1 ) )
-            : Optional.empty();
+        final int index = fileNumbers().indexOf( number );
+        return isIndex() && index >= 0 ? Optional.ofNullable( lastModified().get( index ) ) : Optional.empty();
     }
 }

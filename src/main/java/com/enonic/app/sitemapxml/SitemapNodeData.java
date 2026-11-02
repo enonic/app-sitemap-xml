@@ -77,12 +77,29 @@ final class SitemapNodeData
         for ( final JsonNode file : stored.required( "files" ) )
         {
             final PropertySet described = set.addSet( "files" );
+            described.addLong( "number", file.required( "number" ).asLong() );
             final JsonNode lastmod = file.get( "lastmod" );
             if ( lastmod != null )
             {
                 described.addInstant( "lastmod", Instant.parse( lastmod.asText() ) );
             }
             described.addString( "digest", file.required( "digest" ).asText() );
+            final JsonNode range = file.get( "range" );
+            if ( range != null )
+            {
+                described.addInstant( "range", Instant.parse( range.asText() ) );
+            }
+            final JsonNode count = file.get( "count" );
+            if ( count != null )
+            {
+                described.addLong( "count", count.asLong() );
+            }
+            described.addLong( "urls", file.required( "urls" ).asLong() );
+        }
+        final JsonNode cutoff = stored.get( "cutoff" );
+        if ( cutoff != null )
+        {
+            set.addInstant( "cutoff", Instant.parse( cutoff.asText() ) );
         }
         for ( final Map.Entry<String, JsonNode> file : stored.required( "bytes" ).properties() )
         {
@@ -115,12 +132,29 @@ final class SitemapNodeData
         for ( final PropertySet file : set.getSets( "files" ) )
         {
             final ObjectNode entry = described.addObject();
+            entry.put( "number", file.getLong( "number" ) );
             final Instant lastmod = file.getInstant( "lastmod" );
             if ( lastmod != null )
             {
                 entry.put( "lastmod", lastmod.toString() );
             }
             entry.put( "digest", file.getString( "digest" ) );
+            final Instant range = file.getInstant( "range" );
+            if ( range != null )
+            {
+                entry.put( "range", range.toString() );
+            }
+            final Long count = file.getLong( "count" );
+            if ( count != null )
+            {
+                entry.put( "count", count );
+            }
+            entry.put( "urls", file.getLong( "urls" ) );
+        }
+        final Instant cutoff = set.getInstant( "cutoff" );
+        if ( cutoff != null )
+        {
+            description.put( "cutoff", cutoff.toString() );
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         set.getSets( "bytes" ).forEach( file -> bytes.put( file.getString( "name" ), file.getLong( "size" ) ) );
