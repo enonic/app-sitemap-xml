@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,8 @@ class SitemapCacheTest
     private final AtomicInteger generated = new AtomicInteger();
 
     private final AtomicInteger submitted = new AtomicInteger();
+
+    private volatile Predicate<SitemapCache.Key> current = key -> true;
 
     private final AtomicReference<SitemapCache.Source> source = new AtomicReference<>( this::generate );
 
@@ -502,6 +505,23 @@ class SitemapCacheTest
     }
 
     @Test
+    void regenSitemapNoLongerConfiguredIsDeletedOnChangeInsteadOfGenerated()
+    {
+        final Node origin = node();
+        final SitemapCache.Key gone = key( "/gone" );
+        origin.cache.get( KEY, true );
+        origin.cache.get( gone, true );
+        current = key -> !key.equals( gone );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+
+        awaitUntil( () -> store.load( gone.id() ) == null );
+        awaitUntil( () -> generated.get() == 3 );
+        origin.awaitIdle();
+        assertThat( store.load( KEY.id() ) ).isNotNull();
+    }
+
+    @Test
     void floodOfChangesMarksAndGeneratesOnce()
     {
         regenerationDelay = Duration.ofMillis( 300 );
@@ -864,7 +884,7 @@ class SitemapCacheTest
         };
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,
-                                                     temp.resolve( "node-" + nodes.size() ) );
+                                                     temp.resolve( "node-" + nodes.size() ), key -> current.test( key ) );
         self.set( cache );
         nodes.add( cache );
         return new Node( cache, executor );

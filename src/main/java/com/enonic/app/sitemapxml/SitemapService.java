@@ -2,7 +2,6 @@ package com.enonic.app.sitemapxml;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -21,7 +20,6 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
-import com.enonic.xp.portal.url.PortalScopeParams;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.project.ProjectService;
@@ -40,13 +38,11 @@ public final class SitemapService
 
     private final ProjectService projectService;
 
-    private final PortalUrlService portalUrlService;
-
     private final SitemapCache cache;
 
     private final Clock clock;
 
-    private final VirtualHostService virtualHostService;
+    private final SiteUrls siteUrls;
 
     public SitemapService( final ContentService contentService, final ProjectService projectService,
                            final PortalUrlService portalUrlService, final SitemapCache cache, final Clock clock,
@@ -54,10 +50,9 @@ public final class SitemapService
     {
         this.contentService = contentService;
         this.projectService = projectService;
-        this.portalUrlService = portalUrlService;
         this.cache = cache;
         this.clock = clock;
-        this.virtualHostService = virtualHostService;
+        this.siteUrls = new SiteUrls( portalUrlService, virtualHostService );
     }
 
     /**
@@ -86,21 +81,7 @@ public final class SitemapService
             return cache.uncached( key, context.getAuthInfo(), draft );
         }
         return cache.get( key, !authInfo.isAuthenticated() &&
-            ( !siteUrlFromRequest || baseUrl.isPresent() || isVirtualHostUrl( params ) ) );
-    }
-
-    /**
-     * Whether the site URL taken from the request is that of a virtual host matching its host exactly (not by a {@code ~} pattern),
-     * without a port: such URLs come from the configuration, not from whatever the client sent, so the sitemap can be generated again
-     * without a request.
-     */
-    private boolean isVirtualHostUrl( final SitemapParams params )
-    {
-        final String host = params.hostWithoutPort();
-        return host != null && virtualHostService.isEnabled() && virtualHostService.getVirtualHosts()
-            .stream()
-            .flatMap( virtualHost -> Arrays.stream( virtualHost.getHost().split( " " ) ) )
-            .anyMatch( exact -> !exact.startsWith( "~" ) && exact.equalsIgnoreCase( host ) );
+            ( !siteUrlFromRequest || baseUrl.isPresent() || siteUrls.isVirtualHostUrl( params ) ) );
     }
 
     /**
@@ -179,19 +160,6 @@ public final class SitemapService
 
     private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
     {
-        try
-        {
-            return Optional.ofNullable( portalUrlService.portalScope( PortalScopeParams.create()
-                                                                          .setProjectName( ProjectName.from( repositoryId ) )
-                                                                          .setBranch( branch )
-                                                                          .setContentPath( ContentPath.from(
-                                                                              sitePath.isEmpty() ? "/" : sitePath ) )
-                                                                          .build() ).getBaseUrl() );
-        }
-        catch ( RuntimeException e )
-        {
-            LOG.debug( "Could not resolve Base URL of {}", sitePath, e );
-            return Optional.empty();
-        }
+        return siteUrls.baseUrl( repositoryId, branch, sitePath );
     }
 }

@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import org.jspecify.annotations.Nullable;
 import org.osgi.service.component.annotations.Activate;
@@ -59,6 +60,7 @@ import com.enonic.xp.event.EventListener;
 import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.home.HomeDir;
 import com.enonic.xp.node.NodeService;
+import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.repository.RepositoryService;
 import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.auth.AuthenticationInfo;
@@ -68,6 +70,7 @@ import com.enonic.xp.task.ProgressReportParams;
 import com.enonic.xp.task.ProgressReporter;
 import com.enonic.xp.task.SubmitTaskParams;
 import com.enonic.xp.task.TaskService;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 /**
  * Generated sitemaps, kept in a {@link SitemapStore} shared by all cluster nodes. A sitemap is served until a newer one of the same key
@@ -160,6 +163,11 @@ public final class SitemapCache
 
     private final Duration regenerationDelay;
 
+    /**
+     * Whether a request could still get the sitemap of a regen key: its "Base URL" or virtual host is still configured.
+     */
+    private final Predicate<Key> current;
+
     private final Duration fileRetention;
 
     private final Path temp;
@@ -171,7 +179,8 @@ public final class SitemapCache
     @Activate
     public SitemapCache( @Reference final NodeService nodeService, @Reference final RepositoryService repositoryService,
                          @Reference final ContentService contentService, @Reference final TaskService taskService,
-                         @Reference final SharedMapService sharedMapService, @Reference final EventPublisher eventPublisher )
+                         @Reference final SharedMapService sharedMapService, @Reference final EventPublisher eventPublisher,
+                         @Reference final PortalUrlService portalUrlService, @Reference final VirtualHostService virtualHostService )
     {
         this( new RepositorySitemapStore( nodeService, repositoryService, eventPublisher ), query( contentService ), Tasks.of( taskService ),
               Executors.newSingleThreadScheduledExecutor( runnable -> {
@@ -179,7 +188,8 @@ public final class SitemapCache
                   thread.setDaemon( true );
                   return thread;
               } ), Clock.systemUTC(), clusterStarted( sharedMapService ), REGENERATION_DELAY, FILE_RETENTION,
-              HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
+              HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ),
+              new SiteUrls( portalUrlService, virtualHostService )::isCurrent );
     }
 
     private static Function<Key, Source> query( final ContentService contentService )
@@ -189,9 +199,10 @@ public final class SitemapCache
 
     SitemapCache( final SitemapStore store, final Function<Key, Source> sources, final Tasks tasks,
                   final ScheduledExecutorService scheduler, final Clock clock, final Instant clusterStarted,
-                  final Duration regenerationDelay, final Duration fileRetention, final Path temp )
+                  final Duration regenerationDelay, final Duration fileRetention, final Path temp, final Predicate<Key> current )
     {
         this.store = store;
+        this.current = current;
         this.sources = sources;
         this.tasks = tasks;
         this.scheduler = scheduler;
@@ -645,6 +656,12 @@ public final class SitemapCache
             final Instant startedAt = stored.startedAt();
             if ( startedAt != null && startedAt.isAfter( changedAt ) )
             {
+                continue;
+            }
+            if ( stored.regen() && !current.test( stored.key() ) )
+            {
+                LOG.debug( "Sitemap {} is no longer requested as configured, deleting it", stored.key() );
+                delete( stored );
                 continue;
             }
             store.markObsolete( stored, changedAt );
