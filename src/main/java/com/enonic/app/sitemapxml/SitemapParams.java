@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import org.jspecify.annotations.Nullable;
+
 public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns)
 {
     public static final String SITE_CONTENT_TYPE = "portal:site";
@@ -75,6 +77,21 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
         }
         final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
         return host.startsWith( "[" ) ? host.contains( "]:" ) : host.contains( ":" );
+    }
+
+    /**
+     * The host of the site URL when it names no port, as in {@code https://www.example.com/path}; null when it names a port or has no
+     * host.
+     */
+    public @Nullable String hostWithoutPort()
+    {
+        final int start = hostStart( siteUrl );
+        if ( start < 0 || hasExplicitPort() )
+        {
+            return null;
+        }
+        final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
+        return host.isEmpty() ? null : host;
     }
 
     private static int hostStart( final String url )

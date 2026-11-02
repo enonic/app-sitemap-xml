@@ -83,9 +83,9 @@ import com.enonic.xp.task.TaskService;
  * are always answered right away.
  * <p>
  * When content changes, only the node where it changed reacts: a few seconds later it marks the sitemaps of the project as obsolete and
- * generates the regen ones again: public sitemaps whose URLs do not depend on the request ("Base URL", or Guillotine). The delay lets a
- * series of publications, or a flood of events, end in one pass and one generation. Other sitemaps are generated again on their next
- * request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
+ * generates the regen ones again: public sitemaps whose URLs do not depend on the request ("Base URL", Guillotine, or a virtual host
+ * matching its host exactly, without a port). The delay lets a series of publications, or a flood of events, end in one pass and one
+ * generation. Other sitemaps are generated again on their next request, by whichever node gets it. Sitemaps generated before the cluster started are generated again on their next request, since
  * content may have changed while no node was running.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})

@@ -167,8 +167,8 @@ A generated sitemap is served until a newer one replaces it, also after content 
 
 When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move, delete or a permission change), only the cluster node where it changed reacts. A few seconds after the change it marks the sitemaps of the project as obsolete, and:
 
-* public sitemaps with a `Base URL` (in this app's site configuration or the one configured for the site in XP), and public sitemaps for Guillotine, which returns paths, are generated again right away, whether or not they were requested lately. When content changes while the sitemap is being generated, also the first time, another generation follows. If no sitemap with the change arrives within about 10 minutes, for example because that node could not start the generation, the next request on any node generates it;
-* other sitemaps (those of logged-in users, and those without a `Base URL`, whose URLs depend on the host of the request) are generated again on their next request, by whichever node gets it.
+* public sitemaps whose URLs don't depend on the request are generated again right away: those with a `Base URL` (in this app's site configuration or the one configured for the site in XP), those for Guillotine, which returns paths, and those requested through a [virtual host](https://developer.enonic.com/docs/xp/stable/deployment/vhosts) whose host matches exactly (not a `~` pattern) without a port, as in `https://www.example.com`. They are generated again whether or not they were requested lately. When content changes while the sitemap is being generated, also the first time, another generation follows. If no sitemap with the change arrives within about 10 minutes, for example because that node could not start the generation, the next request on any node generates it;
+* other sitemaps (those of logged-in users, and those whose URLs take whatever host and port the request has) are generated again on their next request, by whichever node gets it.
 
 Changes arriving in those few seconds are handled together: a series of publications, or a flood of events, gives one pass over the stored sitemaps and one generation per sitemap every few seconds, not one per event.
 
@@ -180,7 +180,7 @@ A request for a sitemap that is being generated again gets the previous one righ
 
 Without a Base URL, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently generated. A Base URL makes the sitemap the same for every host.
 
-Sitemaps generated on request more than a day ago are deleted (except while they are being generated), so sitemaps nothing requests anymore do not stay: those of a user whose roles or groups changed (a user's sitemap belongs to the exact set of principals of their requests), of deleted users, or of hosts no longer used. A sitemap still requested is generated again on its next request. Public sitemaps with a Base URL, or for Guillotine, are kept, as they are generated again on every change.
+Sitemaps generated on request more than a day ago are deleted (except while they are being generated), so sitemaps nothing requests anymore do not stay: those of a user whose roles or groups changed (a user's sitemap belongs to the exact set of principals of their requests), of deleted users, or of hosts no longer used. A sitemap still requested is generated again on its next request. Public sitemaps whose URLs don't depend on the request are kept, as they are generated again on every change.
 
 ### URLs in the sitemap
 
@@ -188,7 +188,7 @@ URLs are resolved in this order:
 
 1. `Base URL` in this app's site configuration, see [Override the generated domain name](#override-the-generated-domain-name). This setting predates the one in XP and takes precedence when set.
 2. The `Base URL` configured for the site in XP (the `portal` site configuration). This is the preferred way: public sitemaps are generated again on every change, without a request, much like a headless client renders URLs.
-3. The URL of the site as seen by the request.
+3. The URL of the site as seen by the request. When the request comes through a virtual host matching its host exactly and names no port, public sitemaps are also generated again on every change: the URL comes from the virtual host configuration, not from whatever host the client sent.
 
 With either Base URL, the sitemap is the same whichever host it is requested from.
 

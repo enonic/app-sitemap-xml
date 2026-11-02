@@ -39,12 +39,15 @@ import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 import com.enonic.xp.site.SiteConfig;
 import com.enonic.xp.site.SiteConfigs;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -71,6 +74,9 @@ class SitemapServiceTest
     @Mock
     private SitemapCache cache;
 
+    @Mock
+    private VirtualHostService virtualHostService;
+
     @Test
     void usesBaseUrlOfSite()
     {
@@ -94,14 +100,14 @@ class SitemapServiceTest
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
 
         assertThat( inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache,
-                                                         Clock.systemUTC() ).portalBaseUrl( "/mysite" ) ) ).contains(
+                                                         Clock.systemUTC(), virtualHostService ).portalBaseUrl( "/mysite" ) ) ).contains(
             "https://www.example.com" );
     }
 
     @Test
     void draftGetsOnlyTheSiteWithoutCaching()
     {
-        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
@@ -120,7 +126,7 @@ class SitemapServiceTest
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
         when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( false ) );
@@ -136,7 +142,7 @@ class SitemapServiceTest
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
         when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( true ) );
@@ -151,7 +157,7 @@ class SitemapServiceTest
         when( projectService.getPublicRead( ProjectName.from( "project" ) ) ).thenReturn( true );
         when( cache.get( any(), anyBoolean() ) ).thenReturn( write( project ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( project,
                                                                                                                                 false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
@@ -169,7 +175,7 @@ class SitemapServiceTest
             .repositoryId( "com.enonic.cms.project" )
             .branch( "draft" )
             .build()
-            .callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+            .callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( project,
                                                                                                                                         false ) );
 
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
@@ -192,6 +198,46 @@ class SitemapServiceTest
     }
 
     @Test
+    void requestUrlOfVirtualHostMatchingItsHostExactlyWithoutPortIsRegen()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "www.example.com Request.Example.com" );
+
+        assertThat( sitemap( true, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+    }
+
+    @Test
+    void requestUrlOfVirtualHostMatchingItsHostByPatternIsNotRegen()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "~.*\\.example\\.com" );
+
+        sitemap( true, false );
+    }
+
+    @Test
+    void requestUrlWithPortIsNotRegen()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        lenient().when( virtualHostService.isEnabled() ).thenReturn( true );
+
+        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(),
+                                             virtualHostService ).sitemap( PARAMS.withSiteUrl( "https://request.example.com:8443/mysite" ),
+                                                                           true ) );
+
+        verify( cache ).get( any(), eq( false ) );
+        verify( virtualHostService, never() ).getVirtualHosts();
+    }
+
+    @Test
+    void requestUrlIsNotRegenWhenVirtualHostsAreDisabled()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+
+        sitemap( true, false );
+    }
+
+    @Test
     void usesRequestUrlWithoutBaseUrl()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
@@ -204,7 +250,7 @@ class SitemapServiceTest
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
 
-        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap(
+        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap(
             PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
@@ -311,10 +357,18 @@ class SitemapServiceTest
     private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean regen )
     {
         inContext(
-            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
+            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, siteUrlFromRequest ) );
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache ).get( key.capture(), eq( regen ) );
         return key.getValue();
+    }
+
+    private void virtualHosts( final String host )
+    {
+        final VirtualHost virtualHost = mock( VirtualHost.class );
+        when( virtualHost.getHost() ).thenReturn( host );
+        when( virtualHostService.isEnabled() ).thenReturn( true );
+        when( virtualHostService.getVirtualHosts() ).thenReturn( List.of( virtualHost ) );
     }
 
     private SitemapBean bean()
@@ -324,6 +378,7 @@ class SitemapServiceTest
         when( context.getService( ProjectService.class ) ).thenReturn( () -> projectService );
         when( context.getService( PortalUrlService.class ) ).thenReturn( () -> portalUrlService );
         when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
+        when( context.getService( VirtualHostService.class ) ).thenReturn( () -> virtualHostService );
         final SitemapBean bean = new SitemapBean();
         bean.initialize( context );
         return bean;

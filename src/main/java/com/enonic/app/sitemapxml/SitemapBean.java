@@ -17,6 +17,7 @@ import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.script.bean.ScriptBean;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 public final class SitemapBean
     implements ScriptBean
@@ -29,7 +30,8 @@ public final class SitemapBean
         this.service = new SitemapService( context.getService( ContentService.class ).get(),
                                            context.getService( ProjectService.class ).get(),
                                            context.getService( PortalUrlService.class ).get(),
-                                           context.getService( SitemapCache.class ).get(), Clock.systemUTC() );
+                                           context.getService( SitemapCache.class ).get(), Clock.systemUTC(),
+                                           context.getService( VirtualHostService.class ).get() );
     }
 
     public SitemapResponse root( final ScriptValue params )
