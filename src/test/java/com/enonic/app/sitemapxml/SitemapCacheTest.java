@@ -60,6 +60,8 @@ class SitemapCacheTest
 
     private final AtomicInteger generated = new AtomicInteger();
 
+    private final AtomicInteger submitted = new AtomicInteger();
+
     private final AtomicReference<SitemapCache.Source> source = new AtomicReference<>( this::generate );
 
     private final MutableClock clock = new MutableClock( CLUSTER_STARTED.plusSeconds( 60 ) );
@@ -459,6 +461,47 @@ class SitemapCacheTest
     }
 
     @Test
+    void sitemapFoundUnchangedIsNotStoredAgainAndOtherNodesTakeNote()
+    {
+        source.set( ( sink, cancelled ) -> {
+            generated.incrementAndGet();
+            sink.accept( new SitemapEntry( "/same", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            return null;
+        } );
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( KEY, false );
+        final SitemapStore.Stored first = store.load( KEY.id() );
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        origin.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
+        origin.cache.get( KEY, false );
+        awaitUntil( () -> store.checks.get() == 1 );
+        origin.awaitIdle();
+
+        final SitemapStore.Stored checked = store.load( KEY.id() );
+        assertThat( checked.version() ).isEqualTo( first.version() );
+        assertThat( checked.obsolete() ).isNull();
+        assertThat( checked.generating() ).isNull();
+        assertThat( checked.startedAt() ).isAfter( first.startedAt() );
+        assertThat( generated ).hasValue( 2 );
+
+        origin.cache.get( KEY, false );
+        other.cache.onEvent(
+            Event.create( RepositorySitemapStore.CHECKED_EVENT ).localOrigin( false ).value( "id", KEY.id() ).build() );
+        final int tasks = submitted.get();
+        other.cache.get( KEY, false );
+        origin.awaitIdle();
+        other.awaitIdle();
+        assertThat( submitted ).hasValue( tasks );
+        assertThat( generated ).hasValue( 2 );
+        assertThat( store.checks ).hasValue( 1 );
+    }
+
+    @Test
     void floodOfChangesMarksAndGeneratesOnce()
     {
         regenerationDelay = Duration.ofMillis( 300 );
@@ -810,6 +853,7 @@ class SitemapCacheTest
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
         final SitemapCache.Tasks tasks = ( key, regen, changedAt ) -> {
+            submitted.incrementAndGet();
             final RuntimeException failure = submitFailure.getAndSet( null );
             if ( failure != null )
             {

@@ -21,6 +21,8 @@ import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
+import com.enonic.xp.event.Event;
+import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.index.IndexConfig;
 import com.enonic.xp.index.PatternIndexConfigDocument;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
@@ -72,6 +74,13 @@ final class RepositorySitemapStore
 
     static final String QUEUED = "queued";
 
+    static final String CHECKED = "checked";
+
+    /**
+     * Sent to all cluster nodes when a sitemap is found unchanged: version attributes change without a node event.
+     */
+    static final String CHECKED_EVENT = "sitemapxml.checked";
+
     private static final Logger LOG = LoggerFactory.getLogger( RepositorySitemapStore.class );
 
     private static final AccessControlList PERMISSIONS =
@@ -91,12 +100,15 @@ final class RepositorySitemapStore
 
     private final RepositoryService repositoryService;
 
+    private final EventPublisher eventPublisher;
+
     private volatile boolean initialized;
 
-    RepositorySitemapStore( final NodeService nodeService, final RepositoryService repositoryService )
+    RepositorySitemapStore( final NodeService nodeService, final RepositoryService repositoryService, final EventPublisher eventPublisher )
     {
         this.nodeService = nodeService;
         this.repositoryService = repositoryService;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -267,6 +279,26 @@ final class RepositorySitemapStore
     }
 
     @Override
+    public @Nullable Stored check( final Stored stored, final String member, final Instant startedAt )
+    {
+        final Stored checked = call( () -> {
+            final Node node = nodeService.getByPath( path( stored.id() ) );
+            if ( node == null || !node.getNodeVersionId().toString().equals( stored.version() ) )
+            {
+                return null;
+            }
+            apply( node.getNodeVersionId(),
+                   Attributes.create().attribute( CHECKED, GenericValue.stringValue( startedAt.toString() ) ).build(), GENERATING );
+            return toStored( node );
+        } );
+        if ( checked != null )
+        {
+            eventPublisher.publish( Event.create( CHECKED_EVENT ).distributed( true ).value( "id", stored.id() ).build() );
+        }
+        return checked;
+    }
+
+    @Override
     public void markObsolete( final Stored stored, final Instant now )
     {
         final Instant obsolete = stored.obsolete();
@@ -319,10 +351,9 @@ final class RepositorySitemapStore
             {
                 return false;
             }
-            final NodeVersion version = nodeService.getVersion( node.id(), node.getNodeVersionId() );
-            final Attributes attributes = version == null ? null : version.getAttributes();
-            if ( attributes != null && ( !Objects.equals( generation( attributes, GENERATING ), stored.generating() ) ||
-                !Objects.equals( generation( attributes, QUEUED ), stored.queued() ) ) )
+            final Stored current = toStored( node );
+            if ( !Objects.equals( current.generating(), stored.generating() ) || !Objects.equals( current.queued(), stored.queued() ) ||
+                !Objects.equals( current.generatedAt(), stored.generatedAt() ) )
             {
                 return false;
             }
@@ -352,9 +383,13 @@ final class RepositorySitemapStore
             version == null || version.getAttributes() == null ? Attributes.create().build() : version.getAttributes();
         final SitemapCache.Key key = SitemapNodeData.readKey( data.getRoot() );
         final Sitemap sitemap = SitemapNodeData.readSitemap( data.getRoot(), files( node.id(), node.getNodeVersionId() ) );
+        final Instant checked = instant( attributes, CHECKED );
+        final Instant startedAt = later( data.getInstant( "startedAt" ), checked );
+        final Instant obsolete = instant( attributes, OBSOLETE );
         return new Stored( node.name().toString(), node.getNodeVersionId().toString(), key,
-                           Boolean.TRUE.equals( data.getBoolean( "regen" ) ), sitemap, data.getInstant( "validUntil" ),
-                           data.getInstant( "startedAt" ), data.getInstant( "generatedAt" ), instant( attributes, OBSOLETE ),
+                           Boolean.TRUE.equals( data.getBoolean( "regen" ) ), sitemap, data.getInstant( "validUntil" ), startedAt,
+                           later( data.getInstant( "generatedAt" ), checked ),
+                           obsolete != null && startedAt != null && obsolete.isBefore( startedAt ) ? null : obsolete,
                            generation( attributes, GENERATING ), generation( attributes, QUEUED ) );
     }
 
@@ -443,6 +478,11 @@ final class RepositorySitemapStore
         final GenericValue value = attributes.get( name );
         return value == null ? null : new Generating( value.property( "member" ).asString(),
                                                       Instant.parse( value.property( "since" ).asString() ) );
+    }
+
+    private static @Nullable Instant later( final @Nullable Instant time, final @Nullable Instant other )
+    {
+        return time == null || other != null && other.isAfter( time ) ? other : time;
     }
 
     private static @Nullable Instant instant( final Attributes attributes, final String name )

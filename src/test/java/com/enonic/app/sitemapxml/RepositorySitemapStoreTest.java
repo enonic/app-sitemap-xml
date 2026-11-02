@@ -19,6 +19,8 @@ import com.enonic.xp.branch.Branch;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
+import com.enonic.xp.event.Event;
+import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
 import com.enonic.xp.node.Attributes;
 import com.enonic.xp.node.CreateNodeParams;
@@ -67,6 +69,9 @@ class RepositorySitemapStoreTest
 
     @Mock
     private RepositoryService repositoryService;
+
+    @Mock
+    private EventPublisher eventPublisher;
 
     @TempDir
     private Path temp;
@@ -238,9 +243,9 @@ class RepositorySitemapStoreTest
             new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000000", KEY, false, null, null, null, NOW, null, null,
                                      null );
         final SitemapStore.Stored unclaimed =
-            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, NOW, null, null, null );
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, null, null, null, null );
         final SitemapStore.Stored claimed =
-            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, NOW, null,
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, null, null,
                                      new SitemapStore.Generating( "other", NOW ), null );
 
         assertThat( store().delete( older ) ).isFalse();
@@ -249,6 +254,63 @@ class RepositorySitemapStoreTest
 
         assertThat( store().delete( claimed ) ).isTrue();
         verify( nodeService ).delete( any() );
+    }
+
+    @Test
+    void checkMarksCurrentVersionReleasesClaimAndTellsOtherNodes()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion version = version( Attributes.create().build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( version );
+
+        assertThat( store().check(
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000000", KEY, false, null, null, null, null, null, null,
+                                     null ), "me", NOW ) ).isNull();
+        verify( nodeService, never() ).applyVersionAttributes( any() );
+        verify( eventPublisher, never() ).publish( any() );
+
+        assertThat( store().check(
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, false, null, null, null, null, null, null, null ), "me",
+            NOW ) ).isNotNull();
+        final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
+        verify( nodeService ).applyVersionAttributes( apply.capture() );
+        assertThat( apply.getValue().getNodeVersionId() ).isEqualTo( versionId );
+        assertThat( apply.getValue().getAddAttributes().get( "checked" ).asString() ).isEqualTo( NOW.toString() );
+        assertThat( apply.getValue().getRemoveAttributes() ).containsExactly( "generating" );
+        final ArgumentCaptor<Event> event = ArgumentCaptor.forClass( Event.class );
+        verify( eventPublisher ).publish( event.capture() );
+        assertThat( event.getValue().getType() ).isEqualTo( RepositorySitemapStore.CHECKED_EVENT );
+        assertThat( event.getValue().isDistributed() ).isTrue();
+        assertThat( event.getValue().getData() ).containsEntry( "id", KEY.id() );
+    }
+
+    @Test
+    void checkedVersionCountsAsGeneratedWhenTheCheckStarted()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        node.data().setInstant( "startedAt", NOW.minusSeconds( 60 ) );
+        node.data().setInstant( "generatedAt", NOW.minusSeconds( 50 ) );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion covered = version( Attributes.create()
+                                                 .attribute( "checked", GenericValue.stringValue( NOW.toString() ) )
+                                                 .attribute( "obsolete", GenericValue.stringValue( NOW.minusSeconds( 10 ).toString() ) )
+                                                 .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( covered );
+
+        final SitemapStore.Stored checked = store().load( KEY.id() );
+        assertThat( checked.startedAt() ).isEqualTo( NOW );
+        assertThat( checked.generatedAt() ).isEqualTo( NOW );
+        assertThat( checked.obsolete() ).isNull();
+
+        final NodeVersion changedSince = version( Attributes.create()
+                                                      .attribute( "checked", GenericValue.stringValue( NOW.toString() ) )
+                                                      .attribute( "obsolete", GenericValue.stringValue( NOW.plusSeconds( 5 ).toString() ) )
+                                                      .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( changedSince );
+        assertThat( store().load( KEY.id() ).obsolete() ).isEqualTo( NOW.plusSeconds( 5 ) );
     }
 
     @Test
@@ -328,7 +390,7 @@ class RepositorySitemapStoreTest
 
     private RepositorySitemapStore store()
     {
-        return new RepositorySitemapStore( nodeService, repositoryService );
+        return new RepositorySitemapStore( nodeService, repositoryService, eventPublisher );
     }
 
     private static NodeVersion version( final Attributes attributes )

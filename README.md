@@ -161,7 +161,7 @@ The sitemap lists published content only: it is generated from the `master` bran
 
 Generated sitemaps are kept in the transient repository `com.enonic.app.sitemapxml`, created by the app and readable by administrators only: one node per sitemap, with the sitemap files as attachments, stored gzip-compressed only. A transient repository is left out of dumps and snapshots, and its old versions are vacuumed early. Its files are in XP's blob store, which all cluster nodes share, so a sitemap is generated once for the whole cluster and every node serves the same files. `.xml.gz` requests stream the stored files as they are, so do plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly.
 
-A generated sitemap is served until a newer one replaces it, also after content changed and after XP or the app is restarted. Replacing it creates a new version of its node: requests still reading the previous files keep reading them. Whether a sitemap's content changed since it was generated, whether a node is generating it are attributes of its current version.
+A generated sitemap is served until a newer one replaces it, also after content changed and after XP or the app is restarted. Replacing it creates a new version of its node: requests still reading the previous files keep reading them. When a generation finds the same sitemap as the stored one (for example after a change elsewhere in the project), no new version is stored: the current one is marked as checked by that generation. Whether a sitemap's content changed since it was generated, whether a node is generating it, and when it was last checked are attributes of its current version.
 
 ### Generating again
 

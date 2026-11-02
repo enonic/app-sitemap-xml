@@ -27,6 +27,8 @@ final class InMemorySitemapStore
 
     final AtomicInteger finds = new AtomicInteger();
 
+    final AtomicInteger checks = new AtomicInteger();
+
     @Override
     public synchronized @Nullable Stored load( final String id )
     {
@@ -123,6 +125,23 @@ final class InMemorySitemapStore
         {
             stored.put( id, with( latest, latest.obsolete(), null, latest.queued() ) );
         }
+    }
+
+    @Override
+    public synchronized @Nullable Stored check( final Stored current, final String member, final Instant startedAt )
+    {
+        final Stored latest = stored.get( current.id() );
+        if ( latest == null || !latest.version().equals( current.version() ) )
+        {
+            return null;
+        }
+        checks.incrementAndGet();
+        final Instant obsolete = latest.obsolete() != null && latest.obsolete().isBefore( startedAt ) ? null : latest.obsolete();
+        final Stored checked =
+            new Stored( latest.id(), latest.version(), latest.key(), latest.regen(), latest.sitemap(), latest.validUntil(), startedAt,
+                        startedAt, obsolete, null, latest.queued() );
+        stored.put( latest.id(), checked );
+        return checked;
     }
 
     @Override

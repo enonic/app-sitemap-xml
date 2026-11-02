@@ -13,6 +13,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
@@ -55,6 +56,7 @@ import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.descriptor.DescriptorKey;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.event.EventListener;
+import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.home.HomeDir;
 import com.enonic.xp.node.NodeService;
 import com.enonic.xp.repository.RepositoryService;
@@ -169,9 +171,9 @@ public final class SitemapCache
     @Activate
     public SitemapCache( @Reference final NodeService nodeService, @Reference final RepositoryService repositoryService,
                          @Reference final ContentService contentService, @Reference final TaskService taskService,
-                         @Reference final SharedMapService sharedMapService )
+                         @Reference final SharedMapService sharedMapService, @Reference final EventPublisher eventPublisher )
     {
-        this( new RepositorySitemapStore( nodeService, repositoryService ), query( contentService ), Tasks.of( taskService ),
+        this( new RepositorySitemapStore( nodeService, repositoryService, eventPublisher ), query( contentService ), Tasks.of( taskService ),
               Executors.newSingleThreadScheduledExecutor( runnable -> {
                   final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
                   thread.setDaemon( true );
@@ -449,6 +451,11 @@ public final class SitemapCache
             !repo.equals( RepositorySitemapStore.REPOSITORY.toString() ) )
         {
             changed.add( List.of( repo ) );
+        }
+        else if ( type.equals( RepositorySitemapStore.CHECKED_EVENT ) && !event.isLocalOrigin() &&
+            event.getData().get( "id" ) instanceof String id )
+        {
+            storedElsewhere( id, "node.updated" );
         }
         final Instant now = clock.instant();
         changed.forEach(
@@ -740,11 +747,22 @@ public final class SitemapCache
                 throw new CancellationException();
             }
             final Sitemap generated = builder.build( previous == null ? null : previous.sitemap(), clock.instant() );
-            report( progress, "Storing " + summary( generated ) );
             final SitemapStore.Stored stored;
             try
             {
-                stored = store.save( id, key, regen, generated, validUntil, startedAt, clock.instant() );
+                final SitemapStore.Stored checked = unchanged( previous, generated, regen, validUntil )
+                    ? store.check( previous, generation, startedAt )
+                    : null;
+                if ( checked != null )
+                {
+                    LOG.debug( "Sitemap {} is unchanged", key );
+                    stored = checked;
+                }
+                else
+                {
+                    report( progress, "Storing " + summary( generated ) );
+                    stored = store.save( id, key, regen, generated, validUntil, startedAt, clock.instant() );
+                }
             }
             finally
             {
@@ -774,6 +792,16 @@ public final class SitemapCache
             failed( key, e );
             report( progress, "Generation failed: " + e.getMessage() );
         }
+    }
+
+    /**
+     * Whether the generated sitemap is the stored one: the same files, unchanged until the same time, regenerated the same way.
+     */
+    private static boolean unchanged( final SitemapStore.@Nullable Stored previous, final Sitemap generated, final boolean regen,
+                                      final @Nullable Instant validUntil )
+    {
+        return previous != null && previous.sitemap() != null && previous.regen() == regen &&
+            Objects.equals( previous.validUntil(), validUntil ) && previous.sitemap().store().equals( generated.store() );
     }
 
     private static SitemapSink sink( final Sitemap.Builder builder, final @Nullable ProgressReporter progress )
@@ -944,7 +972,13 @@ public final class SitemapCache
     private void deleteOld()
     {
         final Instant now = clock.instant();
-        store.generatedOnRequestBefore( now.minus( RETENTION ) ).stream().filter( stored -> {
+        final Instant expired = now.minus( RETENTION );
+        store.generatedOnRequestBefore( expired ).stream().filter( stored -> {
+            // the query selects by the stored generation time; a generation since may have found it unchanged
+            if ( stored.generatedAt() != null && !stored.generatedAt().isBefore( expired ) )
+            {
+                return false;
+            }
             final SitemapStore.Generating generating = stored.generating();
             return generating == null || !generating.since().plus( STALE_GENERATION ).isAfter( now );
         } ).forEach( this::delete );
