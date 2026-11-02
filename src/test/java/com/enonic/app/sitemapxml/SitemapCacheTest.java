@@ -11,6 +11,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -444,6 +445,62 @@ class SitemapCacheTest
         node.cache.onEvent( storedEvent( "node.updated", KEY.id() ) );
         assertThat( text( waiting.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/1" );
         assertThat( generated ).hasValue( 1 );
+    }
+
+    @Test
+    void changeOutsideTheSiteLeavesItsSitemapAlone()
+    {
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( PUBLIC_KEY );
+        other.cache.get( KEY );
+        final SitemapCache.Key project = new SitemapCache.Key( "com.enonic.cms.project", "master", PUBLIC_KEY.principals(),
+                                                               new SitemapParams( "", "", List.of(), List.of(),
+                                                                                  SitemapParams.Format.GUILLOTINE ) );
+        other.cache.get( project );
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true,
+                                         Map.of( "path", "/content/othersite/news/a" ) ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false,
+                                        Map.of( "path", "/content/othersite/news/a" ) ) );
+
+        // the project's sitemap lists all content: generated again; the site's are not even marked
+        awaitUntil( () -> generated.get() == 4 );
+        origin.awaitIdle();
+        other.awaitIdle();
+        assertThat( store.load( PUBLIC_KEY.id() ).obsolete() ).isNull();
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+        other.cache.get( KEY );
+        other.cache.get( PUBLIC_KEY );
+        other.awaitIdle();
+        assertThat( generated ).hasValue( 4 );
+
+        origin.cache.onEvent( nodeEvent( "node.moved", "com.enonic.cms.project", "master", true,
+                                         Map.of( "path", "/content/othersite/b", "newPath", "/content/mysite/b" ) ) );
+        awaitUntil( () -> generated.get() == 6 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNotNull();
+    }
+
+    @Test
+    void changesAreKeptByTopLevelPathAndAffectSitesInAndUnderThem()
+    {
+        assertThat( SitemapCache.changedPath( "/content/mysite/news/a" ) ).isEqualTo( "/content/mysite" );
+        assertThat( SitemapCache.changedPath( "/content/mysite" ) ).isEqualTo( "/content/mysite" );
+        assertThat( SitemapCache.changedPath( "/content" ) ).isEqualTo( "/content" );
+        assertThat( SitemapCache.changedPath( "/" ) ).isEqualTo( "/" );
+
+        assertThat( SitemapCache.affects( "/content/mysite", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content/mysite2", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/content/other", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/archive", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/content/folder", siteKey( "https://example.com" ) ) ).isFalse();
+        // a site deeper than two levels counts as changed with anything under its top level
+        assertThat( SitemapCache.affects( "/content/folder", key( "/folder/site" ) ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content/other", key( "" ) ) ).isTrue();
+        assertThat( SitemapCache.affects( "/archive", key( "" ) ) ).isFalse();
     }
 
     @Test
@@ -974,12 +1031,20 @@ class SitemapCacheTest
         return new SitemapCache.Key( repo, "master", USER, PARAMS );
     }
 
+    /**
+     * A change of the content root, above every site.
+     */
     private static Event nodeEvent( final String type, final String repo, final String branch, final boolean localOrigin )
     {
-        return Event.create( type )
-            .localOrigin( localOrigin )
-            .value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) )
-            .build();
+        return nodeEvent( type, repo, branch, localOrigin, Map.of( "path", "/content" ) );
+    }
+
+    private static Event nodeEvent( final String type, final String repo, final String branch, final boolean localOrigin,
+                                    final Map<String, String> paths )
+    {
+        final Map<String, String> node = new HashMap<>( paths );
+        node.putAll( Map.of( "id", "1", "repo", repo, "branch", branch ) );
+        return Event.create( type ).localOrigin( localOrigin ).value( "nodes", List.of( node ) ).build();
     }
 
     private static Event storedEvent( final String type, final String id )

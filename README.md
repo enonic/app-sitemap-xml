@@ -165,7 +165,7 @@ A generated sitemap is served until a newer one replaces it, also after content 
 
 ### Generating again
 
-When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move, delete or a permission change), only the cluster node where it changed reacts. A few seconds after the change it marks the sitemaps of the project as obsolete, and:
+When content in a project changes (any node event in the project repository, e.g. publish, unpublish, move, delete or a permission change), only the cluster node where it changed reacts. A few seconds after the change it marks the sitemaps the change may affect as obsolete: those of the site it is in (both sites for a move), of sites below the changed content, and the project's own sitemap for Guillotine. Sitemaps of other sites in the project are left alone. Changes are told apart by their first two levels (`/content/<name>`), so a site nested deeper also counts as changed when content elsewhere under the same top-level content changes. Then:
 
 * public sitemaps (those of anonymous requests, which logged-in users of a site everyone can read share) are generated again right away, whether or not they were requested lately. When content changes while the sitemap is being generated, also the first time, another generation follows. If no sitemap with the change arrives within about 10 minutes, for example because that node could not start the generation, the next request on any node generates it;
 * sitemaps of logged-in users are generated again on their next request, by whichever node gets it.

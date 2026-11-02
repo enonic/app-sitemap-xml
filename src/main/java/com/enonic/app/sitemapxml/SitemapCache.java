@@ -9,7 +9,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -132,16 +134,17 @@ public final class SitemapCache
     private final ConcurrentMap<String, Semaphore> projects = new ConcurrentHashMap<>();
 
     /**
-     * The latest change per repository, or repository and branch, that this node has yet to mark its sitemaps obsolete for: a flood of
-     * events makes one pass over the store, not one per event.
+     * The changes per repository, or repository and branch, that this node has yet to mark its sitemaps obsolete for, by changed path
+     * (see {@link #changedPath}), with the latest time: a flood of events makes one pass over the store, not one per event.
      */
-    private final ConcurrentMap<List<String>, Instant> unmarked = new ConcurrentHashMap<>();
+    private final ConcurrentMap<List<String>, Map<String, Instant>> unmarked = new ConcurrentHashMap<>();
 
     /**
-     * The latest content change this node saw per repository, and per repository and branch. A stored sitemap read after it, whose
-     * generation started before it, counts as changed even when it is not marked obsolete yet: the mark comes a few seconds later.
+     * The latest content change this node saw per repository, and per repository and branch, by changed path (see {@link #changedPath}).
+     * A stored sitemap read after it, whose generation started before it, counts as changed even when it is not marked obsolete yet: the
+     * mark comes a few seconds later.
      */
-    private final ConcurrentMap<List<String>, Instant> lastChanged = new ConcurrentHashMap<>();
+    private final ConcurrentMap<List<String>, ConcurrentMap<String, Instant>> lastChanged = new ConcurrentHashMap<>();
 
     private final Semaphore waiting = new Semaphore( MAX_WAITING );
 
@@ -429,7 +432,8 @@ public final class SitemapCache
     public void onEvent( final Event event )
     {
         final String type = event.getType();
-        final Set<List<String>> changed = new LinkedHashSet<>();
+        // changed paths per repository and branch, or per repository
+        final Map<List<String>, Set<String>> changed = new LinkedHashMap<>();
         if ( type.startsWith( "node." ) )
         {
             final Object data = event.getData().get( "nodes" );
@@ -449,7 +453,19 @@ public final class SitemapCache
                         }
                         else
                         {
-                            changed.add( List.of( repo, branch ) );
+                            final Set<String> paths = changed.computeIfAbsent( List.of( repo, branch ), scope -> new LinkedHashSet<>() );
+                            // the path before and after a move, or a push of a moved node
+                            for ( final String field : List.of( "path", "newPath", "currentTargetPath" ) )
+                            {
+                                if ( map.get( field ) instanceof String path )
+                                {
+                                    paths.add( changedPath( path ) );
+                                }
+                            }
+                            if ( paths.isEmpty() )
+                            {
+                                paths.add( "/" );
+                            }
                         }
                     }
                 }
@@ -458,7 +474,7 @@ public final class SitemapCache
         else if ( type.startsWith( "repository." ) && event.getData().get( "id" ) instanceof String repo &&
             !repo.equals( RepositorySitemapStore.REPOSITORY.toString() ) )
         {
-            changed.add( List.of( repo ) );
+            changed.put( List.of( repo ), Set.of( "/" ) );
         }
         else if ( type.equals( RepositorySitemapStore.CHECKED_EVENT ) && !event.isLocalOrigin() &&
             event.getData().get( "id" ) instanceof String id )
@@ -466,8 +482,8 @@ public final class SitemapCache
             storedElsewhere( id, "node.updated" );
         }
         final Instant now = clock.instant();
-        changed.forEach(
-            change -> contentChanged( change.get( 0 ), change.size() > 1 ? change.get( 1 ) : null, event.isLocalOrigin(), now ) );
+        changed.forEach( ( scope, paths ) -> contentChanged( scope.get( 0 ), scope.size() > 1 ? scope.get( 1 ) : null, paths,
+                                                             event.isLocalOrigin(), now ) );
     }
 
     private Entry entry( final Key key )
@@ -517,9 +533,50 @@ public final class SitemapCache
 
     private @Nullable Instant lastChanged( final Key key )
     {
-        final Instant repository = lastChanged.get( List.of( key.repositoryId() ) );
-        final Instant branch = lastChanged.get( List.of( key.repositoryId(), key.branch() ) );
+        final Instant repository = latest( lastChanged.get( List.of( key.repositoryId() ) ), key );
+        final Instant branch = latest( lastChanged.get( List.of( key.repositoryId(), key.branch() ) ), key );
         return repository == null || branch != null && branch.isAfter( repository ) ? branch : repository;
+    }
+
+    /**
+     * The latest of the changes, by changed path, that may have changed the sitemap of the key, if any.
+     */
+    private static @Nullable Instant latest( final @Nullable Map<String, Instant> changes, final Key key )
+    {
+        if ( changes == null )
+        {
+            return null;
+        }
+        Instant latest = null;
+        for ( final Map.Entry<String, Instant> change : changes.entrySet() )
+        {
+            if ( affects( change.getKey(), key ) && ( latest == null || change.getValue().isAfter( latest ) ) )
+            {
+                latest = change.getValue();
+            }
+        }
+        return latest;
+    }
+
+    /**
+     * The changed node path as changes are kept: at most two levels, as {@code /content/<name>}, so that they stay few also for bulk
+     * changes. A site deeper than that counts as changed when anything under the same {@code /content/<name>} changes.
+     */
+    static String changedPath( final String path )
+    {
+        int end = path.indexOf( '/', 1 );
+        end = end < 0 ? -1 : path.indexOf( '/', end + 1 );
+        return end < 0 ? path : path.substring( 0, end );
+    }
+
+    /**
+     * Whether a change at the given path, as {@link #changedPath} keeps it, may change the sitemap of the key: it is in the site (or the
+     * project's content), or above it, or {@code /} for a change of the whole repository.
+     */
+    static boolean affects( final String path, final Key key )
+    {
+        final String root = "/content" + key.params().sitePath();
+        return path.equals( "/" ) || path.equals( root ) || path.startsWith( root + "/" ) || root.startsWith( path + "/" );
     }
 
     /**
@@ -599,16 +656,19 @@ public final class SitemapCache
     }
 
     /**
-     * Content changed in the repository, and branch if not null. All nodes take note for the sitemaps they know; the node where it changed
-     * marks all sitemaps of the project as obsolete in the store and generates those in the background that are generated so.
+     * Content changed in the repository, and branch if not null, at the given paths (as {@link #changedPath} keeps them). All nodes take
+     * note for the sitemaps they know that it may change; the node where it changed marks those sitemaps as obsolete in the store and
+     * generates the public ones again. Sitemaps of sites the change is outside of are left alone.
      */
-    private void contentChanged( final String repositoryId, final @Nullable String branch, final boolean localOrigin,
-                                 final Instant changedAt )
+    private void contentChanged( final String repositoryId, final @Nullable String branch, final Set<String> paths,
+                                 final boolean localOrigin, final Instant changedAt )
     {
         final List<String> scope = branch == null ? List.of( repositoryId ) : List.of( repositoryId, branch );
-        lastChanged.merge( scope, changedAt, ( latest, at ) -> at.isAfter( latest ) ? at : latest );
+        final ConcurrentMap<String, Instant> latest = lastChanged.computeIfAbsent( scope, changed -> new ConcurrentHashMap<>() );
+        paths.forEach( path -> latest.merge( path, changedAt, ( before, at ) -> at.isAfter( before ) ? at : before ) );
         entries.forEach( ( key, entry ) -> {
-            if ( key.repositoryId().equals( repositoryId ) && ( branch == null || key.branch().equals( branch ) ) )
+            if ( key.repositoryId().equals( repositoryId ) && ( branch == null || key.branch().equals( branch ) ) &&
+                paths.stream().anyMatch( path -> affects( path, key ) ) )
             {
                 synchronized ( entry )
                 {
@@ -624,17 +684,19 @@ public final class SitemapCache
         if ( localOrigin )
         {
             final boolean[] first = {false};
-            unmarked.compute( scope, ( changed, latest ) -> {
-                first[0] = latest == null;
-                return latest == null || changedAt.isAfter( latest ) ? changedAt : latest;
+            unmarked.compute( scope, ( changed, pending ) -> {
+                first[0] = pending == null;
+                final Map<String, Instant> merged = pending == null ? new HashMap<>() : pending;
+                paths.forEach( path -> merged.merge( path, changedAt, ( before, at ) -> at.isAfter( before ) ? at : before ) );
+                return merged;
             } );
             if ( first[0] )
             {
                 schedule( () -> {
-                    final Instant latest = unmarked.remove( scope );
-                    if ( latest != null )
+                    final Map<String, Instant> pending = unmarked.remove( scope );
+                    if ( pending != null )
                     {
-                        markObsolete( repositoryId, branch, latest );
+                        markObsolete( repositoryId, branch, pending );
                     }
                 }, regenerationDelay );
             }
@@ -642,16 +704,17 @@ public final class SitemapCache
     }
 
     /**
-     * Marks the sitemaps of the repository, and branch if not null, obsolete in the store and generates the public ones. Runs
-     * {@link #regenerationDelay} after the first of the changes it covers, so that a flood of changes makes one pass, and one generation,
-     * per delay; changes arriving meanwhile wait for the next pass.
+     * Marks the sitemaps of the repository, and branch if not null, that the changes may change obsolete in the store, and generates the
+     * public ones again. Runs {@link #regenerationDelay} after the first of the changes it covers, so that a flood of changes makes one
+     * pass, and one generation, per delay; changes arriving meanwhile wait for the next pass.
      */
-    private void markObsolete( final String repositoryId, final @Nullable String branch, final Instant changedAt )
+    private void markObsolete( final String repositoryId, final @Nullable String branch, final Map<String, Instant> changes )
     {
         for ( final SitemapStore.Stored stored : store.find( repositoryId, branch ) )
         {
+            final Instant changedAt = latest( changes, stored.key() );
             final Instant startedAt = stored.startedAt();
-            if ( startedAt != null && startedAt.isAfter( changedAt ) )
+            if ( changedAt == null || startedAt != null && startedAt.isAfter( changedAt ) )
             {
                 continue;
             }
