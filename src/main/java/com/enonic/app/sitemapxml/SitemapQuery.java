@@ -107,6 +107,8 @@ public final class SitemapQuery
 
     private long remaining;
 
+    private long planned;
+
     public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
     {
         this.contentService = contentService;
@@ -139,6 +141,7 @@ public final class SitemapQuery
         else
         {
             final List<Slice> slices = new ArrayList<>();
+            planned = 0;
             addSlices( overview, 0, 0, List.of(), slices );
             LOG.debug( "Sitemap of {}: {} contents read in {} slices", params.sitePath(), total, slices.size() );
             for ( final Slice slice : slices )
@@ -147,8 +150,9 @@ public final class SitemapQuery
                 {
                     break;
                 }
-                emit( find( slice.filters(), FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ),
-                            slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE ), sink, cancelled );
+                emit( find( slice.filters(), slice.count() > PAGE_SIZE ? NodeQuery.ALL_RESULTS_SIZE_FLAG : PAGE_SIZE,
+                            FieldOrderExpr.create( MODIFIED_TIME, OrderExpr.Direction.DESC ),
+                            FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) ), sink, cancelled );
             }
         }
 
@@ -162,7 +166,7 @@ public final class SitemapQuery
      * Adds the slices of the histogram buckets in the result, newest first. Consecutive buckets are merged into one slice while it holds
      * at most {@value #PAGE_SIZE} contents. A bucket holding more is split by the next finer interval, then by the next dimension. A
      * bucket that cannot be split further (more than {@value #PAGE_SIZE} contents modified and stored in the same millisecond) is read in
-     * one scrolled query.
+     * one scrolled query. Older buckets are left out once the slices hold "Max included items" contents.
      */
     private void addSlices( final FindContentIdsByQueryResult result, final int dimension, final int level, final List<Filter> outer,
                             final List<Slice> slices )
@@ -182,6 +186,10 @@ public final class SitemapQuery
         long pendingCount = 0;
         for ( final DateHistogramBucket bucket : buckets )
         {
+            if ( planned + pendingCount >= params.maxItems() )
+            {
+                break;
+            }
             final Instant from = bucket.getKeyAsInstant();
             final Instant to = from.plus( interval );
             final long count = bucket.getDocCount();
@@ -189,7 +197,7 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+                    addSlice( slices, new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
                     pendingFrom = null;
                 }
                 final List<Filter> filters = with( outer, range( field, from, to ) );
@@ -203,7 +211,7 @@ public final class SitemapQuery
                 }
                 else
                 {
-                    slices.add( new Slice( filters, count ) );
+                    addSlice( slices, new Slice( filters, count ) );
                 }
             }
             else if ( pendingFrom != null && pendingCount + count <= PAGE_SIZE )
@@ -215,7 +223,7 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+                    addSlice( slices, new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
                 }
                 pendingFrom = from;
                 pendingTo = to;
@@ -224,8 +232,14 @@ public final class SitemapQuery
         }
         if ( pendingFrom != null )
         {
-            slices.add( new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
+            addSlice( slices, new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
         }
+    }
+
+    private void addSlice( final List<Slice> slices, final Slice slice )
+    {
+        slices.add( slice );
+        planned += slice.count();
     }
 
     private FindContentIdsByQueryResult histogram( final List<Filter> filters, final int dimension, final int level )
@@ -269,7 +283,7 @@ public final class SitemapQuery
         {
             final List<Filter> filters =
                 after == null ? List.of() : List.of( RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
-            final List<ContentId> ids = find( filters, FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ), PAGE_SIZE );
+            final List<ContentId> ids = find( filters, PAGE_SIZE, FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) );
             final String last = emit( ids, sink, cancelled );
             if ( ids.size() < PAGE_SIZE || last == null || remaining <= 0 )
             {
@@ -279,7 +293,7 @@ public final class SitemapQuery
         }
     }
 
-    private List<ContentId> find( final List<Filter> filters, final OrderExpr order, final int size )
+    private List<ContentId> find( final List<Filter> filters, final int size, final OrderExpr... order )
     {
         final ContentQuery.Builder query = ContentQuery.create().queryExpr( QueryExpr.from( DslExpr.from( dsl() ), order ) ).size( size );
         filters.forEach( query::queryFilter );

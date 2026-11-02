@@ -58,6 +58,9 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 	}, () => {
 		const site = siteKey ? getContentByKey<Site<SitemapXmlSiteConfig>>({key: siteKey}) : null;
 		TRACE && log.debug(`resolvers ${SITEMAP_FIELD_NAME} site: ${JSON.stringify(site, null, 4)}`);
+		if (siteKey && !site) {
+			return null;
+		}
 		const siteConfig = site
 			? getSiteConfigFromSite({
 				applicationKey: app.name,

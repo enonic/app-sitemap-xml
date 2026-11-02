@@ -282,6 +282,21 @@ describe('guillotine extensions', () => {
 			});
 			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
 
+			urlsetResolver({
+				args: {},
+				localContext: {...sitemapResolverResult.localContext, branch: 'draft'},
+				source: sitemapResolverResult.source,
+			});
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'draft', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+
+			expect(sitemapResolver({
+				args: {},
+				localContext: {branch: 'master', project: 'project', siteKey: '/missing'},
+				source: null
+			})).toBeNull();
+
 			const projectResult = sitemapResolver({
 				args: {},
 				localContext: {branch: 'master', project: 'project'},

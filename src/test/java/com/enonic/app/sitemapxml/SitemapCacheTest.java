@@ -202,6 +202,34 @@ class SitemapCacheTest
     }
 
     @Test
+    void failureOfHaltedGenerationDoesNotFailRequestsWaitingForItsReplacement()
+        throws Exception
+    {
+        final CountDownLatch started = new CountDownLatch( 1 );
+        final CountDownLatch release = new CountDownLatch( 1 );
+        final AtomicInteger runs = new AtomicInteger();
+        final SitemapCache.Source source = ( sink, cancelled ) -> {
+            if ( runs.incrementAndGet() == 1 )
+            {
+                started.countDown();
+                await( release );
+                throw new IllegalStateException( "boom" );
+            }
+            sink.accept( new SitemapEntry( "/run-" + runs.get(), SitemapParams.SITE_CONTENT_TYPE, null ) );
+            return null;
+        };
+
+        final Future<Sitemap> waiting = requests.submit( () -> cache.get( KEY, false, AUTH_INFO, source ) );
+        started.await( 5, TimeUnit.SECONDS );
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+        release.countDown();
+
+        assertThat( SitemapTest.text( waiting.get( 5, TimeUnit.SECONDS ).root() ) ).contains( "/run-2<" );
+        assertThat( cache.get( KEY, false, AUTH_INFO, source ) ).isSameAs( waiting.get() );
+        assertThat( runs ).hasValue( 2 );
+    }
+
+    @Test
     void idleBackgroundSitemapIsGeneratedAgainOnNextRequestInstead()
     {
         final Sitemap first = cache.get( KEY, true, AUTH_INFO, this::generate );

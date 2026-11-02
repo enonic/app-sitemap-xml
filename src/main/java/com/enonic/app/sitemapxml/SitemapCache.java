@@ -585,7 +585,7 @@ public final class SitemapCache
     {
         final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSiteForSamePrincipals( key ) ).collect( Collectors.toList() );
         site.stream()
-            .filter( e -> e.getValue().sitemap != null )
+            .filter( e -> e.getValue().sitemap != null && e.getValue().ready.isDone() )
             .sorted( EVICTION_ORDER )
             .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
             .collect( Collectors.toList() )
@@ -884,20 +884,20 @@ public final class SitemapCache
         {
             synchronized ( entry )
             {
-                if ( entry.generation == this )
+                if ( cancelled || entry.generation != this )
                 {
-                    entry.generation = null;
+                    LOG.debug( "Halted generation of sitemap {} failed", key, e );
+                    return;
+                }
+                entry.generation = null;
+                if ( entry.sitemap == null )
+                {
+                    entries.remove( key, entry );
+                    entry.ready.completeExceptionally( e );
+                    return;
                 }
             }
-            if ( entry.sitemap == null )
-            {
-                entries.remove( key, entry );
-                entry.ready.completeExceptionally( e );
-            }
-            else
-            {
-                LOG.warn( "Could not generate sitemap for {} {} {}", key.repositoryId(), key.branch(), key.params().sitePath(), e );
-            }
+            LOG.warn( "Could not generate sitemap for {} {} {}", key.repositoryId(), key.branch(), key.params().sitePath(), e );
         }
     }
 

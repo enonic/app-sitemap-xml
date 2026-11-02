@@ -184,7 +184,7 @@ class SitemapQueryTest
         final List<SitemapEntry> entries = new ArrayList<>();
         draft( () -> new SitemapQuery( contentService, params(), NOW ).execute( entries::add, () -> false ) );
 
-        final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC] ";
+        final String desc = SitemapQuery.PAGE_SIZE + " [modifiedtime DESC, _path ASC] ";
         final String ms = "modifiedtime 2024-01-01T10:20:30Z 2024-01-01T10:20:30.001Z";
         assertThat( requests ).containsExactly( "modifiedtime 1d -",
                                                 "modifiedtime 1h modifiedtime 2024-04-29T00:00:00Z 2024-04-30T00:00:00Z",
@@ -199,10 +199,36 @@ class SitemapQueryTest
                                                 desc + "modifiedtime 2024-04-29T01:00:00Z 2024-04-29T02:00:00Z",
                                                 desc + "modifiedtime 2024-04-29T00:00:00Z 2024-04-29T01:00:00Z",
                                                 desc + ms + " & _ts 2024-01-03T00:00:00Z 2024-01-04T00:00:00Z",
-                                                desc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z",
-                                                desc + ms + " & _ts 2024-01-01T00:00:00Z 2024-01-02T00:00:00Z",
-                                                desc + "modifiedtime 2023-12-31T00:00:00Z 2024-01-01T00:00:00Z" );
-        assertThat( entries ).hasSize( 9 );
+                                                desc + ms + " & _ts 2024-01-02T00:00:00Z 2024-01-03T00:00:00Z" );
+        assertThat( entries ).hasSize( 7 );
+    }
+
+    @Test
+    void olderBusyTimesAreNotSplitOnceMaxItemsAreCovered()
+    {
+        final Instant newest = Instant.parse( "2024-05-01T00:00:00Z" );
+        final Instant older = Instant.parse( "2024-04-01T00:00:00Z" );
+        final List<String> histograms = new ArrayList<>();
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            final String histogram = histogram( query );
+            if ( histogram == null )
+            {
+                return result( List.of() );
+            }
+            histograms.add( histogram + " " + filters( query ) );
+            return histogram.endsWith( "1d" )
+                ? overview( 120_000, bucket( newest, 60_000 ), bucket( older, 60_000 ) )
+                : overview( 60_000, bucket( newest, 10_000 ), bucket( newest.plus( Duration.ofHours( 1 ) ), 10_000 ),
+                            bucket( newest.plus( Duration.ofHours( 2 ) ), 10_000 ), bucket( newest.plus( Duration.ofHours( 3 ) ), 10_000 ),
+                            bucket( newest.plus( Duration.ofHours( 4 ) ), 10_000 ), bucket( newest.plus( Duration.ofHours( 5 ) ), 10_000 ) );
+        } );
+
+        draft( () -> new SitemapQuery( contentService, params( 50_000 ), NOW ).execute( entry -> {
+        }, () -> false ) );
+
+        assertThat( histograms ).containsExactly( "modifiedtime 1d -",
+                                                  "modifiedtime 1h modifiedtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z" );
     }
 
     @Test

@@ -60,7 +60,7 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 		} = {}
 	} = getContext();
 	return runInContext({
-		branch: 'master',
+		branch: localContext.branch,
 		repository: `com.enonic.cms.${project}`,
 		principals: principals || []
 	}, () => JSON.parse(newSitemapBean().guillotineUrlset(__.toScriptValue(params), count)) as SitemapUrl[]);
