@@ -24,6 +24,8 @@ final class InMemorySitemapStore
 
     final AtomicInteger saves = new AtomicInteger();
 
+    final AtomicInteger finds = new AtomicInteger();
+
     @Override
     public synchronized @Nullable Stored load( final String id )
     {
@@ -142,6 +144,7 @@ final class InMemorySitemapStore
     @Override
     public synchronized List<Stored> find( final String repositoryId, final @Nullable String branch )
     {
+        finds.incrementAndGet();
         return stored.values()
             .stream()
             .filter( s -> s.key().repositoryId().equals( repositoryId ) && ( branch == null || s.key().branch().equals( branch ) ) )

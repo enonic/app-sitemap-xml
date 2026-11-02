@@ -125,6 +125,12 @@ public final class SitemapCache
 
     private final ConcurrentMap<String, Semaphore> projects = new ConcurrentHashMap<>();
 
+    /**
+     * The latest change per repository, or repository and branch, that this node has yet to mark its sitemaps obsolete for: a flood of
+     * events makes one pass over the store, not one per event.
+     */
+    private final ConcurrentMap<List<String>, Instant> unmarked = new ConcurrentHashMap<>();
+
     private final Semaphore waiting = new Semaphore( MAX_WAITING );
 
     private final Set<CountDownLatch> running = ConcurrentHashMap.newKeySet();
@@ -575,23 +581,46 @@ public final class SitemapCache
         } );
         if ( localOrigin )
         {
-            execute( () -> {
-                for ( final SitemapStore.Stored stored : store.find( repositoryId, branch ) )
-                {
-                    final Instant startedAt = stored.startedAt();
-                    if ( startedAt != null && startedAt.isAfter( changedAt ) )
-                    {
-                        continue;
-                    }
-                    store.markObsolete( stored, changedAt );
-                    if ( stored.regen() )
-                    {
-                        final Entry entry = entry( stored.key() );
-                        entry.regen = true;
-                        generate( stored.key(), entry, regenerationDelay, true, changedAt );
-                    }
-                }
+            final List<String> scope = branch == null ? List.of( repositoryId ) : List.of( repositoryId, branch );
+            final boolean[] first = {false};
+            unmarked.compute( scope, ( changed, latest ) -> {
+                first[0] = latest == null;
+                return latest == null || changedAt.isAfter( latest ) ? changedAt : latest;
             } );
+            if ( first[0] )
+            {
+                schedule( () -> {
+                    final Instant latest = unmarked.remove( scope );
+                    if ( latest != null )
+                    {
+                        markObsolete( repositoryId, branch, latest );
+                    }
+                }, regenerationDelay );
+            }
+        }
+    }
+
+    /**
+     * Marks the sitemaps of the repository, and branch if not null, obsolete in the store and generates the regen ones. Runs
+     * {@link #regenerationDelay} after the first of the changes it covers, so that a flood of changes makes one pass, and one generation,
+     * per delay; changes arriving meanwhile wait for the next pass.
+     */
+    private void markObsolete( final String repositoryId, final @Nullable String branch, final Instant changedAt )
+    {
+        for ( final SitemapStore.Stored stored : store.find( repositoryId, branch ) )
+        {
+            final Instant startedAt = stored.startedAt();
+            if ( startedAt != null && startedAt.isAfter( changedAt ) )
+            {
+                continue;
+            }
+            store.markObsolete( stored, changedAt );
+            if ( stored.regen() )
+            {
+                final Entry entry = entry( stored.key() );
+                entry.regen = true;
+                generate( stored.key(), entry, Duration.ZERO, true, changedAt );
+            }
         }
     }
 
@@ -902,6 +931,32 @@ public final class SitemapCache
         if ( entry != null )
         {
             remove( stored.key(), entry );
+        }
+    }
+
+    private void schedule( final Runnable runnable, final Duration delay )
+    {
+        if ( delay.isNegative() || delay.isZero() )
+        {
+            execute( runnable );
+            return;
+        }
+        try
+        {
+            scheduler.schedule( () -> {
+                try
+                {
+                    runnable.run();
+                }
+                catch ( RuntimeException e )
+                {
+                    LOG.warn( "Could not update sitemaps", e );
+                }
+            }, delay.toMillis(), TimeUnit.MILLISECONDS );
+        }
+        catch ( RejectedExecutionException e )
+        {
+            LOG.debug( "Sitemaps stopped", e );
         }
     }
 

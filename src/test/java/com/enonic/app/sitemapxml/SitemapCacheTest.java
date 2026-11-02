@@ -444,6 +444,26 @@ class SitemapCacheTest
     }
 
     @Test
+    void floodOfChangesMarksAndGeneratesOnce()
+    {
+        regenerationDelay = Duration.ofMillis( 300 );
+        final Node node = node();
+        node.cache.get( KEY, true );
+        node.awaitIdle();
+        final int finds = store.finds.get();
+
+        for ( int i = 0; i < 1000; i++ )
+        {
+            node.cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "master", true ) );
+        }
+
+        awaitUntil( () -> generated.get() == 2 );
+        node.awaitIdle();
+        assertThat( store.finds.get() - finds ).isBetween( 1, 2 );
+        assertThat( generated ).hasValue( 2 );
+    }
+
+    @Test
     void sitemapGeneratedBeforeClusterStartedIsGeneratedAgainOnRequest()
     {
         clock.set( CLUSTER_STARTED.minusSeconds( 60 ) );
