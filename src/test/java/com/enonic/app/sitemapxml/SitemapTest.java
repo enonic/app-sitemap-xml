@@ -133,33 +133,38 @@ class SitemapTest
     }
 
     @Test
-    void guillotineSplitsAsIfUrlsStartedWithTheLongestBaseUrl()
+    void guillotineFilesFitWhatNextJsWritesWithTheLongestBaseUrl()
     {
-        final List<SitemapEntry> entries = IntStream.range( 0, 20 )
-            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-01T10:00:00.123456Z" ) ) )
-            .toList();
-        final long maxFileBytes = 3_000;
+        final Instant lastmod = Instant.parse( "2024-01-01T10:00:00.123456789Z" );
+        final List<SitemapEntry> entries =
+            IntStream.range( 0, 50 ).mapToObj( i -> new SitemapEntry( "/item-" + i + "/æ ø", "base:folder", lastmod ) ).toList();
+        final long maxFileBytes = 10_000;
 
+        final Sitemap guillotine = write( temp.resolve( "guillotine" ), guillotine(), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
         final Sitemap shortHost =
             write( temp.resolve( "short" ), params( "https://example.com" ), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
-        final Sitemap guillotine = write( temp.resolve( "guillotine" ), guillotine(), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
 
+        assertThat( guillotine.size() ).isEqualTo( 50 );
         assertThat( guillotine.fileCount() ).isGreaterThan( shortHost.fileCount() );
-        assertThat( guillotine.size() ).isEqualTo( 20 );
+        final String baseUrl = "https://" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - "https://".length() );
         for ( int number = 1; number <= guillotine.fileCount(); number++ )
         {
-            final int urls = guillotine.fileUrlsetJson( number ).orElseThrow().split( "\\{" ).length - 1;
-            // what a client writes for the file with the longest base URL and the full times it gets
-            final StringBuilder xml = new StringBuilder( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" ).append(
-                "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">" );
-            for ( int i = 0; i < urls; i++ )
+            final String json = guillotine.fileUrlsetJson( number ).orElseThrow();
+            // as Next.js resolveSitemap writes the file, with the path percent-encoded and the full time
+            final StringBuilder xml = new StringBuilder( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ).append(
+                "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" );
+            for ( final String path : json.split( "\"path\":\"" ) )
             {
-                xml.append( "<url><loc>" )
-                    .append( Sitemap.LONGEST_BASE_URL )
-                    .append( "/item-00</loc><lastmod>2024-01-01T10:00:00.123456Z</lastmod><changefreq>daily</changefreq>" )
-                    .append( "<priority>0.8</priority></url>" );
+                if ( path.startsWith( "/" ) )
+                {
+                    final String encoded = path.substring( 0, path.indexOf( '"' ) ).replace( " ", "%20" ).replace( "æ", "%C3%A6" )
+                        .replace( "ø", "%C3%B8" );
+                    xml.append( "<url>\n<loc>" ).append( baseUrl ).append( encoded ).append( "</loc>\n" )
+                        .append( "<lastmod>" ).append( lastmod ).append( "</lastmod>\n" )
+                        .append( "<changefreq>monthly</changefreq>\n<priority>0.8</priority>\n</url>\n" );
+                }
             }
-            xml.append( "</urlset>" );
+            xml.append( "</urlset>\n" );
             assertThat( SitemapRenderer.utf8Length( xml ) ).isLessThanOrEqualTo( maxFileBytes );
         }
     }

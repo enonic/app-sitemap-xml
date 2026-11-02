@@ -68,13 +68,18 @@ public final class Sitemap
     static final int MAX_LOC_LENGTH = 2_048;
 
     /**
-     * The longest base URL a Guillotine client is assumed to put in front of the paths: a Guillotine sitemap is split, and URLs too long
-     * left out, as if every URL started with one this long, so that the client's files stay within the limits with any base URL up to
-     * this length.
+     * The longest base URL a Guillotine client is assumed to put in front of the paths. Paths longer than the rest of
+     * {@link #MAX_LOC_LENGTH} are left out of a Guillotine sitemap.
      */
     static final int MAX_BASE_URL_LENGTH = 500;
 
-    static final String LONGEST_BASE_URL = "https://" + "a".repeat( MAX_BASE_URL_LENGTH - "https://".length() );
+    /**
+     * The bytes a Guillotine client is assumed to write for a URL besides its path, and for each entry of its sitemap index: a
+     * Guillotine sitemap is split as if each URL took its percent-encoded path plus this many bytes. It covers what Next.js
+     * writes for a sitemap entry ({@code <url>}, {@code <loc>}, {@code <lastmod>}, {@code <changefreq>}, {@code <priority>}, each on its
+     * own line, 133 bytes with a full time) with a base URL of {@link #MAX_BASE_URL_LENGTH} characters, rounded up.
+     */
+    static final int RESERVED_BYTES_PER_URL = 640;
 
     static final String GZIP_EXTENSION = ".gz";
 
@@ -631,8 +636,7 @@ public final class Sitemap
         {
             this.directory = directory;
             this.params = params;
-            this.renderer =
-                new SitemapRenderer( params.format() == SitemapParams.Format.XML ? params : params.withSiteUrl( LONGEST_BASE_URL ) );
+            this.renderer = new SitemapRenderer( params );
             this.maxUrlsPerFile = maxUrlsPerFile;
             this.maxFileBytes = maxFileBytes;
             this.maxFiles = maxFiles;
@@ -643,21 +647,23 @@ public final class Sitemap
         {
             try
             {
+                // a Guillotine sitemap has no site URL: the path, percent-encoded
                 final String loc = renderer.loc( entry );
-                if ( loc.length() > MAX_LOC_LENGTH )
+                if ( loc.length() > ( xml() ? MAX_LOC_LENGTH : MAX_LOC_LENGTH - MAX_BASE_URL_LENGTH ) )
                 {
                     tooLong++;
                     return;
                 }
-                final String url = renderer.url( entry, loc );
-                if ( leftOut > 0 || !reserve( utf8Length( url ) ) )
+                final String url = xml() ? renderer.url( entry, loc ) : null;
+                final long urlBytes = xml() ? utf8Length( Objects.requireNonNull( url ) ) : utf8Length( loc ) + RESERVED_BYTES_PER_URL;
+                if ( leftOut > 0 || !reserve( urlBytes ) )
                 {
                     leftOut++;
                     return;
                 }
                 if ( xml() )
                 {
-                    Objects.requireNonNull( file ).write( url );
+                    Objects.requireNonNull( file ).write( Objects.requireNonNull( url ) );
                 }
                 else
                 {
@@ -783,8 +789,9 @@ public final class Sitemap
             }
 
             final int number = lastModified.size() + 1;
-            final long indexEntryBytes =
-                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES;
+            final long indexEntryBytes = xml()
+                ? utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES
+                : RESERVED_BYTES_PER_URL;
             if ( number > maxFiles || indexBytes + indexEntryBytes > MAX_FILE_BYTES )
             {
                 return false;
