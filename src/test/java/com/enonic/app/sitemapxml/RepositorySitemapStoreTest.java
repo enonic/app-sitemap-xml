@@ -101,6 +101,11 @@ class RepositorySitemapStoreTest
         assertThat( create.getValue().getName().toString() ).isEqualTo( KEY.id() );
         assertThat( create.getValue().getData().getString( "repository" ) ).isEqualTo( "com.enonic.cms.project" );
         assertThat( create.getValue().getData().getString( "principals" ) ).isEqualTo( "role:system.everyone,user:system:anonymous" );
+        assertThat( create.getValue().getData().getSet( "key" ).getString( "sitePath" ) ).isEqualTo( "/mysite" );
+        assertThat( create.getValue().getData().getSet( "key" ).getStrings( "principals" ) ).containsExactly( "role:system.everyone",
+                                                                                                            "user:system:anonymous" );
+        assertThat( create.getValue().getData().getSet( "sitemap" ).getLong( "size" ) ).isEqualTo( 2 );
+        assertThat( create.getValue().getData().getSet( "sitemap" ).getSets( "files" ) ).hasSize( 2 );
         assertThat( create.getValue().getData().getBinaryReferences( "file" ) ).extracting( BinaryReference::toString )
             .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz",
                                         "urlset-1.jsonl.gz", "urlset-2.jsonl.gz" );

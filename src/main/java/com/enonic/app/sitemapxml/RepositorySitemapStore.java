@@ -2,7 +2,6 @@ package com.enonic.app.sitemapxml;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -17,7 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.io.ByteSource;
 
 import com.enonic.xp.context.Context;
@@ -80,8 +78,6 @@ final class RepositorySitemapStore
 
     private static final AccessControlList PERMISSIONS =
         AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() );
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final PatternIndexConfigDocument INDEX_CONFIG = PatternIndexConfigDocument.create()
         .defaultConfig( IndexConfig.NONE )
@@ -334,10 +330,8 @@ final class RepositorySitemapStore
         final NodeVersion version = nodeService.getVersion( node.id(), node.getNodeVersionId() );
         final Attributes attributes =
             version == null || version.getAttributes() == null ? Attributes.create().build() : version.getAttributes();
-        final SitemapCache.Key key = SitemapCache.Key.restore( MAPPER.readTree( data.getString( "key" ) ) );
-        final String description = data.getString( "sitemap" );
-        final Sitemap sitemap =
-            description == null ? null : Sitemap.restore( files( node.id(), node.getNodeVersionId() ), MAPPER.readTree( description ) );
+        final SitemapCache.Key key = SitemapNodeData.readKey( data.getRoot() );
+        final Sitemap sitemap = SitemapNodeData.readSitemap( data.getRoot(), files( node.id(), node.getNodeVersionId() ) );
         return new Stored( node.name().toString(), node.getNodeVersionId().toString(), key,
                            Boolean.TRUE.equals( data.getBoolean( "background" ) ), sitemap, data.getInstant( "validUntil" ),
                            data.getInstant( "startedAt" ), data.getInstant( "generatedAt" ), instant( attributes, OBSOLETE ),
@@ -371,17 +365,10 @@ final class RepositorySitemapStore
                                       final @Nullable Instant generatedAt )
     {
         final PropertyTree data = new PropertyTree();
-        try
+        SitemapNodeData.writeKey( data.getRoot(), key );
+        if ( sitemap != null )
         {
-            data.setString( "key", MAPPER.writeValueAsString( key.store() ) );
-            if ( sitemap != null )
-            {
-                data.setString( "sitemap", MAPPER.writeValueAsString( sitemap.store() ) );
-            }
-        }
-        catch ( JsonProcessingException e )
-        {
-            throw new UncheckedIOException( e );
+            SitemapNodeData.writeSitemap( data.getRoot(), sitemap );
         }
         data.setString( "repository", key.repositoryId() );
         data.setString( "branch", key.branch() );
