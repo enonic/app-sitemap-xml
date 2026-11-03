@@ -1,3 +1,4 @@
+import type {ScriptValue} from '@enonic-types/core';
 import type {SitemapXmlSiteConfig} from '/types';
 
 
