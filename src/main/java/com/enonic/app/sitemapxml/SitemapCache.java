@@ -704,6 +704,15 @@ public final class SitemapCache
         {
             return -1;
         }
+
+        /**
+         * When the sitemap must be generated again because scheduled content goes online or offline, or null; looked up without reading
+         * the contents, for a generation that found none changed.
+         */
+        default Instant nextChange()
+        {
+            return null;
+        }
     }
 
     record QuerySource(SitemapQuery query)
@@ -725,6 +734,12 @@ public final class SitemapCache
         public long total()
         {
             return query.total();
+        }
+
+        @Override
+        public Instant nextChange()
+        {
+            return query.nextChange();
         }
     }
 
@@ -900,7 +915,9 @@ public final class SitemapCache
                     if ( count != null && count.changed() == 0 && count.count() == previous.count() )
                     {
                         LOG.debug( "Sitemap {}: no contents changed", key );
-                        unchanged( previous.withCount( previous.count(), startedAt.minus( CUTOFF_MARGIN ) ) );
+                        // content published to go online later isn't counted yet, but changes when the sitemap must be generated again
+                        unchanged( previous.withCount( previous.count(), startedAt.minus( CUTOFF_MARGIN ) ),
+                                   context.callWith( source::nextChange ) );
                         return;
                     }
                 }
@@ -931,9 +948,10 @@ public final class SitemapCache
         }
 
         /**
-         * Keeps the sitemap, with the time contents count as changed since moved to this generation: no content changed before it.
+         * Keeps the sitemap, with the time contents count as changed since moved to this generation: no content changed before it. The
+         * next scheduled change is looked up again: content published to go online later isn't in the sitemap or its count yet.
          */
-        private void unchanged( final Sitemap sitemap )
+        private void unchanged( final Sitemap sitemap, final Instant validUntil )
         {
             synchronized ( entry )
             {
@@ -947,7 +965,12 @@ public final class SitemapCache
                 }
                 entry.sitemap = sitemap;
                 entry.sitemapChanges = changes;
+                entry.validUntil = validUntil;
                 persist( key, entry, sitemap );
+            }
+            if ( key.isPublic() && validUntil != null )
+            {
+                generate( key, entry, Duration.between( clock.instant(), validUntil ) );
             }
             followUp();
         }

@@ -321,9 +321,9 @@ class SitemapCacheTest
         contents.calls.clear();
         clock.now = clock.now.plusSeconds( 10 );
         cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
-        awaitUntil( () -> contents.calls.size() == 1 );
+        awaitUntil( () -> contents.calls.size() == 2 );
         awaitIdle();
-        assertThat( contents.calls ).containsExactly( "count" );
+        assertThat( contents.calls ).containsExactly( "count", "nextChange" );
         final Sitemap checked = cache.get( PUBLIC_KEY );
         assertThat( checked.directory() ).isEqualTo( first.directory() );
         assertThat( checked.cutoff() ).isEqualTo( clock.now.minus( SitemapCache.CUTOFF_MARGIN ) );
@@ -343,6 +343,31 @@ class SitemapCacheTest
         cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
         awaitUntil( () -> contents.calls.size() == 2 );
         assertThat( contents.calls ).containsExactly( "count", "write" );
+    }
+
+    @Test
+    void contentPublishedToGoOnlineLaterIsListedWhenItDoes()
+    {
+        final CountingSource contents = new CountingSource();
+        get( cache, PUBLIC_KEY, contents );
+
+        // published to go online in a minute: not counted yet, so nothing changed
+        contents.calls.clear();
+        contents.upcoming = clock.now.plusSeconds( 60 );
+        cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master" ) );
+        awaitUntil( () -> contents.calls.size() == 2 );
+        awaitIdle();
+        assertThat( contents.calls ).containsExactly( "count", "nextChange" );
+
+        // the time has come: read whole
+        contents.calls.clear();
+        clock.now = clock.now.plusSeconds( 60 );
+        contents.total = 4;
+        cache.get( PUBLIC_KEY );
+        awaitUntil( () -> contents.calls.contains( "write" ) );
+        assertThat( contents.calls ).containsExactly( "write" );
+        awaitIdle();
+        assertThat( cache.get( PUBLIC_KEY ).size() ).isEqualTo( 4 );
     }
 
     @Test
@@ -901,6 +926,18 @@ class SitemapCacheTest
         public long total()
         {
             return total;
+        }
+
+        /**
+         * The next scheduled change as a generation that reads nothing finds it.
+         */
+        volatile Instant upcoming;
+
+        @Override
+        public Instant nextChange()
+        {
+            calls.add( "nextChange" );
+            return upcoming;
         }
     }
 
