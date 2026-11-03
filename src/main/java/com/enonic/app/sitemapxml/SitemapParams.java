@@ -10,8 +10,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * What a sitemap lists and how.
  *
- * @param format whether the sitemap is served as {@code sitemap.xml} or through Guillotine: each has its own cached sitemap, with the
- *               files that one needs only
+ * @param format whether the sitemap is served as {@code sitemap.xml} or headless (through Guillotine): each has its own cached
+ *               sitemap, with the files that one needs only
  */
 public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns,
                             Format format)
@@ -23,9 +23,9 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
          */
         XML,
         /**
-         * The Guillotine {@code sitemap} field: URLs as paths, kept as JSON lines.
+         * Headless, for the Guillotine {@code sitemap} field: URLs as paths, kept as JSON lines.
          */
-        GUILLOTINE
+        HEADLESS
     }
 
     public static final String SITE_CONTENT_TYPE = "portal:site";

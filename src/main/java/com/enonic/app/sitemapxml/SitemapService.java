@@ -85,8 +85,8 @@ public final class SitemapService
 
     /**
      * The files of {@code sitemap.xml} for the request. A public sitemap whose URLs are taken from the request, as no Base URL or virtual
-     * host matching its host exactly gives them, is converted from the site's Guillotine sitemap with the request's site URL, instead of
-     * being generated for each host: the Guillotine sitemap is the same for every host and generated again without a request.
+     * host matching its host exactly gives them, is converted from the site's headless sitemap with the request's site URL, instead of
+     * being generated for each host: the headless sitemap is the same for every host and generated again without a request.
      *
      * @throws InvalidSiteUrlException when such a site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH}
      */
@@ -98,9 +98,9 @@ public final class SitemapService
         if ( !ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) && key.isPublic() && siteUrlFromRequest &&
             !resolved.baseUrl() && !siteUrls.isVirtualHostUrl( key.params(), servedVirtualHost() ) )
         {
-            final SitemapParams guillotine = key.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE );
+            final SitemapParams headless = key.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS );
             return new ConvertedSitemap(
-                cache.get( new SitemapCache.Key( key.repositoryId(), key.branch(), key.principals(), guillotine ) ), key.params() );
+                cache.get( new SitemapCache.Key( key.repositoryId(), key.branch(), key.principals(), headless ) ), key.params() );
         }
         return sitemap( context, key );
     }

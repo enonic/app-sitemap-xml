@@ -456,7 +456,7 @@ class SitemapCacheTest
         other.cache.get( KEY );
         final SitemapCache.Key project = new SitemapCache.Key( "com.enonic.cms.project", "master", PUBLIC_KEY.principals(),
                                                                new SitemapParams( "", "", List.of(), List.of(),
-                                                                                  SitemapParams.Format.GUILLOTINE ) );
+                                                                                  SitemapParams.Format.HEADLESS ) );
         other.cache.get( project );
         clock.advance( Duration.ofSeconds( 1 ) );
 

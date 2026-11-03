@@ -47,9 +47,9 @@ const URLS = [
 ];
 
 const bean = {
-	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
-	guillotineFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
-	guillotineFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
+	headlessUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
+	headlessFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
+	headlessFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
 	portalBaseUrl: jest.fn((_sitePath: string) => 'https://portal.example.com'),
 };
 
@@ -262,7 +262,7 @@ describe('guillotine extensions', () => {
 					source: result.source
 				});
 				expect(urls).toEqual(URLS);
-				expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 					sitePath: '',
 					siteUrl: '',
 				}), 2147483647);
@@ -308,7 +308,7 @@ describe('guillotine extensions', () => {
 			});
 			// print(urlsetResolverResult);
 			expect(urlsetResolverResult).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 				sitePath: siteContent._path,
 				siteUrl: '',
 			}), 10);
@@ -318,14 +318,14 @@ describe('guillotine extensions', () => {
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			})).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
 
 			expect(urlsetResolver({
 				args: {count: 0},
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			})).toEqual([]);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
 
 			const files = filesResolver({args: {}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source});
 			expect(files).toEqual([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}]);
@@ -335,7 +335,7 @@ describe('guillotine extensions', () => {
 				.toBeNull();
 			expect(fileUrlsetResolver({args: {}, localContext: sitemapResolverResult.localContext, source: files[0]})).toEqual(URLS);
 			expect(fileUrlsetResolver({args: {}, localContext: sitemapResolverResult.localContext, source: files[1]})).toEqual([]);
-			expect(bean.guillotineFile).toHaveBeenLastCalledWith(expect.anything(), 2);
+			expect(bean.headlessFile).toHaveBeenLastCalledWith(expect.anything(), 2);
 		}); // import
 	}); // it
 }); // guillotine extensions

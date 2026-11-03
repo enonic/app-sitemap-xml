@@ -99,7 +99,7 @@ final class SiteUrls
             // the app was removed from the site, or the project
             return false;
         }
-        if ( key.params().format() == SitemapParams.Format.GUILLOTINE )
+        if ( key.params().format() == SitemapParams.Format.HEADLESS )
         {
             // returns paths: no site URL in the key
             return true;

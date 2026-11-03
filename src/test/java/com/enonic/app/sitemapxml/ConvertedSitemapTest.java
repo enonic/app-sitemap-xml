@@ -96,7 +96,7 @@ class ConvertedSitemapTest
     }
 
     @Test
-    void siteUrlLongerThanTheGuillotineSitemapAllowsIsRejected()
+    void siteUrlLongerThanTheHeadlessSitemapAllowsIsRejected()
     {
         final String longest = "https://" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - "https://".length() );
 
@@ -116,8 +116,8 @@ class ConvertedSitemapTest
 
     private ConvertedSitemap convert( final List<SitemapEntry> entries, final int urlsPerFile, final String siteUrl )
     {
-        final SitemapParams guillotine = new SitemapParams( "/mysite", "", CONTENT_TYPES, List.of(), SitemapParams.Format.GUILLOTINE );
-        return new ConvertedSitemap( write( "guillotine", guillotine, entries, urlsPerFile ), xml().withSiteUrl( siteUrl ) );
+        final SitemapParams headless = new SitemapParams( "/mysite", "", CONTENT_TYPES, List.of(), SitemapParams.Format.HEADLESS );
+        return new ConvertedSitemap( write( "headless", headless, entries, urlsPerFile ), xml().withSiteUrl( siteUrl ) );
     }
 
     private static SitemapParams xml()

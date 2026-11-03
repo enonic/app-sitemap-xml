@@ -104,7 +104,7 @@ class SitemapServiceTest
     }
 
     @Test
-    void givesPortalBaseUrlWithoutTrailingSlashForGuillotine()
+    void givesPortalBaseUrlWithoutTrailingSlashForHeadless()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
 
@@ -221,7 +221,7 @@ class SitemapServiceTest
     }
 
     @Test
-    void requestUrlOfVirtualHostMatchingItsHostByPatternIsConvertedFromGuillotine()
+    void requestUrlOfVirtualHostMatchingItsHostByPatternIsConvertedFromHeadless()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
         virtualHosts( "site", "~.*\\.example\\.com" );
@@ -256,7 +256,7 @@ class SitemapServiceTest
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
         virtualHosts( "site", "request.example.com" );
         served = "site";
-        when( cache.get( any() ) ).thenReturn( guillotine( new SitemapEntry( "/a", "portal:site", null ) ) );
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
 
         final SitemapFiles files = inServedRequest( () -> inContext(
             () -> service().files( PARAMS.withSiteUrl( "https://request.example.com:8443/mysite" ), true ) ) );
@@ -293,7 +293,7 @@ class SitemapServiceTest
     void lowerCasesHostOfRequestUrl()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-        when( cache.get( any() ) ).thenReturn( guillotine( new SitemapEntry( "/a", "portal:site", null ) ) );
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
 
         final SitemapFiles files =
             inContext( () -> service().files( PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
@@ -316,10 +316,10 @@ class SitemapServiceTest
     }
 
     @Test
-    void beanAnswers400ForRequestUrlLongerThanAGuillotineSitemapAllows()
+    void beanAnswers400ForRequestUrlLongerThanAHeadlessSitemapAllows()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
-        when( cache.get( any() ) ).thenReturn( guillotine( new SitemapEntry( "/a", "portal:site", null ) ) );
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
         final String siteUrl = "https://example.com/" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH );
         final ScriptValue value = mock( ScriptValue.class );
         when( value.getMap() ).thenReturn( Map.of( "sitePath", "/mysite", "siteUrl", siteUrl, "siteUrlFromRequest", true ) );
@@ -344,9 +344,9 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
-        // an anonymous request with the site URL of the request: converted from the Guillotine sitemap
+        // an anonymous request with the site URL of the request: converted from the headless sitemap
         when( cache.get( any() ) ).thenReturn(
-            SitemapTest.write( temp, new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ), entries,
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ), entries,
                                1, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
@@ -424,33 +424,33 @@ class SitemapServiceTest
     }
 
     @Test
-    void beanAnswersGuillotineQueries()
+    void beanAnswersHeadlessQueries()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
                                                     new SitemapEntry( "/b", "portal:site", null ) );
         when( cache.get( any() ) ).thenReturn(
-            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ),
+            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ),
                                entries, 1, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
-        assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
+        assertThat( inContext( () -> bean.headlessFiles( scriptValue() ) ) ).isEqualTo(
             "[{\"number\":1,\"lastmod\":\"2024-06-01T00:00:00Z\"},{\"number\":2,\"lastmod\":\"2024-06-01T00:00:00Z\"}]" );
-        assertThat( inContext( () -> bean.guillotineUrlset( scriptValue(), 1 ) ) ).isEqualTo(
+        assertThat( inContext( () -> bean.headlessUrlset( scriptValue(), 1 ) ) ).isEqualTo(
             "[{\"path\":\"/a\",\"lastmod\":\"2024-01-01T00:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
-        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 2 ) ) ).isEqualTo(
+        assertThat( inContext( () -> bean.headlessFile( scriptValue(), 2 ) ) ).isEqualTo(
             "[{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
-        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 3 ) ) ).isNull();
+        assertThat( inContext( () -> bean.headlessFile( scriptValue(), 3 ) ) ).isNull();
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         verify( cache, atLeastOnce() ).get( key.capture() );
         assertThat( key.getValue().isPublic() ).isTrue();
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
-        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.GUILLOTINE );
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.HEADLESS );
         assertThat( key.getValue().params().siteUrl() ).isEmpty();
     }
 
     /**
-     * The files of {@code sitemap.xml} for an anonymous request: a sitemap of their own, or converted from the Guillotine sitemap.
+     * The files of {@code sitemap.xml} for an anonymous request: a sitemap of their own, or converted from the headless sitemap.
      *
      * @return the key of the sitemap got from the cache
      */
@@ -462,7 +462,7 @@ class SitemapServiceTest
         verify( cache ).get( key.capture() );
         assertThat( files ).isInstanceOf( converted ? ConvertedSitemap.class : Sitemap.class );
         assertThat( key.getValue().params().format() ).isEqualTo(
-            converted ? SitemapParams.Format.GUILLOTINE : SitemapParams.Format.XML );
+            converted ? SitemapParams.Format.HEADLESS : SitemapParams.Format.XML );
         if ( converted )
         {
             assertThat( key.getValue().params().siteUrl() ).isEmpty();
@@ -475,10 +475,10 @@ class SitemapServiceTest
         return new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService );
     }
 
-    private Sitemap guillotine( final SitemapEntry... entries )
+    private Sitemap headless( final SitemapEntry... entries )
     {
         return SitemapTest.write( temp.resolve( "g" + System.nanoTime() ),
-                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ), List.of( entries ),
+                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ), List.of( entries ),
                                   10, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES );
     }
 

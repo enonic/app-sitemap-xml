@@ -88,7 +88,7 @@ export const urlset = (_graphQL: GraphQL): Resolver<
 > => (env) => {
 	const count = env.args.count === undefined || env.args.count === null ? 2147483647 : Math.max(0, env.args.count);
 	return withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
-		(bean, params) => JSON.parse(bean.guillotineUrlset(params, count)) as SitemapUrl[]);
+		(bean, params) => JSON.parse(bean.headlessUrlset(params, count)) as SitemapUrl[]);
 };
 
 export const files = (_graphQL: GraphQL): Resolver<
@@ -96,7 +96,7 @@ export const files = (_graphQL: GraphQL): Resolver<
 	SiteMapResolverData,
 	SitemapFile[]
 > => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
-	(bean, params) => JSON.parse(bean.guillotineFiles(params)) as SitemapFile[]);
+	(bean, params) => JSON.parse(bean.headlessFiles(params)) as SitemapFile[]);
 
 export const file = (_graphQL: GraphQL): Resolver<
 	{
@@ -105,7 +105,7 @@ export const file = (_graphQL: GraphQL): Resolver<
 	SiteMapResolverData,
 	SitemapFile | null
 > => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
-	(bean, params) => (JSON.parse(bean.guillotineFiles(params)) as SitemapFile[])
+	(bean, params) => (JSON.parse(bean.headlessFiles(params)) as SitemapFile[])
 		.filter(({number}) => number === env.args.number)[0] || null);
 
 export const fileUrlset = (_graphQL: GraphQL): Resolver<
@@ -113,4 +113,4 @@ export const fileUrlset = (_graphQL: GraphQL): Resolver<
 	SitemapFile,
 	SitemapUrl[]
 > => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
-	(bean, params) => JSON.parse(bean.guillotineFile(params, env.source.number) || '[]') as SitemapUrl[]);
+	(bean, params) => JSON.parse(bean.headlessFile(params, env.source.number) || '[]') as SitemapUrl[]);

@@ -70,19 +70,19 @@ public final class SitemapBean
                         sitemap -> sitemap.fileLastModified( number ) );
     }
 
-    public String guillotineFiles( final ScriptValue params )
+    public String headlessFiles( final ScriptValue params )
     {
-        return guillotineSitemap( params ).filesJson();
+        return headlessSitemap( params ).filesJson();
     }
 
-    public String guillotineUrlset( final ScriptValue params, final int count )
+    public String headlessUrlset( final ScriptValue params, final int count )
     {
-        return guillotineSitemap( params ).urlsetJson( count );
+        return headlessSitemap( params ).urlsetJson( count );
     }
 
-    public @Nullable String guillotineFile( final ScriptValue params, final int number )
+    public @Nullable String headlessFile( final ScriptValue params, final int number )
     {
-        return guillotineSitemap( params ).fileUrlsetJson( number ).orElse( null );
+        return headlessSitemap( params ).fileUrlsetJson( number ).orElse( null );
     }
 
     public @Nullable String portalBaseUrl( final String sitePath )
@@ -90,10 +90,10 @@ public final class SitemapBean
         return Objects.requireNonNull( service, "Bean not initialized" ).portalBaseUrl( sitePath ).orElse( null );
     }
 
-    private Sitemap guillotineSitemap( final ScriptValue params )
+    private Sitemap headlessSitemap( final ScriptValue params )
     {
         return Objects.requireNonNull( service, "Bean not initialized" )
-            .sitemap( toParams( params.getMap() ).withSiteUrl( "" ).withFormat( SitemapParams.Format.GUILLOTINE ), false );
+            .sitemap( toParams( params.getMap() ).withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS ), false );
     }
 
     /**

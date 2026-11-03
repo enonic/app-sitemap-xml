@@ -33,8 +33,8 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_END;
 import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
 
 /**
- * {@code sitemap.xml} of a public site whose URLs are taken from the request, converted on the fly from the site's Guillotine sitemap:
- * each path is put after the base URL of the request. The Guillotine sitemap is the same for every host and generated again without a
+ * {@code sitemap.xml} of a public site whose URLs are taken from the request, converted on the fly from the site's headless sitemap:
+ * each path is put after the base URL of the request. The headless sitemap is the same for every host and generated again without a
  * request, so a request never waits for a generation of its own host's sitemap. The files are written as they are read, and compressed
  * as they are written when gzip is asked for; their size is not known in advance. Its files are split so that the XML stays within the
  * limits with a base URL of up to {@link Sitemap#MAX_BASE_URL_LENGTH} characters.
@@ -51,7 +51,7 @@ final class ConvertedSitemap
     private final String baseUrl;
 
     /**
-     * @param source the Guillotine sitemap of the site
+     * @param source the headless sitemap of the site
      * @param params the params of {@code sitemap.xml}, with the site URL of the request
      * @throws InvalidSiteUrlException when the site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH}
      */
@@ -203,7 +203,7 @@ final class ConvertedSitemap
     }
 
     /**
-     * The XML of one file, converted line by line from its Guillotine entries.
+     * The XML of one file, converted line by line from its headless entries.
      */
     private ByteSource urlset( final int number )
     {
@@ -254,7 +254,7 @@ final class ConvertedSitemap
     }
 
     /**
-     * The {@code <url>} of a JSON line of the Guillotine sitemap, read with the streaming parser.
+     * The {@code <url>} of a JSON line of the headless sitemap, read with the streaming parser.
      */
     private String url( final SitemapRenderer renderer, final String line )
         throws IOException

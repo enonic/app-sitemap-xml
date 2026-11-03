@@ -67,7 +67,7 @@ final class SitemapRenderer
     }
 
     /**
-     * The path of the entry relative to the site, percent-encoded; for Guillotine also safe in XML as it is.
+     * The path of the entry relative to the site, percent-encoded; for the headless sitemap also safe in XML as it is.
      */
     String path( final SitemapEntry entry )
     {
@@ -77,7 +77,7 @@ final class SitemapRenderer
             if ( !segment.isEmpty() )
             {
                 path.append( '/' );
-                encodePathSegment( path, segment, params.format() == SitemapParams.Format.GUILLOTINE );
+                encodePathSegment( path, segment, params.format() == SitemapParams.Format.HEADLESS );
             }
         }
         return path.isEmpty() ? "/" : path.toString();
@@ -105,7 +105,8 @@ final class SitemapRenderer
     }
 
     /**
-     * Writes the path-based entry served through Guillotine. Change frequency and priority are left out when they have default values.
+     * Writes the path-based entry of the headless sitemap, served through Guillotine. Change frequency and priority are left out
+     * when they have default values.
      */
     void urlsetEntry( final JsonGenerator json, final SitemapEntry entry )
         throws IOException

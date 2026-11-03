@@ -40,16 +40,16 @@ class SiteUrlsTest
     private VirtualHostService virtualHostService;
 
     @Test
-    void guillotineSitemapIsCurrentWhileTheAppIsConfiguredAsItHasNoSiteUrl()
+    void headlessSitemapIsCurrentWhileTheAppIsConfiguredAsItHasNoSiteUrl()
     {
-        final SitemapCache.Key guillotine =
+        final SitemapCache.Key headless =
             new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone", "user:system:anonymous" ),
-                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.GUILLOTINE ) );
+                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ) );
         scope( "https://www.example.com", "https://base.example.com" );
-        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( guillotine ) ).isTrue();
+        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( headless ) ).isTrue();
 
         scope( false, null, "https://base.example.com" );
-        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( guillotine ) ).isFalse();
+        assertThat( new SiteUrls( portalUrlService, virtualHostService ).isCurrent( headless ) ).isFalse();
     }
 
     @Test

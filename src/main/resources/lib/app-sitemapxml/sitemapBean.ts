@@ -36,9 +36,9 @@ export interface SitemapBean {
 	rootGzip(params: ScriptValue): SitemapResponse
 	rootEncoded(params: ScriptValue): SitemapResponse
 	fileGzip(params: ScriptValue, number: number): SitemapResponse
-	guillotineFiles(params: ScriptValue): string
-	guillotineUrlset(params: ScriptValue, count: number): string
-	guillotineFile(params: ScriptValue, number: number): string | null
+	headlessFiles(params: ScriptValue): string
+	headlessUrlset(params: ScriptValue, count: number): string
+	headlessFile(params: ScriptValue, number: number): string | null
 	portalBaseUrl(sitePath: string): string | null
 }
 

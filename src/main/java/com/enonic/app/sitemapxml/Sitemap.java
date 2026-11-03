@@ -69,14 +69,14 @@ public final class Sitemap
     static final int MAX_LOC_LENGTH = 2_048;
 
     /**
-     * The longest base URL a Guillotine client is assumed to put in front of the paths. Paths longer than the rest of
-     * {@link #MAX_LOC_LENGTH} are left out of a Guillotine sitemap.
+     * The longest base URL a headless client is assumed to put in front of the paths. Paths longer than the rest of
+     * {@link #MAX_LOC_LENGTH} are left out of a headless sitemap.
      */
     static final int MAX_BASE_URL_LENGTH = 360;
 
     /**
-     * The bytes a Guillotine client is assumed to write for a URL besides its path, and for each entry of its sitemap index: a
-     * Guillotine sitemap is split as if each URL took its percent-encoded path plus this many bytes. A round number: what Next.js
+     * The bytes a headless client is assumed to write for a URL besides its path, and for each entry of its sitemap index: a
+     * headless sitemap is split as if each URL took its percent-encoded path plus this many bytes. A round number: what Next.js
      * writes for a sitemap entry besides the URL ({@code <url>}, {@code <loc>}, {@code <lastmod>}, {@code <changefreq>},
      * {@code <priority>}, each on its own line, 133 bytes with a full time) leaves room for a base URL of {@link #MAX_BASE_URL_LENGTH}
      * characters.
@@ -511,7 +511,7 @@ public final class Sitemap
     }
 
     /**
-     * The JSON lines of the Guillotine entries of a file, uncompressed.
+     * The JSON lines of the headless entries of a file, uncompressed.
      */
     ByteSource urlset( final int number )
     {
@@ -519,7 +519,7 @@ public final class Sitemap
     }
 
     /**
-     * The digest of the content of a file: its XML, or the JSON lines of a Guillotine sitemap.
+     * The digest of the content of a file: its XML, or the JSON lines of a headless sitemap.
      */
     String fileDigest( final int number )
     {
@@ -752,7 +752,7 @@ public final class Sitemap
         {
             try
             {
-                // for Guillotine, the path the client puts after its base URL
+                // for the headless sitemap, the path the client puts after its base URL
                 final String loc = xml() ? renderer.loc( entry ) : renderer.path( entry );
                 if ( loc.length() > ( xml() ? MAX_LOC_LENGTH : MAX_LOC_LENGTH - MAX_BASE_URL_LENGTH ) )
                 {
@@ -790,8 +790,8 @@ public final class Sitemap
 
         /**
          * Finishes the files. A file keeps the modification time of the same file of the previous sitemap when its content is the same,
-         * and gets the given time otherwise: crawlers and Guillotine clients fetch a file again when its modification time changes. The
-         * XML files hold dates, the Guillotine entries full modification times.
+         * and gets the given time otherwise: crawlers and headless clients fetch a file again when its modification time changes. The
+         * XML files hold dates, the headless entries full modification times.
          *
          * @param previous the sitemap this one replaces, if any
          * @param now      the modification time of the files that changed
