@@ -143,7 +143,7 @@ final class RepositorySitemapStore
     {
         return call( () -> {
             final Node node = nodeService.getByPath( path( id ) );
-            return node == null ? null : toStored( node );
+            return node == null ? null : readable( node );
         } );
     }
 
@@ -372,10 +372,33 @@ final class RepositorySitemapStore
             for ( final Node node : nodeService.getByIds(
                 nodeService.findByQuery( query.size( NodeQuery.ALL_RESULTS_SIZE_FLAG ).build() ).getNodeIds() ) )
             {
-                stored.add( toStored( node ) );
+                final Stored read = readable( node );
+                if ( read != null )
+                {
+                    stored.add( read );
+                }
             }
             return stored;
         } );
+    }
+
+    /**
+     * The stored sitemap of the node, or null when it can't be read, as it was stored by an earlier version of the app: it is then
+     * deleted, as it is no sitemap's anymore, and would otherwise fail every pass that reads it.
+     */
+    private @Nullable Stored readable( final Node node )
+    {
+        try
+        {
+            return toStored( node );
+        }
+        catch ( RuntimeException e )
+        {
+            LOG.warn( "Deleting stored sitemap {} that can't be read: {}", node.name(), e.toString() );
+            LOG.debug( "Stored sitemap {} can't be read", node.name(), e );
+            nodeService.delete( DeleteNodeParams.create().nodeId( node.id() ).refresh( RefreshMode.ALL ).build() );
+            return null;
+        }
     }
 
     private Stored toStored( final Node node )

@@ -24,6 +24,7 @@ import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
 import com.enonic.xp.node.Attributes;
 import com.enonic.xp.node.CreateNodeParams;
+import com.enonic.xp.node.DeleteNodeParams;
 import com.enonic.xp.node.FindNodesByQueryResult;
 import com.enonic.xp.node.Node;
 import com.enonic.xp.node.NodeAlreadyExistAtPathException;
@@ -378,6 +379,30 @@ class RepositorySitemapStoreTest
         assertThat( range.getFieldName() ).isEqualTo( "generatedAt" );
         assertThat( range.getTo().asInstant() ).isEqualTo( NOW );
         assertThat( range.isIncludeUpper() ).isFalse();
+    }
+
+    @Test
+    void sitemapStoredByAnEarlierVersionIsDeletedInsteadOfFailingTheQuery()
+    {
+        final Node current = node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) );
+        final PropertyTree data = new PropertyTree();
+        SitemapNodeData.writeKey( data.getRoot(), KEY );
+        data.getRoot().getSet( "key" ).setString( "format", "guillotine" );
+        final Node earlier = Node.create()
+            .id( NodeId.from( "earlier" ) )
+            .name( "earlier" )
+            .parentPath( NodePath.ROOT )
+            .data( data )
+            .nodeVersionId( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000002" ) )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( FindNodesByQueryResult.create().build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.from( earlier, current ) );
+
+        assertThat( store().find( KEY.repositoryId(), null ) ).extracting( SitemapStore.Stored::key ).containsExactly( KEY );
+
+        final ArgumentCaptor<DeleteNodeParams> deleted = ArgumentCaptor.forClass( DeleteNodeParams.class );
+        verify( nodeService ).delete( deleted.capture() );
+        assertThat( deleted.getValue().getNodeId() ).isEqualTo( NodeId.from( "earlier" ) );
     }
 
     @Test
