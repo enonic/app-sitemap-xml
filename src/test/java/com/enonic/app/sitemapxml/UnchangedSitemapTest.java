@@ -47,11 +47,17 @@ class UnchangedSitemapTest
 
     private SitemapCache cache;
 
+    private Duration waitBeforeRead = Duration.ZERO;
+
     @BeforeEach
     void setUp()
     {
         scheduler = Executors.newSingleThreadScheduledExecutor();
-        cache = new SitemapCache( store, key -> contents, ( key, changedAt ) -> {
+        cache = new SitemapCache( store, key -> {
+            // as a generation waiting for another one of the project
+            clock.advance( waitBeforeRead );
+            return contents;
+        }, ( key, changedAt ) -> {
         }, scheduler, clock, T0.minusSeconds( 3600 ), Duration.ZERO, Duration.ofMinutes( 1 ), temp.resolve( "cache" ), key -> true );
         for ( int i = 0; i < 3; i++ )
         {
@@ -129,6 +135,37 @@ class UnchangedSitemapTest
         generate();
         contents.nextChange = null;
 
+        generate();
+        assertThat( contents.calls ).containsExactly( "write" );
+    }
+
+    @Test
+    void sitemapReadWholeWithTheSameFilesKeepsTheVersionAndMovesTheCutoff()
+    {
+        generate();
+        final String version = store.load( KEY.id() ).version();
+
+        // changed the same day: the XML has dates only, so the files stay the same
+        contents.touch( "/item-1" );
+        generate();
+        assertThat( contents.calls ).containsExactly( "count", "write" );
+        assertThat( store.load( KEY.id() ).version() ).isEqualTo( version );
+
+        // the change is before the generation that found the files unchanged
+        generate();
+        assertThat( contents.calls ).containsExactly( "count" );
+        assertThat( store.load( KEY.id() ).version() ).isEqualTo( version );
+    }
+
+    @Test
+    void sitemapIsReadWholeWhenScheduledContentGoesOnlineWhileTheGenerationWaits()
+    {
+        contents.nextChange = T0.plusSeconds( 35 );
+        generate();
+        contents.nextChange = null;
+
+        // claimed before the scheduled change, read after it
+        waitBeforeRead = Duration.ofSeconds( 10 );
         generate();
         assertThat( contents.calls ).containsExactly( "write" );
     }

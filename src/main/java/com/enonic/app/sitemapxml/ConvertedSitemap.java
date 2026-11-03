@@ -37,7 +37,7 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
  * each path is put after the base URL of the request. The headless sitemap is the same for every host and generated again without a
  * request, so a request never waits for a generation of its own host's sitemap. The files are written as they are read, and compressed
  * as they are written when gzip is asked for; their size is not known in advance. Its files are split so that the XML stays within the
- * limits with a base URL of up to {@link Sitemap#MAX_BASE_URL_LENGTH} characters.
+ * limits with a base URL of up to {@link Sitemap#MAX_BASE_URL_LENGTH} characters and bytes in the XML.
  */
 final class ConvertedSitemap
     implements SitemapFiles
@@ -53,13 +53,14 @@ final class ConvertedSitemap
     /**
      * @param source the headless sitemap of the site
      * @param params the params of {@code sitemap.xml}, with the site URL of the request
-     * @throws InvalidSiteUrlException when the site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH}
+     * @throws InvalidSiteUrlException when the site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH} characters, or takes more
+     *                                 bytes than that in the XML (escaped, in UTF-8): the files of the source leave room for that much
      */
     ConvertedSitemap( final Sitemap source, final SitemapParams params )
     {
         final String siteUrl = params.siteUrl();
         this.baseUrl = siteUrl.endsWith( "/" ) ? siteUrl.substring( 0, siteUrl.length() - 1 ) : siteUrl;
-        if ( baseUrl.length() > Sitemap.MAX_BASE_URL_LENGTH )
+        if ( baseUrl.length() > Sitemap.MAX_BASE_URL_LENGTH || SitemapRenderer.xmlTextLength( baseUrl ) > Sitemap.MAX_BASE_URL_LENGTH )
         {
             throw new InvalidSiteUrlException( siteUrl );
         }

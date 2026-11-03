@@ -102,6 +102,15 @@ class ConvertedSitemapTest
 
         assertThat( convert( entries( 1 ), 10, longest + "/" ).root() ).isNotNull();
         assertThatThrownBy( () -> convert( entries( 1 ), 10, longest + "a" ) ).isInstanceOf( InvalidSiteUrlException.class );
+
+        // as many characters, but more bytes in the XML: escaped, or not ASCII
+        final String start = "https://example.com/";
+        final String fits = start + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - start.length() );
+        final String escaped = start + "&" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - start.length() - 1 );
+        final String nonAscii = start + "æ" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - start.length() - 1 );
+        assertThat( convert( entries( 1 ), 10, fits ).root() ).isNotNull();
+        assertThatThrownBy( () -> convert( entries( 1 ), 10, escaped ) ).isInstanceOf( InvalidSiteUrlException.class );
+        assertThatThrownBy( () -> convert( entries( 1 ), 10, nonAscii ) ).isInstanceOf( InvalidSiteUrlException.class );
     }
 
     private List<SitemapEntry> entries( final int count )

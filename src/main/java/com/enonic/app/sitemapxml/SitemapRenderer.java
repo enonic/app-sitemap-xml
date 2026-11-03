@@ -180,6 +180,25 @@ final class SitemapRenderer
         return siteUrl.endsWith( "/" ) ? siteUrl.substring( 0, siteUrl.length() - 1 ) : siteUrl;
     }
 
+    /**
+     * The bytes the given text takes in the XML, escaped and encoded in UTF-8.
+     */
+    static long xmlTextLength( final String text )
+    {
+        final StringWriter escaped = new StringWriter();
+        try
+        {
+            final XMLStreamWriter writer = XML_OUTPUT.createXMLStreamWriter( escaped );
+            writer.writeCharacters( text );
+            writer.flush();
+        }
+        catch ( XMLStreamException e )
+        {
+            throw new IllegalStateException( e );
+        }
+        return utf8Length( escaped.getBuffer() );
+    }
+
     static long utf8Length( final CharSequence value )
     {
         long bytes = 0;

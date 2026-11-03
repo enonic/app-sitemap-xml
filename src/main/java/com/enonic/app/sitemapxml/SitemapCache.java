@@ -884,10 +884,13 @@ public final class SitemapCache
                                 final @Nullable ProgressReporter progress )
     {
         final Sitemap before = previous == null ? null : previous.sitemap();
-        final boolean scheduled = previous != null && previous.validUntil() != null && !startedAt.isBefore( previous.validUntil() );
-        if ( source.counts() && before != null && before.count() >= 0 && before.cutoff() != null && !scheduled )
+        // now, not when the generation was claimed: it may have waited for another generation of the project meanwhile
+        final boolean scheduled =
+            previous != null && previous.validUntil() != null && !clock.instant().isBefore( previous.validUntil() );
+        final Instant since = before == null ? null : cutoff( before, previous );
+        if ( source.counts() && before != null && before.count() >= 0 && since != null && !scheduled )
         {
-            final SitemapQuery.Count count = source.count( before.cutoff() );
+            final SitemapQuery.Count count = source.count( since );
             if ( count.changed() == 0 && count.count() == before.count() )
             {
                 LOG.debug( "Sitemap {}: no contents changed", key );
@@ -905,18 +908,38 @@ public final class SitemapCache
                               validUntil );
     }
 
+    /**
+     * Since when contents count as changed for the stored sitemap: a little before its latest generation started, also one that found
+     * it unchanged and only marked it checked. That generation either read every content, or found none changed since the cutoff
+     * before it.
+     */
+    private static @Nullable Instant cutoff( final Sitemap sitemap, final SitemapStore.Stored stored )
+    {
+        final Instant cutoff = sitemap.cutoff();
+        final Instant checked = stored.startedAt() == null ? null : stored.startedAt().minus( CUTOFF_MARGIN );
+        return cutoff == null || checked != null && checked.isAfter( cutoff ) ? checked : cutoff;
+    }
+
     private record Generated(Sitemap sitemap, @Nullable Instant validUntil)
     {
     }
 
     /**
-     * Whether the generated sitemap is the stored one: the same files, unchanged until the same time.
+     * Whether the generated sitemap is the stored one: the same files and count of contents read, unchanged until the same time. The
+     * cutoff is left out: marking the stored one checked moves it to the generation's start, see {@link #cutoff}.
      */
     private static boolean unchanged( final SitemapStore.@Nullable Stored previous, final Sitemap generated,
                                       final @Nullable Instant validUntil )
     {
-        return previous != null && previous.sitemap() != null &&
-            Objects.equals( previous.validUntil(), validUntil ) && previous.sitemap().store().equals( generated.store() );
+        return previous != null && previous.sitemap() != null && Objects.equals( previous.validUntil(), validUntil ) &&
+            withoutCutoff( previous.sitemap() ).equals( withoutCutoff( generated ) );
+    }
+
+    private static ObjectNode withoutCutoff( final Sitemap sitemap )
+    {
+        final ObjectNode description = sitemap.store();
+        description.remove( "cutoff" );
+        return description;
     }
 
     private static SitemapSink sink( final Sitemap.Builder builder, final @Nullable ProgressReporter progress )
