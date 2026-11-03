@@ -888,9 +888,7 @@ public final class SitemapCache
         final boolean scheduled =
             previous != null && previous.validUntil() != null && !clock.instant().isBefore( previous.validUntil() );
         final Instant since = before == null ? null : cutoff( before, previous );
-        // a headless sitemap stored by an earlier version, without the sizes of the converted files, is read again once
-        final boolean complete = before != null && ( key.params().format() != SitemapParams.Format.HEADLESS || before.hasXmlSizes() );
-        if ( source.counts() && before != null && before.count() >= 0 && since != null && !scheduled && complete )
+        if ( source.counts() && before != null && before.count() >= 0 && since != null && !scheduled )
         {
             final SitemapQuery.Count count = source.count( since );
             if ( count.changed() == 0 && count.count() == before.count() )

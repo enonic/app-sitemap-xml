@@ -175,30 +175,6 @@ final class ConvertedSitemap
         final List<@Nullable Instant> lastModified = source.lastModified();
         return new ByteSource()
         {
-            private volatile @Nullable Long size;
-
-            /**
-             * The index is written from what is known without reading the source, so its size is measured once.
-             */
-            @Override
-            public com.google.common.base.Optional<Long> sizeIfKnown()
-            {
-                Long known = size;
-                if ( known == null )
-                {
-                    final SitemapRenderer renderer = new SitemapRenderer( params );
-                    long bytes = SitemapRenderer.utf8Length( INDEX_START ) + SitemapRenderer.utf8Length( INDEX_END );
-                    for ( int number = 1; number <= lastModified.size(); number++ )
-                    {
-                        bytes += SitemapRenderer.utf8Length(
-                            renderer.indexEntry( renderer.fileUrl( "sitemap-" + number + extension ), lastModified.get( number - 1 ) ) );
-                    }
-                    known = bytes;
-                    size = known;
-                }
-                return com.google.common.base.Optional.of( known );
-            }
-
             @Override
             public InputStream openStream()
             {
@@ -234,16 +210,6 @@ final class ConvertedSitemap
     {
         return new ByteSource()
         {
-            /**
-             * Known from the source without reading it: each URL takes what the source measured plus the base URL, or the site URL.
-             */
-            @Override
-            public com.google.common.base.Optional<Long> sizeIfKnown()
-            {
-                return com.google.common.base.Optional.fromJavaUtil(
-                    source.xmlSize( number, SitemapRenderer.xmlTextLength( baseUrl ), SitemapRenderer.xmlTextLength( params.siteUrl() ) ) );
-            }
-
             @Override
             public InputStream openStream()
                 throws IOException
