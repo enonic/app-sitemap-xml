@@ -27,12 +27,12 @@ import {
 	describe,
 	expect,
 	test as it,
+	jest,
 } from '@jest/globals';
 // @ts-expect-error No types
 import {print} from 'q-i';
 import {mockLibXpContent} from '../mocks/mockLibXpContent';
 import {mockLibXpContext} from '../mocks/mockLibXpContext';
-import {mockLibXpNode} from '../mocks/mockLibXpNode';
 
 
 // @ts-ignore TS2339: Property 'log' does not exist on type 'typeof globalThis'.
@@ -43,8 +43,18 @@ globalThis.log = {
 	debug: console.debug,
 }
 
+const URLS = [
+	{changefreq: 'hourly', path: '/', priority: '1.0'},
+	{lastmod: '2021-01-01T00:00:00Z', path: '/folderContentPath'},
+];
+
+const bean = {
+	headlessUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
+};
+
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
 globalThis.__ = {
+	newBean: () => bean,
 	toScriptValue: (value: unknown) => value
 }
 
@@ -90,6 +100,17 @@ const siteConfig: SitemapXmlSiteConfig = {
 	overrideDomain: 'https://enonic.com',
 	siteMap: []
 }
+
+const projectConfig: SitemapXmlSiteConfig = {
+	...siteConfig,
+	overrideDomain: 'https://project.example.com'
+};
+
+jest.mock('/lib/xp/project', () => ({
+	get: jest.fn().mockReturnValue({
+		siteConfig: [{applicationKey: 'com.enonic.app.sitemapxml', config: projectConfig}]
+	})
+}), {virtual: true});
 
 const siteContent: Site<SitemapXmlSiteConfig> = {
 	_id: 'siteId',
@@ -138,17 +159,11 @@ mockLibXpContent({
 	siteContent
 });
 mockLibXpContext();
-mockLibXpNode({
-	nodes: {
-		[siteContent._path]: siteContent,
-		[folderContent._path]: folderContent,
-	}
-});
 
 
 describe('guillotine extensions', () => {
 	it("does it's thing", () => {
-		import('/guillotine/guillotine').then(({extensions}) => {
+		return import('/guillotine/guillotine').then(async ({extensions}) => {
 			const res = extensions(graphQL);
 			// print(JSON.parse(JSON.stringify(res)));
 			expect(JSON.parse(JSON.stringify(res))).toEqual({
@@ -247,19 +262,55 @@ describe('guillotine extensions', () => {
 				source: sitemapResolverResult.source,
 			});
 			// print(urlsetResolverResult);
-			expect(urlsetResolverResult).toEqual([
-				{
-					changefreq: 'hourly',
-					lastmod: undefined,
-					path: '/',
-					priority: '1.0',
-				},{
-					changefreq: undefined,
-					lastmod: undefined,
-					path: '/folderContentPath',
-					priority: undefined,
-				}
-			]);
+			expect(urlsetResolverResult).toEqual(URLS);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				sitePath: '/sitePath',
+				siteUrl: 'https://enonic.com',
+				maxItems: 1000,
+			}), 10);
+			expect(urlsetResolver({args: {count: 0}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source})).toEqual([]);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
+			const {run} = await import('/lib/xp/context');
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+
+			urlsetResolver({
+				args: {},
+				localContext: sitemapResolverResult.localContext,
+				source: sitemapResolverResult.source,
+			});
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
+
+			urlsetResolver({
+				args: {},
+				localContext: {...sitemapResolverResult.localContext, branch: 'draft'},
+				source: sitemapResolverResult.source,
+			});
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'draft', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+
+			expect(sitemapResolver({
+				args: {},
+				localContext: {branch: 'master', project: 'project', siteKey: '/missing'},
+				source: null
+			})).toBeNull();
+
+			const projectResult = sitemapResolver({
+				args: {},
+				localContext: {branch: 'master', project: 'project'},
+				source: null
+			});
+			expect(projectResult.source).toEqual({baseUrl: projectConfig.overrideDomain});
+			expect(jest.mocked(run)).toHaveBeenCalledWith({principals: ['role:system.admin']}, expect.any(Function));
+			expect(projectResult.localContext.siteJson).toBe('null');
+			expect(projectResult.localContext.siteConfigJson).toBe(JSON.stringify(projectConfig));
+			expect(urlsetResolver({args: {}, localContext: projectResult.localContext, source: projectResult.source})).toEqual(URLS);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				sitePath: '',
+				siteUrl: projectConfig.overrideDomain,
+			}), 1000);
 		}); // import
 	}); // it
 }); // guillotine extensions

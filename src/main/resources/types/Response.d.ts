@@ -19,7 +19,7 @@ export declare interface PageContributions {
 
 export declare interface Response {
 	applyFilters?: boolean
-	body: string|null // Body of the response as string. Null if the response content-type is not of type text.
+	body: string|object|null // Body of the response: a string, a binary (Java ByteSource) or null.
 	bodyStream?: unknown
 	contentType?: string
 	cookies?: Record<string,string|ComplexCookie>

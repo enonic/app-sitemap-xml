@@ -1,0 +1,130 @@
+package com.enonic.app.sitemapxml;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import com.google.common.io.ByteSource;
+
+import com.enonic.xp.content.ContentService;
+import com.enonic.xp.project.ProjectService;
+import com.enonic.xp.script.ScriptValue;
+import com.enonic.xp.script.bean.BeanContext;
+import com.enonic.xp.script.bean.ScriptBean;
+import com.enonic.xp.web.vhost.VirtualHostService;
+
+public final class SitemapBean
+    implements ScriptBean
+{
+    private SitemapService service;
+
+    @Override
+    public void initialize( final BeanContext context )
+    {
+        final ContentService contentService = context.getService( ContentService.class ).get();
+        this.service = new SitemapService( contentService, context.getService( SitemapCache.class ).get(),
+                                           new SiteUrls( contentService, context.getService( ProjectService.class ).get(),
+                                                         context.getService( VirtualHostService.class ).get() ) );
+    }
+
+    public SitemapResponse root( final ScriptValue params )
+    {
+        return respond( params, sitemap -> Optional.of( sitemap.root() ), sitemap -> Optional.ofNullable( sitemap.rootETag( false ) ) );
+    }
+
+    public SitemapResponse file( final ScriptValue params, final int number )
+    {
+        return respond( params, sitemap -> sitemap.file( number ), sitemap -> sitemap.fileETag( number, false ) );
+    }
+
+    public SitemapResponse rootGzip( final ScriptValue params )
+    {
+        return respond( params, sitemap -> Optional.of( sitemap.rootGzip() ), sitemap -> Optional.ofNullable( sitemap.rootGzipETag() ) );
+    }
+
+    public SitemapResponse rootEncoded( final ScriptValue params )
+    {
+        return respond( params, sitemap -> Optional.of( sitemap.rootEncoded() ),
+                        sitemap -> Optional.ofNullable( sitemap.rootETag( true ) ) );
+    }
+
+    public SitemapResponse fileGzip( final ScriptValue params, final int number )
+    {
+        return respond( params, sitemap -> sitemap.fileGzip( number ), sitemap -> sitemap.fileETag( number, true ) );
+    }
+
+    public String headlessUrlset( final ScriptValue params, final int count )
+    {
+        return Objects.requireNonNull( service, "Bean not initialized" ).headless( toParams( params.getMap() ) ).urlsetJson( count );
+    }
+
+    private SitemapResponse respond( final ScriptValue params, final Function<SitemapFiles, Optional<ByteSource>> body,
+                                     final Function<SitemapFiles, Optional<String>> etag )
+    {
+        try
+        {
+            final Map<String, Object> map = params.getMap();
+            final SitemapFiles sitemap = Objects.requireNonNull( service, "Bean not initialized" )
+                .files( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
+            final Optional<ByteSource> content = body.apply( sitemap );
+            if ( content.isEmpty() )
+            {
+                return SitemapResponse.notFound();
+            }
+            final String tag = etag.apply( sitemap ).orElse( null );
+            if ( tag != null && tag.equals( map.get( "ifNoneMatch" ) ) )
+            {
+                return SitemapResponse.notModified( tag );
+            }
+            return SitemapResponse.ok( content.get(), tag );
+        }
+        catch ( SitemapBusyException e )
+        {
+            return SitemapResponse.tooManyRequests();
+        }
+        catch ( InvalidSiteUrlException e )
+        {
+            return SitemapResponse.badRequest();
+        }
+    }
+
+    static SitemapParams toParams( final Map<String, Object> map )
+    {
+        final List<ContentTypeSetting> contentTypes = list( map.get( "contentTypes" ) ).stream()
+            .filter( Map.class::isInstance )
+            .map( setting -> (Map<?, ?>) setting )
+            .map( setting -> new ContentTypeSetting( string( setting.get( "contentType" ) ), string( setting.get( "changefreq" ) ),
+                                                     string( setting.get( "priority" ) ) ) )
+            .collect( Collectors.toList() );
+        final List<String> ignorePatterns = list( map.get( "ignorePatterns" ) ).stream().map( SitemapBean::string ).collect( Collectors.toList() );
+
+        return new SitemapParams( string( map.get( "sitePath" ) ), string( map.get( "siteUrl" ) ), contentTypes, ignorePatterns,
+                                  integer( map.get( "maxItems" ) ) );
+    }
+
+    private static List<?> list( final Object value )
+    {
+        return value instanceof List ? (List<?>) value : List.of();
+    }
+
+    private static String string( final Object value )
+    {
+        return value == null ? "" : value.toString();
+    }
+
+    private static int integer( final Object value )
+    {
+        if ( value instanceof Number )
+        {
+            return ( (Number) value ).intValue();
+        }
+        if ( value instanceof String )
+        {
+            return Integer.parseInt( ( (String) value ).trim() );
+        }
+        throw new IllegalArgumentException( "Not a number: " + value );
+    }
+}

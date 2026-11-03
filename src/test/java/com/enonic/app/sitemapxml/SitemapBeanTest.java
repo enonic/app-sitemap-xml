@@ -1,0 +1,347 @@
+package com.enonic.app.sitemapxml;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import com.enonic.xp.content.Content;
+import com.enonic.xp.content.ContentPath;
+import com.enonic.xp.content.ContentService;
+import com.enonic.xp.context.ContextBuilder;
+import com.enonic.xp.project.ProjectService;
+import com.enonic.xp.script.ScriptValue;
+import com.enonic.xp.script.bean.BeanContext;
+import com.enonic.xp.security.IdProviderKey;
+import com.enonic.xp.security.PrincipalKey;
+import com.enonic.xp.security.RoleKeys;
+import com.enonic.xp.security.User;
+import com.enonic.xp.security.acl.AccessControlEntry;
+import com.enonic.xp.security.acl.AccessControlList;
+import com.enonic.xp.security.acl.Permission;
+import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.web.vhost.VirtualHostService;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class SitemapBeanTest
+{
+    @TempDir
+    private Path temp;
+
+    @Mock
+    private ContentService contentService;
+
+    @Mock
+    private SitemapCache cache;
+
+    @Test
+    void answers429WhenBusy()
+    {
+        when( cache.get( any() ) ).thenThrow( new SitemapBusyException() );
+
+        final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
+
+        assertThat( response.getStatus() ).isEqualTo( 429 );
+        assertThat( response.getRetryAfter() ).isEqualTo( SitemapResponse.RETRY_AFTER_SECONDS );
+        assertThat( response.getBody() ).isNull();
+    }
+
+    @Test
+    void answersFilesAnd404()
+    {
+        final List<SitemapEntry> entries =
+            List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 1, entries ) );
+        final SitemapBean bean = bean();
+
+        assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
+        assertThat( SitemapTest.text( inContext( () -> bean.file( scriptValue(), 2 ) ).getBody() ) ).contains( "https://example.com/b" );
+        assertThat( inContext( () -> bean.file( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
+        assertThat( inContext( () -> bean.root( scriptValue() ) ).getRetryAfter() ).isZero();
+        assertThat( inContext( () -> bean.rootGzip( scriptValue() ) ).getBody() ).isNotNull();
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue() ) ).getBody() ).isNotNull();
+        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 1 ) ).getBody() ).isNotNull();
+        assertThat( inContext( () -> bean.fileGzip( scriptValue(), 3 ) ).getStatus() ).isEqualTo( 404 );
+    }
+
+    @Test
+    void answers304WhenEntityTagMatches()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, entries ) );
+        final SitemapBean bean = bean();
+
+        final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
+        assertThat( first.getStatus() ).isEqualTo( 200 );
+        final String etag = first.getETag();
+        assertThat( etag ).isNotNull();
+
+        final SitemapResponse unchanged = inContext( () -> bean.root( scriptValue( etag ) ) );
+        assertThat( unchanged.getStatus() ).isEqualTo( 304 );
+        assertThat( unchanged.getBody() ).isNull();
+        assertThat( unchanged.getETag() ).isEqualTo( etag );
+
+        assertThat( inContext( () -> bean.root( scriptValue( "\"other\"" ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.root( scriptValue( "W/" + etag ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( etag ) ) ).getStatus() ).isEqualTo( 200 );
+        final String encoded = inContext( () -> bean.rootEncoded( scriptValue() ) ).getETag();
+        assertThat( encoded ).isEqualTo( etag.substring( 0, etag.length() - 1 ) + "-gzip\"" );
+        assertThat( inContext( () -> bean.rootEncoded( scriptValue( encoded ) ) ).getStatus() ).isEqualTo( 304 );
+    }
+
+    @Test
+    void keysByContext()
+    {
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
+
+        inContext( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().repositoryId() ).isEqualTo( "com.enonic.cms.project" );
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://example.com" );
+    }
+
+    @Test
+    void draftGetsOnlyTheSiteWithoutCaching()
+    {
+        when( cache.uncached( any(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
+        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
+        verify( cache ).uncached( key.capture(), any( AuthenticationInfo.class ), source.capture() );
+        verify( cache, never() ).get( any() );
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        final List<SitemapEntry> entries = new ArrayList<>();
+        assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
+        assertThat( entries ).containsExactly( new SitemapEntry( "", SitemapParams.SITE_CONTENT_TYPE, null ) );
+    }
+
+    @Test
+    void cachesPerUser()
+    {
+        final Content site = site( AccessControlList.empty() );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
+        when( cache.get( any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
+
+        asUser( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().principals() ).contains( "user:system:editor" );
+        verify( cache, never() ).uncached( any(), any(), any() );
+    }
+
+    @Test
+    void loggedInUserSharesPublicSitemapOfSiteReadableByEveryone()
+    {
+        final Content site =
+            site( AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
+        when( cache.get( any() ) ).thenReturn( write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ) ) );
+
+        asUser( () -> bean().root( scriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().isPublic() ).isTrue();
+        assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
+                                                                             RoleKeys.EVERYONE.toString() );
+    }
+
+    @Test
+    void loggedInUserSharesPublicSitemapOfProjectReadableByEveryone()
+    {
+        when( contentService.getRootPermissions() ).thenReturn(
+            AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "", "https://example.com", List.of(), List.of(), 10 ) ) );
+
+        asUser( () -> bean().root( projectScriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().isPublic() ).isTrue();
+        verify( contentService, never() ).getByPath( any() );
+    }
+
+    @Test
+    void draftOfProjectListsNothing()
+    {
+        when( cache.uncached( any(), any(), any() ) ).thenReturn(
+            write( new SitemapParams( "", "https://example.com", List.of(), List.of(), 10 ) ) );
+        ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "draft" )
+            .build()
+            .callWith( () -> bean().root( projectScriptValue() ) );
+
+        final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
+        verify( cache ).uncached( any(), any( AuthenticationInfo.class ), source.capture() );
+        final List<SitemapEntry> entries = new ArrayList<>();
+        assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
+        assertThat( entries ).isEmpty();
+    }
+
+    @Test
+    void beanAnswers400ForInvalidRequestUrl()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( Map.of( "sitePath", "/mysite", "siteUrl", "ftp://example.com", "maxItems", 10, "siteUrlFromRequest", true ) );
+
+        final SitemapResponse response = inContext( () -> bean().root( value ) );
+
+        assertThat( response.getStatus() ).isEqualTo( 400 );
+        verify( cache, never() ).get( any() );
+    }
+
+    @Test
+    void answersHeadlessUrlsetFromTheHeadlessSitemap()
+    {
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "", List.of(), List.of(), 10, SitemapParams.Format.HEADLESS ), 1,
+                   List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) ) ) );
+
+        assertThat( inContext( () -> bean().headlessUrlset( scriptValue(), 10 ) ) ).isEqualTo(
+            "[{\"path\":\"/\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"},{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.HEADLESS );
+        assertThat( key.getValue().params().siteUrl() ).isEmpty();
+    }
+
+    @Test
+    void convertsPublicSitemapWithRequestUrlFromTheHeadlessSitemap()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://Example.com/mysite", "maxItems", 10, "siteUrlFromRequest", true ) );
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "", List.of(), List.of(), 10, SitemapParams.Format.HEADLESS ), 10,
+                   List.of( new SitemapEntry( "/a", "portal:site", null ) ) ) );
+
+        final SitemapResponse response = inContext( () -> bean().root( value ) );
+
+        assertThat( SitemapTest.text( response.getBody() ) ).contains( "<loc>https://example.com/mysite/a</loc>" );
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().isPublic() ).isTrue();
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.HEADLESS );
+        assertThat( key.getValue().params().siteUrl() ).isEmpty();
+    }
+
+    @Test
+    void lowerCasesHostOfRequestUrl()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://WWW.Example.COM:8443/My%20Site", "maxItems", 10, "siteUrlFromRequest",
+                    true ) );
+        final Content site = site( AccessControlList.empty() );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
+        when( cache.get( any() ) ).thenReturn(
+            write( new SitemapParams( "/mysite", "https://example.com", List.of(), List.of(), 10 ), 10, List.of() ) );
+
+        asUser( () -> bean().root( value ) );
+
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.XML );
+        assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
+    }
+
+    private Sitemap write( final SitemapParams params, final int urlsPerFile, final List<SitemapEntry> entries )
+    {
+        return SitemapTest.write( temp.resolve( "s" + System.nanoTime() ), params, entries, urlsPerFile, Sitemap.MAX_FILE_BYTES,
+                                  Sitemap.MAX_FILES );
+    }
+
+    private SitemapBean bean()
+    {
+        final BeanContext context = mock( BeanContext.class );
+        when( context.getService( ContentService.class ) ).thenReturn( () -> contentService );
+        when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
+        when( context.getService( ProjectService.class ) ).thenReturn( () -> mock( ProjectService.class ) );
+        when( context.getService( VirtualHostService.class ) ).thenReturn( () -> mock( VirtualHostService.class ) );
+        final SitemapBean bean = new SitemapBean();
+        bean.initialize( context );
+        return bean;
+    }
+
+    private static ScriptValue scriptValue()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10 ) );
+        return value;
+    }
+
+    private static ScriptValue scriptValue( final String ifNoneMatch )
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "maxItems", 10, "ifNoneMatch", ifNoneMatch ) );
+        return value;
+    }
+
+    private static ScriptValue projectScriptValue()
+    {
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( Map.of( "sitePath", "", "siteUrl", "https://example.com", "maxItems", 10 ) );
+        return value;
+    }
+
+    private static <T> T inContext( final Supplier<T> supplier )
+    {
+        return ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "master" ).build().callWith( supplier::get );
+    }
+
+    private Sitemap write( final SitemapParams params )
+    {
+        return SitemapTest.write( temp.resolve( "w" + System.nanoTime() ), params, List.of(), 10, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES );
+    }
+
+    private static <T> T asUser( final Supplier<T> supplier )
+    {
+        final User user = User.create()
+            .key( PrincipalKey.ofUser( IdProviderKey.system(), "editor" ) )
+            .login( "editor" )
+            .displayName( "Editor" )
+            .build();
+        return ContextBuilder.create()
+            .repositoryId( "com.enonic.cms.project" )
+            .branch( "master" )
+            .authInfo( AuthenticationInfo.create().user( user ).build() )
+            .build()
+            .callWith( supplier::get );
+    }
+
+    private static Content site( final AccessControlList permissions )
+    {
+        final Content site = mock( Content.class );
+        when( site.getPermissions() ).thenReturn( permissions );
+        return site;
+    }
+}

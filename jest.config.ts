@@ -50,6 +50,7 @@ export default {
 		'^/constants': '<rootDir>/src/main/resources/constants.ts',
 		'^/guillotine/(.*)': '<rootDir>/src/main/resources/guillotine/$1', // DOES fix: ModuleNotFoundError: Cannot find module '/guillotine/guillotine'
 		'^/lib/app-sitemapxml/(.*)': '<rootDir>/src/main/resources/lib/app-sitemapxml/$1',
+		'^/site/(.*)': '<rootDir>/src/main/resources/site/$1',
 	},
 
 	// modulePathIgnorePatterns [array<string>]

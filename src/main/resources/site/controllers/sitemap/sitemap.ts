@@ -3,38 +3,34 @@ import type {
 	Request,
 	Response,
 	SitemapXmlSiteConfig,
-	tUrl,
 } from '/types';
 
 
-import {toStr} from '@enonic/js-utils/value/toStr';
 import {
 	getSite,
 	getSiteConfig,
 	pageUrl
 } from '/lib/xp/portal';
-// @ts-expect-error No types yet.
-import {render} from '/lib/xslt';
-import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
+import {
+	acceptsGzip,
+	header,
+} from '/lib/app-sitemapxml/acceptEncoding';
+import {
+	newSitemapBean,
+	toSitemapParams,
+} from '/lib/app-sitemapxml/sitemapBean';
 
 
-const DEBUG = false;
-const TRACE = false;
-const VIEW = resolve('sitemap.xsl');
+const PATH_REGEXP = /\/sitemap(?:-(\d+))?\.xml(\.gz)?$/;
+
+// The sitemap protocol allows at most 50 000 files in a sitemap index.
+const MAX_FILES = 50000;
 
 
-function getServerPageUrl(path: string, overrideDomain: string) {
-	return overrideDomain + pageUrl({
-		path,
-		type: 'server'
-	})
-}
-
-function getAbsolutePageUrl(path: string) {
-	return pageUrl({
-		path,
-		type: 'absolute'
-	})
+function getSiteUrl(sitePath: string, overrideDomain: string): string {
+	return overrideDomain
+		? overrideDomain + pageUrl({path: sitePath, type: 'server'})
+		: pageUrl({path: sitePath, type: 'absolute'});
 }
 
 export function get(request: Request<{
@@ -42,56 +38,80 @@ export function get(request: Request<{
 		'Content-Type'?: string
 	}
 }>): Response {
-	TRACE && log.debug('Sitemap request:%s', toStr(request));
-
 	// This controller runs in site context, so site can't be null.
 	const site = getSite<SitemapXmlSiteConfig>() as Site<SitemapXmlSiteConfig>;
-	TRACE && log.debug('site:%s', toStr(site));
+	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>() || {} as Partial<SitemapXmlSiteConfig>;
 
-	const siteConfig = getSiteConfig<SitemapXmlSiteConfig>();
-	DEBUG && log.debug('siteConfig:%s', toStr(siteConfig));
+	const {overrideDomain = ''} = siteConfig;
 
-	const {
-		maxItems = 10000,
-		overrideDomain = '',
-	} = siteConfig || {}; // Handle null (aka no config)
-
-	const {
-		changefreq,
-		priority,
-		result
-	} = queryForSitemapContent({
-		count: parseInt(maxItems as string, 10),
-		site,
-		siteConfig,
-	});
-
-	// Go through the results and add the corresponding settings for each match.
-	const items: tUrl[] = [];
-	for (let i = 0; i < result.hits.length; i++) {
-		if (result.hits[i].type) {
-			items.push({
-				changefreq: changefreq[result.hits[i].type],
-				lastmod: result.hits[i].modifiedTime,
-				priority: priority[result.hits[i].type],
-				loc: overrideDomain
-					? getServerPageUrl(result.hits[i]._path, overrideDomain)
-					: getAbsolutePageUrl(result.hits[i]._path)
-			});
-		}
-	}
-
-	if (request.headers['Content-Type'] === 'application/json') {
-		return {
-			body: JSON.stringify(items),
-			contentType: 'application/json',
-		}
-	}
-
-	return {
-		body: render(VIEW, {
-			result: items
+	const params = {
+		...toSitemapParams({
+			sitePath: site._path,
+			siteUrl: getSiteUrl(site._path, overrideDomain),
+			siteConfig,
 		}),
-		contentType: 'text/xml',
+		// With a "Base URL" override the URLs do not depend on the request, so the sitemap can be generated in the background.
+		siteUrlFromRequest: !overrideDomain,
+		ifNoneMatch: header(request.headers, 'If-None-Match'),
+	};
+
+	const bean = newSitemapBean();
+	const scriptParams = __.toScriptValue(params);
+
+	const match = PATH_REGEXP.exec(request.path);
+	const fileNumber = match && match[1] ? parseInt(match[1], 10) : 0;
+	if (match && match[1] && !(fileNumber >= 1 && fileNumber <= MAX_FILES)) {
+		return {
+			body: null,
+			status: 404,
+		};
+	}
+	const isGzip = !!(match && match[2]);
+	// Files are stored gzip-compressed, so a plain .xml request that accepts gzip gets the stored file as is.
+	const isEncoded = !isGzip && acceptsGzip(request.headers);
+	const result = isGzip
+		? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootGzip(scriptParams)
+		: isEncoded
+			? fileNumber ? bean.fileGzip(scriptParams, fileNumber) : bean.rootEncoded(scriptParams)
+			: fileNumber ? bean.file(scriptParams, fileNumber) : bean.root(scriptParams);
+
+	const status = result.getStatus();
+	if (status === 429) {
+		// A body is needed, otherwise XP renders its own error page without the Retry-After header.
+		return {
+			body: 'Too many sitemap requests in progress, retry later.',
+			contentType: 'text/plain',
+			headers: {'Retry-After': String(result.getRetryAfter())},
+			status,
+		};
+	}
+	const etag = result.getETag();
+	const etagHeader: Record<string, string> = etag ? {ETag: etag} : {};
+	if (status === 304) {
+		return {
+			body: null,
+			headers: isGzip ? etagHeader : {...etagHeader, Vary: 'Accept-Encoding'},
+			status,
+		};
+	}
+	if (status !== 200) {
+		return {
+			body: null,
+			status,
+		};
+	}
+	if (isGzip) {
+		return {
+			body: result.getBody(),
+			contentType: 'application/gzip',
+			...(etag ? {headers: etagHeader} : {}),
+		};
+	}
+	return {
+		body: result.getBody(),
+		contentType: 'text/xml; charset=utf-8',
+		headers: isEncoded
+			? {...etagHeader, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding'}
+			: {...etagHeader, Vary: 'Accept-Encoding'},
 	};
 }
