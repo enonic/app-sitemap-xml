@@ -43,8 +43,16 @@ dependencies {
 	testImplementation 'org.assertj:assertj-core:3.27.7'
 }
 
+// XP 7.16 runs on Java 21. CI's shared action runs Gradle with JDK 11 for any XP 7 version, so compile and test with a JDK 21 toolchain.
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+}
+
 tasks.withType(JavaCompile).configureEach {
-	options.release = 21
+	// not the default encoding of the JVM running Gradle
+	options.encoding = 'UTF-8'
 }
 
 tasks.withType(Test).configureEach {
