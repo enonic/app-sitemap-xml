@@ -1,8 +1,8 @@
 interface GenerateTaskBean {
-	run(key: string, background: boolean, changedAt: string | null): void
+	run(key: string, changedAt: string | null): void
 }
 
-export function run(params: {key: string, background?: boolean, changedAt?: string}): void {
+export function run(params: {key: string, changedAt?: string}): void {
 	__.newBean<GenerateTaskBean>('com.enonic.app.sitemapxml.GenerateTaskBean')
-		.run(params.key, params.background === true, params.changedAt || null);
+		.run(params.key, params.changedAt || null);
 }

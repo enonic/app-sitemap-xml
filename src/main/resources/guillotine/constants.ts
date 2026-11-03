@@ -6,6 +6,7 @@ export const enum GraphQLTypeName {
 }
 
 // In fields names first letter should be lowercase
+export const BASE_URL_FIELD_NAME = 'baseUrl';
 export const SITEMAP_FIELD_NAME = 'sitemap';
 export const URLSET_FIELD_NAME = 'urlset';
 export const FILES_FIELD_NAME = 'files';

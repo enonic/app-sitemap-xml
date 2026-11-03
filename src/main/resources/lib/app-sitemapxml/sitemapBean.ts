@@ -16,6 +16,8 @@ export interface SitemapParams {
 	ignorePatterns: string[]
 	// If-None-Match header of the request, answered with 304 when it matches the file's entity tag.
 	ifNoneMatch?: string
+	// If-Modified-Since header of the request, answered with 304 when the file did not change since (without If-None-Match).
+	ifModifiedSince?: string
 	// True when siteUrl is taken from the request. A Base URL configured for the site in XP is then used instead, when there is one.
 	siteUrlFromRequest?: boolean
 }
@@ -25,6 +27,7 @@ export interface SitemapResponse {
 	getBody(): object | null
 	getRetryAfter(): number
 	getETag(): string | null
+	getLastModified(): string | null
 }
 
 export interface SitemapBean {
@@ -33,9 +36,9 @@ export interface SitemapBean {
 	rootGzip(params: ScriptValue): SitemapResponse
 	rootEncoded(params: ScriptValue): SitemapResponse
 	fileGzip(params: ScriptValue, number: number): SitemapResponse
-	guillotineFiles(params: ScriptValue): string
-	guillotineUrlset(params: ScriptValue, count: number): string
-	guillotineFile(params: ScriptValue, number: number): string | null
+	headlessFiles(params: ScriptValue): string
+	headlessUrlset(params: ScriptValue, count: number): string
+	headlessFile(params: ScriptValue, number: number): string | null
 	portalBaseUrl(sitePath: string): string | null
 }
 

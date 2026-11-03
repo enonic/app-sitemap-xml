@@ -6,6 +6,7 @@ import type {
 
 import {ObjectTypeName} from '@enonic-types/guillotine';
 import {
+	BASE_URL_FIELD_NAME,
 	FILE_FIELD_NAME,
 	FILES_FIELD_NAME,
 	SITEMAP_FIELD_NAME,
@@ -17,6 +18,7 @@ import {SitemapFile} from './types/SitemapFile';
 import {SitemapUrl} from './types/SitemapUrl';
 import {sitemap} from './resolvers/sitemap';
 import {
+	baseUrl,
 	file,
 	files,
 	fileUrlset,
@@ -44,6 +46,7 @@ export const extensions = (graphQL: GraphQL): Extensions => ({
 			[SITEMAP_FIELD_NAME]: sitemap(graphQL),
 		},
 		[GraphQLTypeName.SITEMAP]: {
+			[BASE_URL_FIELD_NAME]: baseUrl(graphQL),
 			[URLSET_FIELD_NAME]: urlset(graphQL),
 			[FILES_FIELD_NAME]: files(graphQL),
 			[FILE_FIELD_NAME]: file(graphQL),

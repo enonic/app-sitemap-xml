@@ -18,17 +18,28 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.enonic.xp.branch.Branch;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.data.PropertyTree;
+import com.enonic.xp.data.ValueFactory;
+import com.enonic.xp.event.Event;
+import com.enonic.xp.event.EventPublisher;
 import com.enonic.xp.node.ApplyVersionAttributesParams;
 import com.enonic.xp.node.Attributes;
 import com.enonic.xp.node.CreateNodeParams;
+import com.enonic.xp.node.DeleteNodeParams;
+import com.enonic.xp.node.FindNodesByQueryResult;
 import com.enonic.xp.node.Node;
 import com.enonic.xp.node.NodeAlreadyExistAtPathException;
+import com.enonic.xp.node.NodeHit;
 import com.enonic.xp.node.NodeId;
 import com.enonic.xp.node.NodePath;
+import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.node.NodeService;
 import com.enonic.xp.node.NodeVersion;
 import com.enonic.xp.node.NodeVersionId;
+import com.enonic.xp.node.Nodes;
 import com.enonic.xp.node.UpdateNodeParams;
+import com.enonic.xp.query.filter.BooleanFilter;
+import com.enonic.xp.query.filter.RangeFilter;
+import com.enonic.xp.query.filter.ValueFilter;
 import com.enonic.xp.repository.RepositoryService;
 import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.acl.AccessControlEntry;
@@ -60,6 +71,9 @@ class RepositorySitemapStoreTest
 
     @Mock
     private RepositoryService repositoryService;
+
+    @Mock
+    private EventPublisher eventPublisher;
 
     @TempDir
     private Path temp;
@@ -93,25 +107,29 @@ class RepositorySitemapStoreTest
         } );
 
         final SitemapStore.Stored stored =
-            store().save( KEY.id(), KEY, true, local, NOW.plusSeconds( 3600 ), NOW.minusSeconds( 5 ), NOW );
+            store().save( KEY.id(), KEY, local, NOW.plusSeconds( 3600 ), NOW.minusSeconds( 5 ), NOW );
 
         final ArgumentCaptor<CreateNodeParams> create = ArgumentCaptor.forClass( CreateNodeParams.class );
         verify( nodeService ).create( create.capture() );
         assertThat( repository.get() ).isEqualTo( "com.enonic.app.sitemapxml " + Branch.from( "master" ) );
         assertThat( create.getValue().getName().toString() ).isEqualTo( KEY.id() );
-        assertThat( create.getValue().getData().getString( "repository" ) ).isEqualTo( "com.enonic.cms.project" );
-        assertThat( create.getValue().getData().getString( "principals" ) ).isEqualTo( "role:system.everyone,user:system:anonymous" );
+        assertThat( create.getValue().getData().hasProperty( "principals" ) ).isFalse();
+        assertThat( create.getValue().getData().getSet( "key" ).getString( "repository" ) ).isEqualTo( "com.enonic.cms.project" );
+        assertThat( create.getValue().getData().getSet( "key" ).getString( "sitePath" ) ).isEqualTo( "/mysite" );
+        assertThat( create.getValue().getData().getSet( "key" ).getStrings( "principals" ) ).containsExactly( "role:system.everyone",
+                                                                                                            "user:system:anonymous" );
+        assertThat( create.getValue().getData().getSet( "sitemap" ).getLong( "size" ) ).isEqualTo( 2 );
+        assertThat( create.getValue().getData().getSet( "sitemap" ).getSets( "files" ) ).hasSize( 2 );
         assertThat( create.getValue().getData().getBinaryReferences( "file" ) ).extracting( BinaryReference::toString )
-            .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz",
-                                        "urlset-1.jsonl.gz", "urlset-2.jsonl.gz" );
-        assertThat( create.getValue().getBinaryAttachments().getSize() ).isEqualTo( 6 );
+            .containsExactlyInAnyOrder( "sitemap.xml.gz", "sitemap-index.xml.gz", "sitemap-1.xml.gz", "sitemap-2.xml.gz" );
+        assertThat( create.getValue().getBinaryAttachments().getSize() ).isEqualTo( 4 );
         assertThat( create.getValue().getPermissions() ).isEqualTo(
             AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.ADMIN ).allowAll().build() ) );
 
         assertThat( stored.id() ).isEqualTo( KEY.id() );
         assertThat( stored.version() ).isEqualTo( versionId.toString() );
         assertThat( stored.key() ).isEqualTo( KEY );
-        assertThat( stored.background() ).isTrue();
+        assertThat( stored.key().isPublic() ).isTrue();
         assertThat( stored.validUntil() ).isEqualTo( NOW.plusSeconds( 3600 ) );
         assertThat( stored.startedAt() ).isEqualTo( NOW.minusSeconds( 5 ) );
         assertThat( stored.generatedAt() ).isEqualTo( NOW );
@@ -125,7 +143,7 @@ class RepositorySitemapStoreTest
     {
         when( nodeService.create( any() ) ).thenReturn( node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) ) );
 
-        assertThat( store().claimNew( KEY.id(), KEY, false, "me", NOW ) ).isTrue();
+        assertThat( store().claimNew( KEY.id(), KEY, "me", NOW ) ).isTrue();
 
         final ArgumentCaptor<CreateNodeParams> create = ArgumentCaptor.forClass( CreateNodeParams.class );
         verify( nodeService ).create( create.capture() );
@@ -148,7 +166,7 @@ class RepositorySitemapStoreTest
             version( Attributes.create().attribute( "obsolete", GenericValue.stringValue( NOW.plusSeconds( 1 ).toString() ) ).build() );
         when( nodeService.getVersion( existing.id(), previous ) ).thenReturn( obsolete );
 
-        store().save( KEY.id(), KEY, false, local, null, NOW, NOW.plusSeconds( 5 ) );
+        store().save( KEY.id(), KEY, local, null, NOW, NOW.plusSeconds( 5 ) );
 
         final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
         verify( nodeService ).applyVersionAttributes( apply.capture() );
@@ -166,11 +184,11 @@ class RepositorySitemapStoreTest
         when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( existing );
         when( nodeService.update( any() ) ).thenReturn( updated );
 
-        store().save( KEY.id(), KEY, false, local, null, NOW, NOW );
+        store().save( KEY.id(), KEY, local, null, NOW, NOW );
 
         final ArgumentCaptor<UpdateNodeParams> update = ArgumentCaptor.forClass( UpdateNodeParams.class );
         verify( nodeService ).update( update.capture() );
-        assertThat( update.getValue().getBinaryAttachments().getSize() ).isEqualTo( 2 );
+        assertThat( update.getValue().getBinaryAttachments().getSize() ).isEqualTo( 1 );
         assertThat( update.getValue().getVersionAttributesResolver().resolve( existing, existing, Branch.from( "master" ), null ) )
             .isEqualTo( Attributes.create().build() );
     }
@@ -183,7 +201,6 @@ class RepositorySitemapStoreTest
         when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
         final NodeVersion version = version( Attributes.create()
                                                  .attribute( "obsolete", GenericValue.stringValue( NOW.toString() ) )
-                                                 .attribute( "accessed", GenericValue.stringValue( NOW.minusSeconds( 60 ).toString() ) )
                                                  .attribute( "generating", GenericValue.newObject()
                                                      .put( "member", "other" )
                                                      .put( "since", NOW.toString() )
@@ -195,15 +212,14 @@ class RepositorySitemapStoreTest
 
         assertThat( stored.sitemap() ).isNull();
         assertThat( stored.obsolete() ).isEqualTo( NOW );
-        assertThat( stored.accessed() ).isEqualTo( NOW.minusSeconds( 60 ) );
         assertThat( stored.generating() ).isEqualTo( new SitemapStore.Generating( "other", NOW ) );
 
         assertThat( store().claim( stored, "me", NOW.plusSeconds( 60 ), Duration.ofMinutes( 10 ) ) ).isFalse();
         verify( nodeService, never() ).applyVersionAttributes( any() );
         assertThat( store().claim( stored, "me", NOW.plusSeconds( 601 ), Duration.ofMinutes( 10 ) ) ).isTrue();
 
-        store().markObsolete( new SitemapStore.Stored( stored.id(), stored.version(), stored.key(), false, null, null, null, null, null, null,
-                                                       null, null ), NOW );
+        store().markObsolete( new SitemapStore.Stored( stored.id(), stored.version(), stored.key(), null, null, null, null, null, null,
+                                                       null ), NOW );
         final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
         verify( nodeService, times( 2 ) ).applyVersionAttributes( apply.capture() );
         assertThat( apply.getAllValues().get( 0 ).getAddAttributes().get( "generating" ).property( "member" ).asString() ).isEqualTo( "me" );
@@ -212,10 +228,97 @@ class RepositorySitemapStoreTest
     }
 
     @Test
+    void deletesOnlyUnchangedSitemap()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion version = version( Attributes.create()
+                                                 .attribute( "generating", GenericValue.newObject()
+                                                     .put( "member", "other" )
+                                                     .put( "since", NOW.toString() )
+                                                     .build() )
+                                                 .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( version );
+        final SitemapStore.Stored older =
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000000", KEY, null, null, null, NOW, null, null,
+                                     null );
+        final SitemapStore.Stored unclaimed =
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, null, null, null, null, null, null, null );
+        final SitemapStore.Stored claimed =
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, null, null, null, null, null,
+                                     new SitemapStore.Generating( "other", NOW ), null );
+
+        assertThat( store().delete( older ) ).isFalse();
+        assertThat( store().delete( unclaimed ) ).isFalse();
+        verify( nodeService, never() ).delete( any() );
+
+        assertThat( store().delete( claimed ) ).isTrue();
+        verify( nodeService ).delete( any() );
+    }
+
+    @Test
+    void checkMarksCurrentVersionReleasesClaimAndTellsOtherNodes()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion version = version( Attributes.create().build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( version );
+
+        assertThat( store().check(
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000000", KEY, null, null, null, null, null, null,
+                                     null ), "me", NOW ) ).isNull();
+        verify( nodeService, never() ).applyVersionAttributes( any() );
+        verify( eventPublisher, never() ).publish( any() );
+
+        assertThat( store().check(
+            new SitemapStore.Stored( KEY.id(), versionId.toString(), KEY, null, null, null, null, null, null, null ), "me",
+            NOW ) ).isNotNull();
+        final ArgumentCaptor<ApplyVersionAttributesParams> apply = ArgumentCaptor.forClass( ApplyVersionAttributesParams.class );
+        verify( nodeService ).applyVersionAttributes( apply.capture() );
+        assertThat( apply.getValue().getNodeVersionId() ).isEqualTo( versionId );
+        assertThat( apply.getValue().getAddAttributes().get( "checked" ).asString() ).isEqualTo( NOW.toString() );
+        assertThat( apply.getValue().getRemoveAttributes() ).containsExactlyInAnyOrder( "generating", "queued" );
+        final ArgumentCaptor<Event> event = ArgumentCaptor.forClass( Event.class );
+        verify( eventPublisher ).publish( event.capture() );
+        assertThat( event.getValue().getType() ).isEqualTo( RepositorySitemapStore.CHECKED_EVENT );
+        assertThat( event.getValue().isDistributed() ).isTrue();
+        assertThat( event.getValue().getData() ).containsEntry( "id", KEY.id() );
+    }
+
+    @Test
+    void checkedVersionCountsAsGeneratedWhenTheCheckStarted()
+    {
+        final NodeVersionId versionId = NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" );
+        final Node node = node( versionId );
+        node.data().setInstant( "startedAt", NOW.minusSeconds( 60 ) );
+        node.data().setInstant( "generatedAt", NOW.minusSeconds( 50 ) );
+        when( nodeService.getByPath( new NodePath( "/" + KEY.id() ) ) ).thenReturn( node );
+        final NodeVersion covered = version( Attributes.create()
+                                                 .attribute( "checked", GenericValue.stringValue( NOW.toString() ) )
+                                                 .attribute( "obsolete", GenericValue.stringValue( NOW.minusSeconds( 10 ).toString() ) )
+                                                 .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( covered );
+
+        final SitemapStore.Stored checked = store().load( KEY.id() );
+        assertThat( checked.startedAt() ).isEqualTo( NOW );
+        assertThat( checked.generatedAt() ).isEqualTo( NOW );
+        assertThat( checked.obsolete() ).isNull();
+
+        final NodeVersion changedSince = version( Attributes.create()
+                                                      .attribute( "checked", GenericValue.stringValue( NOW.toString() ) )
+                                                      .attribute( "obsolete", GenericValue.stringValue( NOW.plusSeconds( 5 ).toString() ) )
+                                                      .build() );
+        when( nodeService.getVersion( node.id(), versionId ) ).thenReturn( changedSince );
+        assertThat( store().load( KEY.id() ).obsolete() ).isEqualTo( NOW.plusSeconds( 5 ) );
+    }
+
+    @Test
     void obsoleteMarkKeepsLatestChange()
     {
         final SitemapStore.Stored marked =
-            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000001", KEY, false, null, null, null, null, NOW, null, null,
+            new SitemapStore.Stored( KEY.id(), "a1b2c3d4-0000-0000-0000-000000000001", KEY, null, null, null, null, NOW, null,
                                      null );
 
         store().markObsolete( marked, NOW );
@@ -228,17 +331,92 @@ class RepositorySitemapStoreTest
     }
 
     @Test
+    void sitemapsOfSiteAreFoundByIndexedKeyAndSamePrincipals()
+    {
+        final SitemapCache.Key editor =
+            new SitemapCache.Key( KEY.repositoryId(), KEY.branch(), Set.of( "role:system.everyone", "user:system:anonymous", "role:editor" ),
+                                  PARAMS );
+        final Node same = node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) );
+        final PropertyTree data = new PropertyTree();
+        SitemapNodeData.writeKey( data.getRoot(), editor );
+        final Node more = Node.create()
+            .id( NodeId.from( "editor" ) )
+            .name( editor.id() )
+            .parentPath( NodePath.ROOT )
+            .data( data )
+            .nodeVersionId( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000002" ) )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn(
+            FindNodesByQueryResult.create().addNodeHit( NodeHit.create().nodeId( same.id() ).build() ).build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.from( same, more ) );
+
+        final List<SitemapStore.Stored> found = store().ofSite( KEY );
+
+        assertThat( found ).extracting( SitemapStore.Stored::key ).containsExactly( KEY );
+        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
+        verify( nodeService ).findByQuery( query.capture() );
+        assertThat( query.getValue().getQueryFilters().stream().map( filter -> (ValueFilter) filter ) ).extracting(
+            filter -> filter.getFieldName() + "=" + filter.getValues().iterator().next().asString() ).containsExactlyInAnyOrder(
+            "key.repository=com.enonic.cms.project", "key.branch=master", "key.sitePath=/mysite", "key.principals=role:system.everyone",
+            "key.principals=user:system:anonymous" );
+    }
+
+    @Test
+    void findsSitemapsGeneratedOnRequestBeforeTimeByIndexedPrincipalsAndGenerationTime()
+    {
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( FindNodesByQueryResult.create().build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.empty() );
+
+        assertThat( store().generatedOnRequestBefore( NOW ) ).isEmpty();
+
+        final ArgumentCaptor<NodeQuery> query = ArgumentCaptor.forClass( NodeQuery.class );
+        verify( nodeService ).findByQuery( query.capture() );
+        final BooleanFilter onRequest = (BooleanFilter) query.getValue().getQueryFilters().first();
+        final ValueFilter anonymous = (ValueFilter) onRequest.getMustNot().getFirst();
+        assertThat( anonymous.getFieldName() ).isEqualTo( "key.principals" );
+        assertThat( anonymous.getValues() ).containsExactly( ValueFactory.newString( "user:system:anonymous" ) );
+        final RangeFilter range = (RangeFilter) query.getValue().getQueryFilters().last();
+        assertThat( range.getFieldName() ).isEqualTo( "generatedAt" );
+        assertThat( range.getTo().asInstant() ).isEqualTo( NOW );
+        assertThat( range.isIncludeUpper() ).isFalse();
+    }
+
+    @Test
+    void sitemapStoredByAnEarlierVersionIsDeletedInsteadOfFailingTheQuery()
+    {
+        final Node current = node( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000001" ) );
+        final PropertyTree data = new PropertyTree();
+        SitemapNodeData.writeKey( data.getRoot(), KEY );
+        data.getRoot().getSet( "key" ).setString( "format", "guillotine" );
+        final Node earlier = Node.create()
+            .id( NodeId.from( "earlier" ) )
+            .name( "earlier" )
+            .parentPath( NodePath.ROOT )
+            .data( data )
+            .nodeVersionId( NodeVersionId.from( "a1b2c3d4-0000-0000-0000-000000000002" ) )
+            .build();
+        when( nodeService.findByQuery( any( NodeQuery.class ) ) ).thenReturn( FindNodesByQueryResult.create().build() );
+        when( nodeService.getByIds( any() ) ).thenReturn( Nodes.from( earlier, current ) );
+
+        assertThat( store().find( KEY.repositoryId(), null ) ).extracting( SitemapStore.Stored::key ).containsExactly( KEY );
+
+        final ArgumentCaptor<DeleteNodeParams> deleted = ArgumentCaptor.forClass( DeleteNodeParams.class );
+        verify( nodeService ).delete( deleted.capture() );
+        assertThat( deleted.getValue().getNodeId() ).isEqualTo( NodeId.from( "earlier" ) );
+    }
+
+    @Test
     void claimOfNewSitemapFailsWhenItsNodeExists()
     {
         when( nodeService.create( any() ) ).thenThrow(
             new NodeAlreadyExistAtPathException( new NodePath( "/" + KEY.id() ), RepositorySitemapStore.REPOSITORY, Branch.from( "master" ) ) );
 
-        assertThat( store().claimNew( KEY.id(), KEY, false, "me", NOW ) ).isFalse();
+        assertThat( store().claimNew( KEY.id(), KEY, "me", NOW ) ).isFalse();
     }
 
     private RepositorySitemapStore store()
     {
-        return new RepositorySitemapStore( nodeService, repositoryService );
+        return new RepositorySitemapStore( nodeService, repositoryService, eventPublisher );
     }
 
     private static NodeVersion version( final Attributes attributes )
@@ -251,9 +429,7 @@ class RepositorySitemapStoreTest
     private static Node node( final NodeVersionId versionId )
     {
         final PropertyTree data = new PropertyTree();
-        data.setString( "key", "{\"repository\":\"com.enonic.cms.project\",\"branch\":\"master\",\"principals\":" +
-            "[\"role:system.everyone\",\"user:system:anonymous\"],\"sitePath\":\"/mysite\",\"siteUrl\":\"https://example.com\"," +
-            "\"contentTypes\":[],\"ignorePatterns\":[]}" );
+        SitemapNodeData.writeKey( data.getRoot(), KEY );
         return Node.create()
             .id( NodeId.from( "sitemap" ) )
             .name( KEY.id() )

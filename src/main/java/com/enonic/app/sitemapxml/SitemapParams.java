@@ -5,13 +5,40 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns)
+import org.jspecify.annotations.Nullable;
+
+/**
+ * What a sitemap lists and how.
+ *
+ * @param format whether the sitemap is served as {@code sitemap.xml} or headless (through Guillotine): each has its own cached
+ *               sitemap, with the files that one needs only
+ */
+public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns,
+                            Format format)
 {
+    public enum Format
+    {
+        /**
+         * {@code sitemap.xml} and its files, with full URLs.
+         */
+        XML,
+        /**
+         * Headless, for the Guillotine {@code sitemap} field: URLs as paths, kept as JSON lines.
+         */
+        HEADLESS
+    }
+
     public static final String SITE_CONTENT_TYPE = "portal:site";
 
     public static final String DEFAULT_CHANGEFREQ = "monthly";
 
     public static final String DEFAULT_PRIORITY = "0.5";
+
+    public SitemapParams( final String sitePath, final String siteUrl, final List<ContentTypeSetting> contentTypes,
+                          final List<String> ignorePatterns )
+    {
+        this( sitePath, siteUrl, contentTypes, ignorePatterns, Format.XML );
+    }
 
     public SitemapParams
     {
@@ -21,7 +48,12 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
 
     public SitemapParams withSiteUrl( final String url )
     {
-        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns );
+        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns, format );
+    }
+
+    public SitemapParams withFormat( final Format format )
+    {
+        return new SitemapParams( sitePath, siteUrl, contentTypes, ignorePatterns, format );
     }
 
     public ContentTypeSetting setting( final String contentType )
@@ -60,7 +92,7 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
             pathEnd++;
         }
         final String url = protocol + "://" + authority.toLowerCase( Locale.ROOT ) + siteUrl.substring( end, pathEnd );
-        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns );
+        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns, format );
     }
 
     /**
@@ -75,6 +107,21 @@ public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSet
         }
         final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
         return host.startsWith( "[" ) ? host.contains( "]:" ) : host.contains( ":" );
+    }
+
+    /**
+     * The host of the site URL when it names no port, as in {@code https://www.example.com/path}; null when it names a port or has no
+     * host.
+     */
+    public @Nullable String hostWithoutPort()
+    {
+        final int start = hostStart( siteUrl );
+        if ( start < 0 || hasExplicitPort() )
+        {
+            return null;
+        }
+        final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
+        return host.isEmpty() ? null : host;
     }
 
     private static int hostStart( final String url )

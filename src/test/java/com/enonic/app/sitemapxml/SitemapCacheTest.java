@@ -11,6 +11,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -51,14 +53,29 @@ class SitemapCacheTest
 {
     private static final SitemapParams PARAMS = new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() );
 
-    private static final SitemapCache.Key KEY =
-        new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ), PARAMS );
+    /**
+     * The principals of a logged-in user: their sitemaps are generated on request.
+     */
+    private static final Set<String> USER = Set.of( "role:system.everyone", "role:system.authenticated", "user:system:editor" );
+
+    /**
+     * The principals of anonymous requests: public sitemaps are generated again without a request.
+     */
+    private static final Set<String> ANONYMOUS = Set.of( "role:system.everyone", SitemapCache.Key.ANONYMOUS );
+
+    private static final SitemapCache.Key KEY = new SitemapCache.Key( "com.enonic.cms.project", "master", USER, PARAMS );
+
+    private static final SitemapCache.Key PUBLIC_KEY = new SitemapCache.Key( "com.enonic.cms.project", "master", ANONYMOUS, PARAMS );
 
     private static final Instant CLUSTER_STARTED = Instant.parse( "2024-01-01T00:00:00Z" );
 
     private final InMemorySitemapStore store = new InMemorySitemapStore();
 
     private final AtomicInteger generated = new AtomicInteger();
+
+    private final AtomicInteger submitted = new AtomicInteger();
+
+    private volatile Predicate<SitemapCache.Key> current = key -> true;
 
     private final AtomicReference<SitemapCache.Source> source = new AtomicReference<>( this::generate );
 
@@ -96,9 +113,9 @@ class SitemapCacheTest
     {
         final Node node = node();
 
-        final Sitemap first = node.cache.get( KEY, false );
+        final Sitemap first = node.cache.get( KEY );
 
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
         assertThat( first.size() ).isEqualTo( 1 );
         assertThat( generated ).hasValue( 1 );
         final SitemapStore.Stored stored = store.load( KEY.id() );
@@ -116,7 +133,7 @@ class SitemapCacheTest
             return generate( sink, cancelled );
         } );
 
-        node().cache.get( KEY, false );
+        node().cache.get( PUBLIC_KEY );
 
         assertThat( seen ).containsExactly(
             "com.enonic.cms.project master " + List.of( PrincipalKey.ofAnonymous(), PrincipalKey.from( "role:system.everyone" ) ) );
@@ -125,9 +142,9 @@ class SitemapCacheTest
     @Test
     void otherNodeServesStoredSitemapWithoutGeneratingIt()
     {
-        node().cache.get( KEY, true );
+        node().cache.get( PUBLIC_KEY );
 
-        final Sitemap served = node().cache.get( KEY, true );
+        final Sitemap served = node().cache.get( PUBLIC_KEY );
 
         assertThat( generated ).hasValue( 1 );
         assertThat( text( served ) ).contains( "https://example.com/1" );
@@ -137,11 +154,11 @@ class SitemapCacheTest
     void requestBoundSitemapIsServedAfterChangeWhileGeneratedAgainOnNextRequest()
     {
         final Node node = node();
-        final Sitemap first = node.cache.get( KEY, false );
+        final Sitemap first = node.cache.get( KEY );
 
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.other", "master", true ) );
         node.cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "draft", true ) );
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
         node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
@@ -150,10 +167,10 @@ class SitemapCacheTest
         node.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
         node.awaitIdle();
         assertThat( generated ).hasValue( 2 );
-        assertThat( text( node.cache.get( KEY, false ) ) ).contains( "https://example.com/2" );
+        assertThat( text( node.cache.get( KEY ) ) ).contains( "https://example.com/2" );
     }
 
     @Test
@@ -162,8 +179,8 @@ class SitemapCacheTest
         regenerationDelay = Duration.ofMillis( 100 );
         final Node origin = node();
         final Node other = node();
-        origin.cache.get( KEY, true );
-        final Sitemap served = other.cache.get( KEY, true );
+        origin.cache.get( PUBLIC_KEY );
+        final Sitemap served = other.cache.get( PUBLIC_KEY );
 
         origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
@@ -172,12 +189,12 @@ class SitemapCacheTest
         awaitUntil( () -> generated.get() == 2 );
         origin.awaitIdle();
         other.awaitIdle();
-        assertThat( other.cache.get( KEY, true ) ).isSameAs( served );
+        assertThat( other.cache.get( PUBLIC_KEY ) ).isSameAs( served );
         assertThat( generated ).hasValue( 2 );
-        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+        assertThat( store.load( PUBLIC_KEY.id() ).obsolete() ).isNull();
 
-        other.cache.onEvent( storedEvent( "node.updated", KEY.id() ) );
-        assertThat( text( other.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+        other.cache.onEvent( storedEvent( "node.updated", PUBLIC_KEY.id() ) );
+        assertThat( text( other.cache.get( PUBLIC_KEY ) ) ).contains( "https://example.com/2" );
         other.awaitIdle();
         assertThat( generated ).hasValue( 2 );
     }
@@ -186,7 +203,7 @@ class SitemapCacheTest
     void nodeWhereContentChangedMarksSitemapsObsoleteForAllNodes()
     {
         final Node first = node();
-        first.cache.get( KEY, false );
+        first.cache.get( KEY );
 
         final Node origin = node();
         origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
@@ -196,7 +213,7 @@ class SitemapCacheTest
 
         clock.advance( Duration.ofSeconds( 1 ) );
         final Node fresh = node();
-        fresh.cache.get( KEY, false );
+        fresh.cache.get( KEY );
         awaitUntil( () -> generated.get() == 2 );
         fresh.awaitIdle();
         assertThat( store.load( KEY.id() ).obsolete() ).isNull();
@@ -206,7 +223,7 @@ class SitemapCacheTest
     void permissionsUpdatedEventMarksSitemapsObsolete()
     {
         final Node node = node();
-        node.cache.get( KEY, false );
+        node.cache.get( KEY );
 
         node.cache.onEvent( Event.create( "node.permissionsUpdated" )
                                 .localOrigin( true )
@@ -236,7 +253,7 @@ class SitemapCacheTest
             return generate( sink, cancelled );
         } );
 
-        final Future<Sitemap> first = requests.submit( () -> node.cache.get( KEY, true ) );
+        final Future<Sitemap> first = requests.submit( () -> node.cache.get( PUBLIC_KEY ) );
         await( started );
         clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
@@ -245,37 +262,37 @@ class SitemapCacheTest
         release.countDown();
 
         assertThat( text( first.get( 5, TimeUnit.SECONDS ) ) ).contains( "https://example.com/1" );
-        awaitUntil( () -> generated.get() == 2 && store.load( KEY.id() ).generating() == null );
-        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
-        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/2" );
+        awaitUntil( () -> generated.get() == 2 && store.load( PUBLIC_KEY.id() ).generating() == null );
+        assertThat( store.load( PUBLIC_KEY.id() ).obsolete() ).isNull();
+        awaitUntil( () -> text( node.cache.get( PUBLIC_KEY ) ).contains( "https://example.com/2" ) );
     }
 
     @Test
     void otherNodeGeneratesBackgroundSitemapWhenNodeWhereContentChangedDidNotInTime()
     {
         final Node other = node();
-        other.cache.get( KEY, true );
+        other.cache.get( PUBLIC_KEY );
 
         clock.advance( Duration.ofSeconds( 1 ) );
         other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
-        other.cache.get( KEY, true );
+        other.cache.get( PUBLIC_KEY );
         other.awaitIdle();
         assertThat( generated ).hasValue( 1 );
 
         clock.advance( SitemapCache.STALE_GENERATION.plusSeconds( 1 ) );
-        other.cache.get( KEY, true );
+        other.cache.get( PUBLIC_KEY );
         awaitUntil( () -> generated.get() == 2 );
     }
 
     @Test
     void waitsForGenerationOnAnotherNodeAndTakesOverItsStaleClaim()
     {
-        node().cache.get( KEY, false );
+        node().cache.get( KEY );
         store.markObsolete( store.load( KEY.id() ), clock.instant() );
         assertThat( store.claim( store.load( KEY.id() ), "other", clock.instant(), SitemapCache.STALE_GENERATION ) ).isTrue();
 
         final Node node = node();
-        node.cache.get( KEY, false );
+        node.cache.get( KEY );
         awaitUntil( () -> store.load( KEY.id() ).queued() != null );
         assertThat( generated ).hasValue( 1 );
 
@@ -292,7 +309,7 @@ class SitemapCacheTest
         final ExecutorService pool = Executors.newCachedThreadPool();
         executors.add( pool );
         final Node node = node( Duration.ZERO, pool );
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
         final CountDownLatch started = new CountDownLatch( 1 );
         final CountDownLatch release = new CountDownLatch( 1 );
         source.set( ( sink, cancelled ) -> {
@@ -311,16 +328,16 @@ class SitemapCacheTest
             node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
             node.awaitIdle();
         }
-        awaitUntil( () -> store.load( KEY.id() ).queued() != null );
+        awaitUntil( () -> store.load( PUBLIC_KEY.id() ).queued() != null );
         sleep( 100 );
         assertThat( generated ).hasValue( 1 );
 
         release.countDown();
         awaitUntil( () -> generated.get() == 3 );
-        awaitUntil( () -> store.load( KEY.id() ).generating() == null && store.load( KEY.id() ).queued() == null );
+        awaitUntil( () -> store.load( PUBLIC_KEY.id() ).generating() == null && store.load( PUBLIC_KEY.id() ).queued() == null );
         sleep( 100 );
         assertThat( generated ).hasValue( 3 );
-        assertThat( text( node.cache.get( KEY, true ) ) ).contains( "https://example.com/3" );
+        assertThat( text( node.cache.get( PUBLIC_KEY ) ) ).contains( "https://example.com/3" );
     }
 
     @Test
@@ -343,9 +360,9 @@ class SitemapCacheTest
             return generate( sink, cancelled );
         } );
 
-        final Future<Sitemap> editorSitemap = requests.submit( () -> node.cache.get( editor, false ) );
+        final Future<Sitemap> editorSitemap = requests.submit( () -> node.cache.get( editor ) );
         assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
-        final Future<Sitemap> anonymousSitemap = requests.submit( () -> node.cache.get( KEY, false ) );
+        final Future<Sitemap> anonymousSitemap = requests.submit( () -> node.cache.get( KEY ) );
         awaitUntil( () -> store.load( KEY.id() ) != null );
 
         assertThat( store.load( KEY.id() ).generating() ).isNotNull();
@@ -362,16 +379,16 @@ class SitemapCacheTest
     void waitsForFirstGenerationOnAnotherNode()
         throws Exception
     {
-        assertThat( store.claimNew( KEY.id(), KEY, false, "other", clock.instant() ) ).isTrue();
+        assertThat( store.claimNew( KEY.id(), KEY, "other", clock.instant() ) ).isTrue();
         final Node node = node();
 
-        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY ) );
         awaitUntil( () -> node.cache.waiting() == 1 );
         node.awaitIdle();
         assertThat( waiting ).isNotDone();
         assertThat( generated ).hasValue( 0 );
 
-        store.save( KEY.id(), KEY, false, SitemapTest.write( temp.resolve( "other" ), PARAMS,
+        store.save( KEY.id(), KEY, SitemapTest.write( temp.resolve( "other" ), PARAMS,
                                                              List.of( new SitemapEntry( "/elsewhere", SitemapParams.SITE_CONTENT_TYPE, null ) ), 10,
                                                              Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ), null, clock.instant(),
                     clock.instant() );
@@ -387,7 +404,7 @@ class SitemapCacheTest
         final ExecutorService pool = Executors.newCachedThreadPool();
         executors.add( pool );
         final Node node = node( Duration.ZERO, pool );
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
         final CountDownLatch started = new CountDownLatch( 1 );
         final CountDownLatch release = new CountDownLatch( 1 );
         source.set( ( sink, cancelled ) -> {
@@ -407,11 +424,11 @@ class SitemapCacheTest
         release.countDown();
 
         awaitUntil( () -> generated.get() == 3 );
-        awaitUntil( () -> store.load( KEY.id() ).generating() == null && store.load( KEY.id() ).generatedAt() != null );
+        awaitUntil( () -> store.load( PUBLIC_KEY.id() ).generating() == null && store.load( PUBLIC_KEY.id() ).generatedAt() != null );
         node.awaitIdle();
         sleep( 100 );
         assertThat( generated ).hasValue( 3 );
-        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+        assertThat( store.load( PUBLIC_KEY.id() ).obsolete() ).isNull();
     }
 
     @Test
@@ -421,7 +438,7 @@ class SitemapCacheTest
         final Node worker = node();
         final Node node = node( Duration.ZERO, worker.executor(), worker.cache() );
 
-        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY ) );
         awaitUntil( () -> store.load( KEY.id() ) != null && store.load( KEY.id() ).sitemap() != null );
         assertThat( waiting ).isNotDone();
 
@@ -431,33 +448,206 @@ class SitemapCacheTest
     }
 
     @Test
-    void idleBackgroundSitemapIsGeneratedAgainOnNextRequestInstead()
+    void changeOutsideTheSiteLeavesItsSitemapAlone()
     {
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( PUBLIC_KEY );
+        other.cache.get( KEY );
+        final SitemapCache.Key project = new SitemapCache.Key( "com.enonic.cms.project", "master", PUBLIC_KEY.principals(),
+                                                               new SitemapParams( "", "", List.of(), List.of(),
+                                                                                  SitemapParams.Format.HEADLESS ) );
+        other.cache.get( project );
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true,
+                                         Map.of( "path", "/content/othersite/news/a" ) ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false,
+                                        Map.of( "path", "/content/othersite/news/a" ) ) );
+
+        // the project's sitemap lists all content: generated again; the site's are not even marked
+        awaitUntil( () -> generated.get() == 4 );
+        origin.awaitIdle();
+        other.awaitIdle();
+        assertThat( store.load( PUBLIC_KEY.id() ).obsolete() ).isNull();
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+        other.cache.get( KEY );
+        other.cache.get( PUBLIC_KEY );
+        other.awaitIdle();
+        assertThat( generated ).hasValue( 4 );
+
+        origin.cache.onEvent( nodeEvent( "node.moved", "com.enonic.cms.project", "master", true,
+                                         Map.of( "path", "/content/othersite/b", "newPath", "/content/mysite/b" ) ) );
+        awaitUntil( () -> generated.get() == 6 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNotNull();
+    }
+
+    @Test
+    void changesAreKeptByTopLevelPathAndAffectSitesInAndUnderThem()
+    {
+        assertThat( SitemapCache.changedPath( "/content/mysite/news/a" ) ).isEqualTo( "/content/mysite" );
+        assertThat( SitemapCache.changedPath( "/content/mysite" ) ).isEqualTo( "/content/mysite" );
+        assertThat( SitemapCache.changedPath( "/content" ) ).isEqualTo( "/content" );
+        assertThat( SitemapCache.changedPath( "/" ) ).isEqualTo( "/" );
+
+        assertThat( SitemapCache.affects( "/content/mysite", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/", KEY ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content/mysite2", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/content/other", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/archive", KEY ) ).isFalse();
+        assertThat( SitemapCache.affects( "/content/folder", siteKey( "https://example.com" ) ) ).isFalse();
+        // a site deeper than two levels counts as changed with anything under its top level
+        assertThat( SitemapCache.affects( "/content/folder", key( "/folder/site" ) ) ).isTrue();
+        assertThat( SitemapCache.affects( "/content/other", key( "" ) ) ).isTrue();
+        assertThat( SitemapCache.affects( "/archive", key( "" ) ) ).isFalse();
+    }
+
+    @Test
+    void regenSitemapIsGeneratedAgainWithoutRequestAlsoWhenNotRequestedForLong()
+    {
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( PUBLIC_KEY );
+        clock.advance( Duration.ofDays( 7 ) );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+
+        awaitUntil( () -> generated.get() == 2 );
+    }
+
+    @Test
+    void sitemapReadBeforeChangeIsMarkedIsGeneratedAgainOnRequest()
+    {
+        regenerationDelay = Duration.ofMinutes( 1 );
+        node().cache.get( KEY );
+        clock.advance( Duration.ofSeconds( 1 ) );
+        final Node origin = node();
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        origin.cache.get( KEY );
+
+        awaitUntil( () -> generated.get() == 2 );
+        assertThat( store.load( KEY.id() ).obsolete() ).isNull();
+    }
+
+    @Test
+    void sitemapFoundUnchangedIsNotStoredAgainAndOtherNodesTakeNote()
+    {
+        source.set( ( sink, cancelled ) -> {
+            generated.incrementAndGet();
+            sink.accept( new SitemapEntry( "/same", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            return null;
+        } );
+        final Node origin = node();
+        final Node other = node();
+        other.cache.get( KEY );
+        final SitemapStore.Stored first = store.load( KEY.id() );
+        clock.advance( Duration.ofSeconds( 1 ) );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+        other.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
+        origin.awaitIdle();
+        clock.advance( Duration.ofSeconds( 1 ) );
+        origin.cache.get( KEY );
+        awaitUntil( () -> store.checks.get() == 1 );
+        origin.awaitIdle();
+
+        final SitemapStore.Stored checked = store.load( KEY.id() );
+        assertThat( checked.version() ).isEqualTo( first.version() );
+        assertThat( checked.obsolete() ).isNull();
+        assertThat( checked.generating() ).isNull();
+        assertThat( checked.startedAt() ).isAfter( first.startedAt() );
+        assertThat( generated ).hasValue( 2 );
+
+        origin.cache.get( KEY );
+        other.cache.onEvent(
+            Event.create( RepositorySitemapStore.CHECKED_EVENT ).localOrigin( false ).value( "id", KEY.id() ).build() );
+        final int tasks = submitted.get();
+        other.cache.get( KEY );
+        origin.awaitIdle();
+        other.awaitIdle();
+        assertThat( submitted ).hasValue( tasks );
+        assertThat( generated ).hasValue( 2 );
+        assertThat( store.checks ).hasValue( 1 );
+    }
+
+    @Test
+    void regenSitemapNoLongerConfiguredIsDeletedOnChangeInsteadOfGenerated()
+    {
+        final Node origin = node();
+        final SitemapCache.Key gone = publicKey( "/gone" );
+        origin.cache.get( PUBLIC_KEY );
+        origin.cache.get( gone );
+        current = key -> !key.equals( gone );
+
+        origin.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
+
+        awaitUntil( () -> store.load( gone.id() ) == null );
+        awaitUntil( () -> generated.get() == 3 );
+        origin.awaitIdle();
+        assertThat( store.load( PUBLIC_KEY.id() ) ).isNotNull();
+    }
+
+    @Test
+    void unchangedGenerationReleasesQueuedGenerationToo()
+    {
+        source.set( ( sink, cancelled ) -> {
+            generated.incrementAndGet();
+            sink.accept( new SitemapEntry( "/same", SitemapParams.SITE_CONTENT_TYPE, null ) );
+            return null;
+        } );
         final Node node = node();
-        final Sitemap first = node.cache.get( KEY, true );
-        clock.advance( SitemapCache.IDLE_TIMEOUT.plusSeconds( 1 ) );
+        node.cache.get( KEY );
+        final SitemapStore.Stored first = store.load( KEY.id() );
+        assertThat( store.queue( first, "other", clock.instant(), SitemapCache.STALE_GENERATION ) ).isTrue();
+        clock.advance( Duration.ofSeconds( 1 ) );
 
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         node.awaitIdle();
-        assertThat( generated ).hasValue( 1 );
+        clock.advance( Duration.ofSeconds( 1 ) );
+        node.cache.get( KEY );
+        awaitUntil( () -> store.checks.get() == 1 );
 
-        assertThat( node.cache.get( KEY, true ) ).isSameAs( first );
+        final SitemapStore.Stored checked = store.load( KEY.id() );
+        assertThat( checked.version() ).isEqualTo( first.version() );
+        assertThat( checked.queued() ).isNull();
+        assertThat( checked.generating() ).isNull();
+    }
+
+    @Test
+    void floodOfChangesMarksAndGeneratesOnce()
+    {
+        regenerationDelay = Duration.ofMillis( 300 );
+        final Node node = node();
+        node.cache.get( PUBLIC_KEY );
+        node.awaitIdle();
+        final int finds = store.finds.get();
+
+        for ( int i = 0; i < 1000; i++ )
+        {
+            node.cache.onEvent( nodeEvent( "node.updated", "com.enonic.cms.project", "master", true ) );
+        }
+
         awaitUntil( () -> generated.get() == 2 );
+        node.awaitIdle();
+        assertThat( store.finds.get() - finds ).isBetween( 1, 2 );
+        assertThat( generated ).hasValue( 2 );
     }
 
     @Test
     void sitemapGeneratedBeforeClusterStartedIsGeneratedAgainOnRequest()
     {
         clock.set( CLUSTER_STARTED.minusSeconds( 60 ) );
-        node().cache.get( KEY, true );
+        node().cache.get( PUBLIC_KEY );
         clock.set( CLUSTER_STARTED.plusSeconds( 60 ) );
 
         final Node node = node();
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
         awaitUntil( () -> generated.get() == 2 );
         node.awaitIdle();
 
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
         node.awaitIdle();
         assertThat( generated ).hasValue( 2 );
     }
@@ -471,11 +661,11 @@ class SitemapCacheTest
             generate( sink, cancelled );
             return clock.instant().plusSeconds( 3600 );
         } );
-        final Sitemap first = node.cache.get( KEY, false );
+        final Sitemap first = node.cache.get( KEY );
         assertThat( store.load( KEY.id() ).validUntil() ).isEqualTo( clock.instant().plusSeconds( 3600 ) );
 
         clock.advance( Duration.ofSeconds( 3600 ) );
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
         awaitUntil( () -> generated.get() == 2 );
     }
 
@@ -487,11 +677,11 @@ class SitemapCacheTest
             throw new IllegalStateException( "boom" );
         } );
 
-        assertThatThrownBy( () -> node.cache.get( KEY, false ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "boom" );
+        assertThatThrownBy( () -> node.cache.get( KEY ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "boom" );
         assertThat( store.load( KEY.id() ) ).isNull();
 
         source.set( this::generate );
-        assertThat( node.cache.get( KEY, false ).size() ).isEqualTo( 1 );
+        assertThat( node.cache.get( KEY ).size() ).isEqualTo( 1 );
     }
 
     @Test
@@ -500,16 +690,16 @@ class SitemapCacheTest
         final Node node = node();
         submitFailure.set( new IllegalStateException( "no task" ) );
 
-        assertThatThrownBy( () -> node.cache.get( KEY, false ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "no task" );
+        assertThatThrownBy( () -> node.cache.get( KEY ) ).isInstanceOf( IllegalStateException.class ).hasMessage( "no task" );
 
-        assertThat( node.cache.get( KEY, false ).size() ).isEqualTo( 1 );
+        assertThat( node.cache.get( KEY ).size() ).isEqualTo( 1 );
     }
 
     @Test
     void failedRegenerationKeepsPreviousSitemapAndReleasesClaim()
     {
         final Node node = node();
-        final Sitemap first = node.cache.get( KEY, false );
+        final Sitemap first = node.cache.get( KEY );
         final AtomicInteger failures = new AtomicInteger();
         source.set( ( sink, cancelled ) -> {
             failures.incrementAndGet();
@@ -518,13 +708,13 @@ class SitemapCacheTest
 
         clock.advance( Duration.ofSeconds( 1 ) );
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", false ) );
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
         node.awaitIdle();
 
         assertThat( failures.get() ).isEqualTo( 1 );
         assertThat( store.load( KEY.id() ).sitemap() ).isNotNull();
         assertThat( store.load( KEY.id() ).generating() ).isNull();
-        assertThat( node.cache.get( KEY, false ) ).isSameAs( first );
+        assertThat( node.cache.get( KEY ) ).isSameAs( first );
     }
 
     @Test
@@ -542,11 +732,11 @@ class SitemapCacheTest
         for ( int i = 0; i < SitemapCache.MAX_WAITING; i++ )
         {
             final SitemapCache.Key key = key( "/site-" + i );
-            waiting.add( requests.submit( () -> node.cache.get( key, false ) ) );
+            waiting.add( requests.submit( () -> node.cache.get( key ) ) );
         }
         awaitUntil( () -> node.cache.waiting() == SitemapCache.MAX_WAITING );
 
-        assertThatThrownBy( () -> node.cache.get( key( "/one-too-many" ), false ) ).isInstanceOf( SitemapBusyException.class );
+        assertThatThrownBy( () -> node.cache.get( key( "/one-too-many" ) ) ).isInstanceOf( SitemapBusyException.class );
 
         release.countDown();
         for ( final Future<Sitemap> future : waiting )
@@ -554,7 +744,32 @@ class SitemapCacheTest
             assertThat( future.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
         }
         awaitUntil( () -> store.load( key( "/one-too-many" ).id() ) != null && store.load( key( "/one-too-many" ).id() ).sitemap() != null );
-        assertThat( node.cache.get( key( "/one-too-many" ), false ).size() ).isEqualTo( 1 );
+        assertThat( node.cache.get( key( "/one-too-many" ) ).size() ).isEqualTo( 1 );
+    }
+
+    @Test
+    void deletesSitemapsGeneratedOnRequestMoreThanRetentionAgoExceptThoseBeingGenerated()
+    {
+        final Node node = node();
+        final SitemapCache.Key old = key( "/old" );
+        final SitemapCache.Key busy = key( "/busy" );
+        final SitemapCache.Key regen = publicKey( "/regen" );
+        node.cache.get( old );
+        node.cache.get( busy );
+        node.cache.get( regen );
+        assertThat( store.claim( store.load( busy.id() ), "other", clock.instant().plus( SitemapCache.RETENTION ).plusSeconds( 1 ),
+                                 SitemapCache.STALE_GENERATION ) ).isTrue();
+
+        clock.advance( SitemapCache.RETENTION.plusSeconds( 1 ) );
+        node.cache.get( KEY );
+        node.awaitIdle();
+
+        awaitUntil( () -> store.load( old.id() ) == null );
+        assertThat( store.load( busy.id() ) ).isNotNull();
+        assertThat( store.load( regen.id() ) ).isNotNull();
+        assertThat( store.load( KEY.id() ) ).isNotNull();
+        assertThat( text( node.cache.get( old ) ) ).contains( "https://example.com/" );
+        assertThat( store.load( old.id() ) ).isNotNull();
     }
 
     @Test
@@ -562,11 +777,11 @@ class SitemapCacheTest
     {
         final Node node = node();
         final SitemapCache.Key withoutPort = siteKey( "https://example.com" );
-        node.cache.get( withoutPort, false );
+        node.cache.get( withoutPort );
         for ( int port = 0; port < SitemapCache.MAX_PER_SITE; port++ )
         {
             clock.advance( Duration.ofSeconds( 1 ) );
-            node.cache.get( hostKey( port ), false );
+            node.cache.get( hostKey( port ) );
         }
         node.awaitIdle();
 
@@ -577,7 +792,7 @@ class SitemapCacheTest
 
         final SitemapCache.Key otherUser = new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "user:system:editor" ),
                                                                  withoutPort.params() );
-        node.cache.get( otherUser, false );
+        node.cache.get( otherUser );
         node.awaitIdle();
         assertThat( store.ofSite( withoutPort ) ).hasSize( SitemapCache.MAX_PER_SITE );
     }
@@ -607,7 +822,7 @@ class SitemapCacheTest
             awaitUntil( cancelled );
             return null;
         } );
-        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY, false ) );
+        final Future<Sitemap> waiting = requests.submit( () -> node.cache.get( KEY ) );
         await( started );
 
         node.cache.deactivate();
@@ -635,10 +850,10 @@ class SitemapCacheTest
             return generate( sink, cancelled );
         } );
 
-        final Future<Sitemap> slow = requests.submit( () -> node.cache.get( repoKey( "com.enonic.cms.slow" ), false ) );
+        final Future<Sitemap> slow = requests.submit( () -> node.cache.get( repoKey( "com.enonic.cms.slow" ) ) );
         assertThat( blocked.await( 5, TimeUnit.SECONDS ) ).isTrue();
 
-        assertThat( node.cache.get( repoKey( "com.enonic.cms.fast" ), false ).size() ).isEqualTo( 1 );
+        assertThat( node.cache.get( repoKey( "com.enonic.cms.fast" ) ).size() ).isEqualTo( 1 );
 
         release.countDown();
         assertThat( slow.get( 5, TimeUnit.SECONDS ).size() ).isEqualTo( 1 );
@@ -649,7 +864,7 @@ class SitemapCacheTest
     {
         regenerationDelay = Duration.ofMillis( 300 );
         final Node node = node();
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
 
         node.cache.onEvent( nodeEvent( "node.pushed", "com.enonic.cms.project", "master", true ) );
         node.awaitIdle();
@@ -673,25 +888,25 @@ class SitemapCacheTest
             return clock.instant().plusMillis( 200 );
         } );
 
-        node.cache.get( KEY, true );
+        node.cache.get( PUBLIC_KEY );
         clock.advance( Duration.ofSeconds( 1 ) );
 
         awaitUntil( () -> generated.get() == 2 );
-        assertThat( store.load( KEY.id() ).validUntil() ).isNull();
+        assertThat( store.load( PUBLIC_KEY.id() ).validUntil() ).isNull();
     }
 
     @Test
     void endsTaskAtOnceWhenSitemapIsUpToDate()
     {
         final Node node = node();
-        node.cache.get( KEY, false );
+        node.cache.get( KEY );
 
         final ProgressReporter progress = mock( ProgressReporter.class );
-        node.cache.runTask( KEY, false, null, progress );
+        node.cache.runTask( KEY, null, progress );
         assertThat( generated ).hasValue( 1 );
         verify( progress ).progress( argThat( params -> "Sitemap is up to date".equals( params.getMessage() ) ) );
 
-        node.cache.runTask( KEY, false, clock.instant(), null );
+        node.cache.runTask( KEY, clock.instant(), null );
         assertThat( generated ).hasValue( 2 );
     }
 
@@ -713,7 +928,7 @@ class SitemapCacheTest
             return null;
         } ).when( progress ).progress( any( ProgressReportParams.class ) );
 
-        node().cache.runTask( KEY, false, null, progress );
+        node().cache.runTask( KEY, null, progress );
 
         assertThat( reports ).containsExactly( "Reading contents", "0/2", "2/2", "Storing 2 URLs in 1 file", "Generated 2 URLs in 1 file" );
     }
@@ -722,8 +937,9 @@ class SitemapCacheTest
     void keyIdIsDigestOfKey()
     {
         assertThat( KEY.id() ).matches( "[0-9a-f]{64}" ).isEqualTo( new SitemapCache.Key( KEY.repositoryId(), KEY.branch(),
-                                                                                           Set.of( "role:system.everyone" ),
-                                                                                           PARAMS ).id() );
+                                                                                           USER, PARAMS ).id() );
+        assertThat( KEY.isPublic() ).isFalse();
+        assertThat( PUBLIC_KEY.isPublic() ).isTrue();
         assertThat( siteKey( "https://example.com:8443" ).id() ).isNotEqualTo( siteKey( "https://example.com" ).id() );
         assertThat( SitemapCache.Key.restore( KEY.store() ) ).isEqualTo( KEY );
     }
@@ -751,18 +967,19 @@ class SitemapCacheTest
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
         executors.add( executor );
         final AtomicReference<SitemapCache> self = new AtomicReference<>();
-        final SitemapCache.Tasks tasks = ( key, background, changedAt ) -> {
+        final SitemapCache.Tasks tasks = ( key, changedAt ) -> {
+            submitted.incrementAndGet();
             final RuntimeException failure = submitFailure.getAndSet( null );
             if ( failure != null )
             {
                 throw failure;
             }
             ( taskExecutor != null ? taskExecutor : executor ).execute(
-                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, background, changedAt, null ) );
+                () -> ( taskNode != null ? taskNode : self.get() ).runTask( key, changedAt, null ) );
         };
         final SitemapCache cache = new SitemapCache( store, key -> ( sink, cancelled ) -> source.get().write( sink, cancelled ), tasks,
                                                      executor, clock, CLUSTER_STARTED, regenerationDelay, fileRetention,
-                                                     temp.resolve( "node-" + nodes.size() ) );
+                                                     temp.resolve( "node-" + nodes.size() ), key -> current.test( key ) );
         self.set( cache );
         nodes.add( cache );
         return new Node( cache, executor );
@@ -788,13 +1005,19 @@ class SitemapCacheTest
 
     private static SitemapCache.Key key( final String sitePath )
     {
-        return new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ),
+        return new SitemapCache.Key( "com.enonic.cms.project", "master", USER,
+                                     new SitemapParams( sitePath, "https://example.com", List.of(), List.of() ) );
+    }
+
+    private static SitemapCache.Key publicKey( final String sitePath )
+    {
+        return new SitemapCache.Key( "com.enonic.cms.project", "master", ANONYMOUS,
                                      new SitemapParams( sitePath, "https://example.com", List.of(), List.of() ) );
     }
 
     private static SitemapCache.Key siteKey( final String siteUrl )
     {
-        return new SitemapCache.Key( "com.enonic.cms.project", "master", Set.of( "role:system.everyone" ),
+        return new SitemapCache.Key( "com.enonic.cms.project", "master", USER,
                                      new SitemapParams( "/mysite", siteUrl, List.of(), List.of() ) );
     }
 
@@ -805,15 +1028,23 @@ class SitemapCacheTest
 
     private static SitemapCache.Key repoKey( final String repo )
     {
-        return new SitemapCache.Key( repo, "master", Set.of(), PARAMS );
+        return new SitemapCache.Key( repo, "master", USER, PARAMS );
     }
 
+    /**
+     * A change of the content root, above every site.
+     */
     private static Event nodeEvent( final String type, final String repo, final String branch, final boolean localOrigin )
     {
-        return Event.create( type )
-            .localOrigin( localOrigin )
-            .value( "nodes", List.of( Map.of( "id", "1", "path", "/content/a", "repo", repo, "branch", branch ) ) )
-            .build();
+        return nodeEvent( type, repo, branch, localOrigin, Map.of( "path", "/content" ) );
+    }
+
+    private static Event nodeEvent( final String type, final String repo, final String branch, final boolean localOrigin,
+                                    final Map<String, String> paths )
+    {
+        final Map<String, String> node = new HashMap<>( paths );
+        node.putAll( Map.of( "id", "1", "repo", repo, "branch", branch ) );
+        return Event.create( type ).localOrigin( localOrigin ).value( "nodes", List.of( node ) ).build();
     }
 
     private static Event storedEvent( final String type, final String id )

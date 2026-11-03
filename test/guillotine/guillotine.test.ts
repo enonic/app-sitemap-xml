@@ -47,9 +47,9 @@ const URLS = [
 ];
 
 const bean = {
-	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
-	guillotineFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
-	guillotineFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
+	headlessUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
+	headlessFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
+	headlessFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
 	portalBaseUrl: jest.fn((_sitePath: string) => 'https://portal.example.com'),
 };
 
@@ -169,7 +169,7 @@ describe('guillotine extensions', () => {
 			expect(Object.keys(res.types)).toEqual(['Sitemap', 'Sitemap_Url', 'Sitemap_File']);
 			expect(Object.keys(res.types.Sitemap.fields)).toEqual(['baseUrl', 'urlset', 'files', 'file']);
 			expect(Object.keys(res.types.Sitemap_File.fields)).toEqual(['number', 'lastmod', 'urlset']);
-			expect(Object.keys(res.resolvers.Sitemap)).toEqual(['urlset', 'files', 'file']);
+			expect(Object.keys(res.resolvers.Sitemap)).toEqual(['baseUrl', 'urlset', 'files', 'file']);
 			expect(Object.keys(res.resolvers.Sitemap_File)).toEqual(['urlset']);
 
 			// print(res);
@@ -183,6 +183,7 @@ describe('guillotine extensions', () => {
 						sitemap: sitemapResolver
 					},
 					Sitemap: {
+						baseUrl: baseUrlResolver,
 						urlset: urlsetResolver,
 						files: filesResolver,
 						file: fileResolver,
@@ -212,10 +213,13 @@ describe('guillotine extensions', () => {
 					scopeKey: siteContent._path,
 					siteConfigJson: JSON.stringify(siteConfig)
 				},
-				source: {
-					baseUrl: 'https://enonic.com'
-				},
+				source: {},
 			});
+			const baseUrlOf = (result: typeof sitemapResolverResult) =>
+				baseUrlResolver({args: {}, localContext: result.localContext, source: result.source});
+			expect(baseUrlOf(sitemapResolverResult)).toBe('https://enonic.com');
+			// the portal Base URL is only looked up without an override
+			expect(bean.portalBaseUrl).not.toHaveBeenCalled();
 
 			for (const keys of [
 				{siteKey: siteContent._path},
@@ -232,7 +236,7 @@ describe('guillotine extensions', () => {
 					},
 					source: null
 				});
-				expect(result.source).toEqual(sitemapResolverResult.source);
+				expect(baseUrlOf(result)).toBe('https://enonic.com');
 				expect(result.localContext.siteJson).toBe(JSON.stringify(siteContent));
 			}
 
@@ -247,7 +251,7 @@ describe('guillotine extensions', () => {
 					localContext: {branch: 'master', project: 'project', ...keys},
 					source: null
 				});
-				expect(result.source).toEqual({baseUrl: projectConfig.overrideDomain});
+				expect(baseUrlOf(result)).toBe(projectConfig.overrideDomain);
 				const {run: runInContext} = await import('/lib/xp/context');
 				expect(jest.mocked(runInContext)).toHaveBeenCalledWith({principals: ['role:system.admin']}, expect.any(Function));
 				expect(result.localContext.siteJson).toBe('null');
@@ -258,9 +262,9 @@ describe('guillotine extensions', () => {
 					source: result.source
 				});
 				expect(urls).toEqual(URLS);
-				expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+				expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 					sitePath: '',
-					siteUrl: projectConfig.overrideDomain,
+					siteUrl: '',
 				}), 2147483647);
 				const {run} = await import('/lib/xp/context');
 				expect(jest.mocked(run)).toHaveBeenLastCalledWith(
@@ -285,8 +289,15 @@ describe('guillotine extensions', () => {
 				localContext: {branch: 'master', project: 'project'},
 				source: null
 			});
-			expect(portalResult.source).toEqual({baseUrl: 'https://portal.example.com'});
+			expect(bean.portalBaseUrl).not.toHaveBeenCalled();
+			const {run} = await import('/lib/xp/context');
+			expect(baseUrlOf(portalResult)).toBe('https://portal.example.com');
 			expect(bean.portalBaseUrl).toHaveBeenLastCalledWith('');
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+			bean.portalBaseUrl.mockReturnValueOnce(null as unknown as string);
+			expect(baseUrlOf(portalResult)).toBeNull();
 
 			const urlsetResolverResult = urlsetResolver({
 				args: {
@@ -297,9 +308,9 @@ describe('guillotine extensions', () => {
 			});
 			// print(urlsetResolverResult);
 			expect(urlsetResolverResult).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 				sitePath: siteContent._path,
-				siteUrl: 'https://enonic.com',
+				siteUrl: '',
 			}), 10);
 
 			expect(urlsetResolver({
@@ -307,14 +318,14 @@ describe('guillotine extensions', () => {
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			})).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 5000);
 
 			expect(urlsetResolver({
 				args: {count: 0},
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			})).toEqual([]);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
 
 			const files = filesResolver({args: {}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source});
 			expect(files).toEqual([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}]);
@@ -324,7 +335,7 @@ describe('guillotine extensions', () => {
 				.toBeNull();
 			expect(fileUrlsetResolver({args: {}, localContext: sitemapResolverResult.localContext, source: files[0]})).toEqual(URLS);
 			expect(fileUrlsetResolver({args: {}, localContext: sitemapResolverResult.localContext, source: files[1]})).toEqual([]);
-			expect(bean.guillotineFile).toHaveBeenLastCalledWith(expect.anything(), 2);
+			expect(bean.headlessFile).toHaveBeenLastCalledWith(expect.anything(), 2);
 		}); // import
 	}); // it
 }); // guillotine extensions

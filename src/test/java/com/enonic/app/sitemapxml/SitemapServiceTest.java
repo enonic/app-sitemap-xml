@@ -4,10 +4,13 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +25,8 @@ import com.enonic.xp.content.ContentPath;
 import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.data.PropertyTree;
+import com.enonic.xp.portal.PortalRequest;
+import com.enonic.xp.portal.PortalRequestAccessor;
 import com.enonic.xp.portal.url.PortalScope;
 import com.enonic.xp.portal.url.PortalScopeParams;
 import com.enonic.xp.portal.url.PortalUrlService;
@@ -39,12 +44,15 @@ import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
 import com.enonic.xp.site.SiteConfig;
 import com.enonic.xp.site.SiteConfigs;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -71,12 +79,19 @@ class SitemapServiceTest
     @Mock
     private SitemapCache cache;
 
+    @Mock
+    private VirtualHostService virtualHostService;
+
+    private final List<VirtualHost> configured = new ArrayList<>();
+
+    private @Nullable String served;
+
     @Test
     void usesBaseUrlOfSite()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
 
-        final SitemapCache.Key key = sitemap( true, true );
+        final SitemapCache.Key key = files( true, false );
 
         assertThat( key.params().siteUrl() ).isEqualTo( "https://www.example.com" );
         assertThat( key.repositoryId() ).isEqualTo( "com.enonic.cms.project" );
@@ -89,24 +104,24 @@ class SitemapServiceTest
     }
 
     @Test
-    void givesPortalBaseUrlWithoutTrailingSlashForGuillotine()
+    void givesPortalBaseUrlWithoutTrailingSlashForHeadless()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
 
         assertThat( inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache,
-                                                         Clock.systemUTC() ).portalBaseUrl( "/mysite" ) ) ).contains(
+                                                         Clock.systemUTC(), virtualHostService ).portalBaseUrl( "/mysite" ) ) ).contains(
             "https://www.example.com" );
     }
 
     @Test
     void draftGetsOnlyTheSiteWithoutCaching()
     {
-        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
         verify( cache ).uncached( key.capture(), any( AuthenticationInfo.class ), source.capture() );
-        verify( cache, never() ).get( any(), anyBoolean() );
+        verify( cache, never() ).get( any() );
         assertThat( key.getValue().branch() ).isEqualTo( "master" );
         final List<SitemapEntry> entries = new ArrayList<>();
         assertThat( source.getValue().write( entries::add, () -> false ) ).isNull();
@@ -118,13 +133,14 @@ class SitemapServiceTest
     {
         final Content site = site( AccessControlList.empty() );
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
+        when( cache.get( any() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean() );
+        verify( cache ).get( key.capture() );
         assertThat( key.getValue().principals() ).contains( "user:system:editor" );
+        assertThat( key.getValue().isPublic() ).isFalse();
         verify( cache, never() ).uncached( any(), any(), any() );
     }
 
@@ -134,14 +150,15 @@ class SitemapServiceTest
         final Content site =
             site( AccessControlList.of( AccessControlEntry.create().principal( RoleKeys.EVERYONE ).allow( Permission.READ ).build() ) );
         when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( PARAMS ) );
+        when( cache.get( any() ) ).thenReturn( write( PARAMS ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, false ) );
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean() );
+        verify( cache ).get( key.capture() );
         assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
                                                                              RoleKeys.EVERYONE.toString() );
+        assertThat( key.getValue().isPublic() ).isTrue();
     }
 
     @Test
@@ -149,13 +166,13 @@ class SitemapServiceTest
     {
         final SitemapParams project = new SitemapParams( "", "", List.of(), List.of() );
         when( projectService.getPublicRead( ProjectName.from( "project" ) ) ).thenReturn( true );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn( write( project ) );
+        when( cache.get( any() ) ).thenReturn( write( project ) );
 
-        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+        asUser( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( project,
                                                                                                                                 false ) );
 
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), anyBoolean() );
+        verify( cache ).get( key.capture() );
         assertThat( key.getValue().principals() ).containsExactlyInAnyOrder( PrincipalKey.ofAnonymous().toString(),
                                                                              RoleKeys.EVERYONE.toString() );
         verify( contentService, never() ).getByPath( any() );
@@ -169,7 +186,7 @@ class SitemapServiceTest
             .repositoryId( "com.enonic.cms.project" )
             .branch( "draft" )
             .build()
-            .callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( project,
+            .callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( project,
                                                                                                                                         false ) );
 
         final ArgumentCaptor<SitemapCache.Source> source = ArgumentCaptor.forClass( SitemapCache.Source.class );
@@ -188,28 +205,100 @@ class SitemapServiceTest
         final SitemapResponse response = inContext( () -> bean().root( value ) );
 
         assertThat( response.getStatus() ).isEqualTo( 400 );
-        verify( cache, never() ).get( any(), anyBoolean() );
+        verify( cache, never() ).get( any() );
     }
 
     @Test
-    void usesRequestUrlWithoutBaseUrl()
+    void requestUrlOfVirtualHostMatchingItsHostExactlyWithoutPortHasItsOwnSitemap()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "site", "www.example.com Request.Example.com" );
+        served = "site";
 
-        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        final SitemapCache.Key key = files( true, false );
+        assertThat( key.params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( key.isPublic() ).isTrue();
+    }
+
+    @Test
+    void requestUrlOfVirtualHostMatchingItsHostByPatternIsConvertedFromHeadless()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "site", "~.*\\.example\\.com" );
+        served = "site";
+
+        files( true, true );
+    }
+
+    @Test
+    void requestUrlServedByPatternIsConvertedAlsoWhenAnotherVirtualHostHasTheHostExactly()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "exact", "request.example.com" );
+        virtualHosts( "pattern", "~.*\\.example\\.com" );
+        served = "pattern";
+
+        files( true, true );
+    }
+
+    @Test
+    void requestUrlWithoutVirtualHostOnTheRequestIsConverted()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "site", "request.example.com" );
+
+        files( true, true );
+    }
+
+    @Test
+    void requestUrlWithPortIsConverted()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        virtualHosts( "site", "request.example.com" );
+        served = "site";
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
+
+        final SitemapFiles files = inServedRequest( () -> inContext(
+            () -> service().files( PARAMS.withSiteUrl( "https://request.example.com:8443/mysite" ), true ) ) );
+
+        assertThat( SitemapTest.text( files.root() ) ).contains( "<loc>https://request.example.com:8443/mysite/a</loc>" );
+        verify( virtualHostService, never() ).getVirtualHosts();
+    }
+
+    @Test
+    void requestUrlIsConvertedWhenVirtualHostsAreDisabled()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        served = "site";
+
+        files( true, true );
+    }
+
+    @Test
+    void requestUrlOfLoggedInUserOnSiteNotReadableByEveryoneHasItsOwnSitemap()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        final Content site = site( AccessControlList.empty() );
+        when( contentService.getByPath( ContentPath.from( "/mysite" ) ) ).thenReturn( site );
+        when( cache.get( any() ) ).thenReturn( write( PARAMS ) );
+
+        assertThat( asUser( () -> service().files( PARAMS, true ) ) ).isInstanceOf( Sitemap.class );
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( key.getValue().isPublic() ).isFalse();
+        assertThat( key.getValue().params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
     }
 
     @Test
     void lowerCasesHostOfRequestUrl()
     {
         when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
 
-        inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap(
-            PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
+        final SitemapFiles files =
+            inContext( () -> service().files( PARAMS.withSiteUrl( "https://WWW.Example.COM:8443/My%20Site" ), true ) );
 
-        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( false ) );
-        assertThat( key.getValue().params().siteUrl() ).isEqualTo( "https://www.example.com:8443/My%20Site" );
+        assertThat( SitemapTest.text( files.root() ) ).contains( "<loc>https://www.example.com:8443/My%20Site/a</loc>" );
     }
 
     @Test
@@ -217,19 +306,31 @@ class SitemapServiceTest
     {
         when( portalUrlService.portalScope( any() ) ).thenThrow( new IllegalStateException( "boom" ) );
 
-        assertThat( sitemap( true, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        files( true, true );
     }
 
     @Test
     void ignoresBaseUrlWhenOverridden()
     {
-        assertThat( sitemap( false, true ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+        assertThat( files( false, false ).params().siteUrl() ).isEqualTo( PARAMS.siteUrl() );
+    }
+
+    @Test
+    void beanAnswers400ForRequestUrlLongerThanAHeadlessSitemapAllows()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( null ) );
+        when( cache.get( any() ) ).thenReturn( headless( new SitemapEntry( "/a", "portal:site", null ) ) );
+        final String siteUrl = "https://example.com/" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH );
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( Map.of( "sitePath", "/mysite", "siteUrl", siteUrl, "siteUrlFromRequest", true ) );
+
+        assertThat( inContext( () -> bean().root( value ) ).getStatus() ).isEqualTo( 400 );
     }
 
     @Test
     void beanAnswers429WhenBusy()
     {
-        when( cache.get( any(), anyBoolean() ) ).thenThrow( new SitemapBusyException() );
+        when( cache.get( any() ) ).thenThrow( new SitemapBusyException() );
 
         final SitemapResponse response = inContext( () -> bean().root( scriptValue() ) );
 
@@ -243,9 +344,10 @@ class SitemapServiceTest
     {
         final List<SitemapEntry> entries =
             List.of( new SitemapEntry( "/a", "portal:site", null ), new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn(
-            SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 1,
-                               Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
+        // an anonymous request with the site URL of the request: converted from the headless sitemap
+        when( cache.get( any() ) ).thenReturn(
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ), entries,
+                               1, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
         assertThat( SitemapTest.text( inContext( () -> bean.root( scriptValue() ) ).getBody() ) ).contains( "<sitemapindex" );
@@ -262,7 +364,7 @@ class SitemapServiceTest
     void beanAnswers304WhenEntityTagMatches()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn(
+        when( cache.get( any() ) ).thenReturn(
             SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 10,
                                Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
@@ -286,35 +388,126 @@ class SitemapServiceTest
     }
 
     @Test
-    void beanAnswersGuillotineQueries()
+    void beanSendsLastModifiedAndAnswers304WhenNotModifiedSince()
     {
-        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
-                                                    new SitemapEntry( "/b", "portal:site", null ) );
-        when( cache.get( any(), anyBoolean() ) ).thenReturn(
-            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of() ), entries, 1,
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", null ) );
+        when( cache.get( any() ) ).thenReturn(
+            SitemapTest.write( temp, new SitemapParams( "/mysite", "https://example.com", List.of(), List.of() ), entries, 10,
                                Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
         final SitemapBean bean = bean();
 
-        assertThat( inContext( () -> bean.guillotineFiles( scriptValue() ) ) ).isEqualTo(
-            "[{\"number\":1,\"lastmod\":\"2024-06-01T00:00:00Z\"},{\"number\":2,\"lastmod\":\"2024-06-01T00:00:00Z\"}]" );
-        assertThat( inContext( () -> bean.guillotineUrlset( scriptValue(), 1 ) ) ).isEqualTo(
-            "[{\"path\":\"/a\",\"lastmod\":\"2024-01-01T00:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
-        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 2 ) ) ).isEqualTo(
-            "[{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
-        assertThat( inContext( () -> bean.guillotineFile( scriptValue(), 3 ) ) ).isNull();
+        final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
+        // the files were last changed at SitemapTest.NOW
+        assertThat( first.getLastModified() ).isEqualTo( "Sat, 01 Jun 2024 00:00:00 GMT" );
 
-        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache, atLeastOnce() ).get( key.capture(), eq( true ) );
-        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        assertThat( inContext( () -> bean.root( since( "Sat, 01 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
+        assertThat( inContext( () -> bean.root( since( "Sun, 02 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
+        assertThat( inContext( () -> bean.root( since( "Fri, 31 May 2024 23:59:59 GMT", null ) ) ).getStatus() ).isEqualTo( 200 );
+        assertThat( inContext( () -> bean.root( since( "not a date", null ) ) ).getStatus() ).isEqualTo( 200 );
+        // If-None-Match decides when present
+        assertThat( inContext( () -> bean.root( since( "Sun, 02 Jun 2024 00:00:00 GMT", "\"other\"" ) ) ).getStatus() ).isEqualTo(
+            200 );
     }
 
-    private SitemapCache.Key sitemap( final boolean siteUrlFromRequest, final boolean background )
+    private static ScriptValue since( final String ifModifiedSince, final @Nullable String ifNoneMatch )
     {
-        inContext(
-            () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC() ).sitemap( PARAMS, siteUrlFromRequest ) );
+        final Map<String, Object> map = new HashMap<>(
+            Map.of( "sitePath", "/mysite", "siteUrl", "https://example.com", "siteUrlFromRequest", true, "ifModifiedSince",
+                    ifModifiedSince ) );
+        if ( ifNoneMatch != null )
+        {
+            map.put( "ifNoneMatch", ifNoneMatch );
+        }
+        final ScriptValue value = mock( ScriptValue.class );
+        when( value.getMap() ).thenReturn( map );
+        return value;
+    }
+
+    @Test
+    void beanAnswersHeadlessQueries()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "portal:site", Instant.parse( "2024-01-01T00:00:00Z" ) ),
+                                                    new SitemapEntry( "/b", "portal:site", null ) );
+        when( cache.get( any() ) ).thenReturn(
+            SitemapTest.write( temp.resolve( "g" ), new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ),
+                               entries, 1, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ) );
+        final SitemapBean bean = bean();
+
+        assertThat( inContext( () -> bean.headlessFiles( scriptValue() ) ) ).isEqualTo(
+            "[{\"number\":1,\"lastmod\":\"2024-06-01T00:00:00Z\"},{\"number\":2,\"lastmod\":\"2024-06-01T00:00:00Z\"}]" );
+        assertThat( inContext( () -> bean.headlessUrlset( scriptValue(), 1 ) ) ).isEqualTo(
+            "[{\"path\":\"/a\",\"lastmod\":\"2024-01-01T00:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+        assertThat( inContext( () -> bean.headlessFile( scriptValue(), 2 ) ) ).isEqualTo(
+            "[{\"path\":\"/b\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}]" );
+        assertThat( inContext( () -> bean.headlessFile( scriptValue(), 3 ) ) ).isNull();
+
         final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
-        verify( cache ).get( key.capture(), eq( background ) );
+        verify( cache, atLeastOnce() ).get( key.capture() );
+        assertThat( key.getValue().isPublic() ).isTrue();
+        assertThat( key.getValue().branch() ).isEqualTo( "master" );
+        assertThat( key.getValue().params().format() ).isEqualTo( SitemapParams.Format.HEADLESS );
+        assertThat( key.getValue().params().siteUrl() ).isEmpty();
+    }
+
+    /**
+     * The files of {@code sitemap.xml} for an anonymous request: a sitemap of their own, or converted from the headless sitemap.
+     *
+     * @return the key of the sitemap got from the cache
+     */
+    private SitemapCache.Key files( final boolean siteUrlFromRequest, final boolean converted )
+    {
+        when( cache.get( any() ) ).thenReturn( write( PARAMS ) );
+        final SitemapFiles files = inServedRequest( () -> inContext( () -> service().files( PARAMS, siteUrlFromRequest ) ) );
+        final ArgumentCaptor<SitemapCache.Key> key = ArgumentCaptor.forClass( SitemapCache.Key.class );
+        verify( cache ).get( key.capture() );
+        assertThat( files ).isInstanceOf( converted ? ConvertedSitemap.class : Sitemap.class );
+        assertThat( key.getValue().params().format() ).isEqualTo(
+            converted ? SitemapParams.Format.HEADLESS : SitemapParams.Format.XML );
+        if ( converted )
+        {
+            assertThat( key.getValue().params().siteUrl() ).isEmpty();
+        }
         return key.getValue();
+    }
+
+    private SitemapService service()
+    {
+        return new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService );
+    }
+
+    private Sitemap headless( final SitemapEntry... entries )
+    {
+        return SitemapTest.write( temp.resolve( "g" + System.nanoTime() ),
+                                  new SitemapParams( "/mysite", "", List.of(), List.of(), SitemapParams.Format.HEADLESS ), List.of( entries ),
+                                  10, Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES );
+    }
+
+    private void virtualHosts( final String name, final String host )
+    {
+        final VirtualHost virtualHost = mock( VirtualHost.class );
+        lenient().when( virtualHost.getName() ).thenReturn( name );
+        lenient().when( virtualHost.getHost() ).thenReturn( host );
+        configured.add( virtualHost );
+        lenient().when( virtualHostService.isEnabled() ).thenReturn( true );
+        lenient().when( virtualHostService.getVirtualHosts() ).thenReturn( configured );
+    }
+
+    /**
+     * Runs as a portal request that came through the virtual host named {@link #served}, if any.
+     */
+    private <T> T inServedRequest( final Supplier<T> supplier )
+    {
+        if ( served == null )
+        {
+            return supplier.get();
+        }
+        final VirtualHost virtualHost = mock( VirtualHost.class );
+        when( virtualHost.getName() ).thenReturn( served );
+        final HttpServletRequest raw = mock( HttpServletRequest.class );
+        when( raw.getAttribute( VirtualHost.class.getName() ) ).thenReturn( virtualHost );
+        final PortalRequest request = new PortalRequest();
+        request.setRawRequest( raw );
+        return PortalRequestAccessor.callWith( request, supplier );
     }
 
     private SitemapBean bean()
@@ -324,6 +517,7 @@ class SitemapServiceTest
         when( context.getService( ProjectService.class ) ).thenReturn( () -> projectService );
         when( context.getService( PortalUrlService.class ) ).thenReturn( () -> portalUrlService );
         when( context.getService( SitemapCache.class ) ).thenReturn( () -> cache );
+        when( context.getService( VirtualHostService.class ) ).thenReturn( () -> virtualHostService );
         final SitemapBean bean = new SitemapBean();
         bean.initialize( context );
         return bean;

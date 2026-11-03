@@ -20,7 +20,8 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
-import com.enonic.xp.portal.url.PortalScopeParams;
+import com.enonic.xp.portal.PortalRequest;
+import com.enonic.xp.portal.PortalRequestAccessor;
 import com.enonic.xp.portal.url.PortalUrlService;
 import com.enonic.xp.project.ProjectName;
 import com.enonic.xp.project.ProjectService;
@@ -29,6 +30,9 @@ import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostHelper;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 public final class SitemapService
 {
@@ -38,20 +42,21 @@ public final class SitemapService
 
     private final ProjectService projectService;
 
-    private final PortalUrlService portalUrlService;
-
     private final SitemapCache cache;
 
     private final Clock clock;
 
+    private final SiteUrls siteUrls;
+
     public SitemapService( final ContentService contentService, final ProjectService projectService,
-                           final PortalUrlService portalUrlService, final SitemapCache cache, final Clock clock )
+                           final PortalUrlService portalUrlService, final SitemapCache cache, final Clock clock,
+                           final VirtualHostService virtualHostService )
     {
         this.contentService = contentService;
         this.projectService = projectService;
-        this.portalUrlService = portalUrlService;
         this.cache = cache;
         this.clock = clock;
+        this.siteUrls = new SiteUrls( portalUrlService, virtualHostService );
     }
 
     /**
@@ -65,21 +70,67 @@ public final class SitemapService
     public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
         final Context context = ContextAccessor.current();
+        return sitemap( context, resolve( context, requested, siteUrlFromRequest ).key() );
+    }
+
+    private Sitemap sitemap( final Context context, final SitemapCache.Key key )
+    {
+        if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
+        {
+            final SitemapCache.Source draft = key.params().sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
+            return cache.uncached( key, context.getAuthInfo(), draft );
+        }
+        return cache.get( key );
+    }
+
+    /**
+     * The files of {@code sitemap.xml} for the request. A public sitemap whose URLs are taken from the request, as no Base URL or virtual
+     * host matching its host exactly gives them, is converted from the site's headless sitemap with the request's site URL, instead of
+     * being generated for each host: the headless sitemap is the same for every host and generated again without a request.
+     *
+     * @throws InvalidSiteUrlException when such a site URL is longer than {@link Sitemap#MAX_BASE_URL_LENGTH}
+     */
+    public SitemapFiles files( final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
+        final Context context = ContextAccessor.current();
+        final Resolved resolved = resolve( context, requested, siteUrlFromRequest );
+        final SitemapCache.Key key = resolved.key();
+        if ( !ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) && key.isPublic() && siteUrlFromRequest &&
+            !resolved.baseUrl() && !siteUrls.isVirtualHostUrl( key.params(), servedVirtualHost() ) )
+        {
+            final SitemapParams headless = key.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS );
+            return new ConvertedSitemap(
+                cache.get( new SitemapCache.Key( key.repositoryId(), key.branch(), key.principals(), headless ) ), key.params() );
+        }
+        return sitemap( context, key );
+    }
+
+    /**
+     * The key of the sitemap for the request: with the Base URL configured for the site in XP when the site URL would be taken from the
+     * request, and for the principals the sitemap is generated for.
+     *
+     * @param baseUrl whether the site URL is the Base URL configured for the site in XP
+     */
+    private record Resolved(SitemapCache.Key key, boolean baseUrl)
+    {
+    }
+
+    private Resolved resolve( final Context context, final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
         final RepositoryId repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" );
         final Branch branch = ContentConstants.BRANCH_MASTER;
-
         final Optional<String> baseUrl = siteUrlFromRequest ? baseUrl( repositoryId, branch, requested.sitePath() ) : Optional.empty();
         final SitemapParams params =
             baseUrl.map( requested::withSiteUrl ).orElseGet( () -> siteUrlFromRequest ? requested.forRequestSiteUrl() : requested );
         final AuthenticationInfo authInfo = sitemapAuthInfo( context, repositoryId, params.sitePath() );
-        final SitemapCache.Key key = new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals( authInfo ), params );
+        return new Resolved( new SitemapCache.Key( repositoryId.toString(), branch.getValue(), principals( authInfo ), params ),
+                             baseUrl.isPresent() );
+    }
 
-        if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
-        {
-            final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
-            return cache.uncached( key, context.getAuthInfo(), draft );
-        }
-        return cache.get( key, !siteUrlFromRequest || baseUrl.isPresent() );
+    private static @Nullable VirtualHost servedVirtualHost()
+    {
+        final PortalRequest request = PortalRequestAccessor.get();
+        return request == null || request.getRawRequest() == null ? null : VirtualHostHelper.getVirtualHost( request.getRawRequest() );
     }
 
     /**
@@ -158,19 +209,6 @@ public final class SitemapService
 
     private Optional<String> baseUrl( final RepositoryId repositoryId, final Branch branch, final String sitePath )
     {
-        try
-        {
-            return Optional.ofNullable( portalUrlService.portalScope( PortalScopeParams.create()
-                                                                          .setProjectName( ProjectName.from( repositoryId ) )
-                                                                          .setBranch( branch )
-                                                                          .setContentPath( ContentPath.from(
-                                                                              sitePath.isEmpty() ? "/" : sitePath ) )
-                                                                          .build() ).getBaseUrl() );
-        }
-        catch ( RuntimeException e )
-        {
-            LOG.debug( "Could not resolve Base URL of {}", sitePath, e );
-            return Optional.empty();
-        }
+        return siteUrls.baseUrl( repositoryId, branch, sitePath );
     }
 }

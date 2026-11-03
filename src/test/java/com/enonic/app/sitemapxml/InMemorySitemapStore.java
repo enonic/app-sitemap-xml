@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -24,6 +25,10 @@ final class InMemorySitemapStore
 
     final AtomicInteger saves = new AtomicInteger();
 
+    final AtomicInteger finds = new AtomicInteger();
+
+    final AtomicInteger checks = new AtomicInteger();
+
     @Override
     public synchronized @Nullable Stored load( final String id )
     {
@@ -31,15 +36,15 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final boolean background, final String member,
+    public synchronized boolean claimNew( final String id, final SitemapCache.Key key, final String member,
                                           final Instant now )
     {
         if ( stored.containsKey( id ) )
         {
             return false;
         }
-        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, background, null, null, null, null, null,
-                                    new Generating( member, now ), null, null ) );
+        stored.put( id, new Stored( id, UUID.randomUUID().toString(), key, null, null, null, null, null,
+                                    new Generating( member, now ), null ) );
         return true;
     }
 
@@ -58,7 +63,7 @@ final class InMemorySitemapStore
         }
         final Generating queued = latest.queued();
         stored.put( latest.id(), with( latest, latest.obsolete(), new Generating( member, now ),
-                                       queued != null && queued.member().equals( member ) ? null : queued, latest.accessed() ) );
+                                       queued != null && queued.member().equals( member ) ? null : queued ) );
         return true;
     }
 
@@ -75,12 +80,12 @@ final class InMemorySitemapStore
         {
             return false;
         }
-        stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), new Generating( member, now ), latest.accessed() ) );
+        stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), new Generating( member, now ) ) );
         return true;
     }
 
     @Override
-    public synchronized Stored save( final String id, final SitemapCache.Key key, final boolean background, final Sitemap sitemap,
+    public synchronized Stored save( final String id, final SitemapCache.Key key, final Sitemap sitemap,
                                      final @Nullable Instant validUntil, final Instant startedAt, final Instant now )
     {
         final Map<String, byte[]> files = new HashMap<>();
@@ -96,9 +101,9 @@ final class InMemorySitemapStore
         } );
         final Stored previous = stored.get( id );
         final Instant obsolete = previous == null ? null : previous.obsolete();
-        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key, background,
+        final Stored saved = new Stored( id, UUID.randomUUID().toString(), key,
                                          sitemap.withFiles( name -> ByteSource.wrap( files.get( name ) ) ), validUntil, startedAt, now,
-                                         obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null, null );
+                                         obsolete != null && !obsolete.isBefore( startedAt ) ? obsolete : null, null, null );
         stored.put( id, saved );
         saves.incrementAndGet();
         return saved;
@@ -118,8 +123,25 @@ final class InMemorySitemapStore
         }
         else
         {
-            stored.put( id, with( latest, latest.obsolete(), null, latest.queued(), latest.accessed() ) );
+            stored.put( id, with( latest, latest.obsolete(), null, latest.queued() ) );
         }
+    }
+
+    @Override
+    public synchronized @Nullable Stored check( final Stored current, final String member, final Instant startedAt )
+    {
+        final Stored latest = stored.get( current.id() );
+        if ( latest == null || !latest.version().equals( current.version() ) )
+        {
+            return null;
+        }
+        checks.incrementAndGet();
+        final Instant obsolete = latest.obsolete() != null && latest.obsolete().isBefore( startedAt ) ? null : latest.obsolete();
+        final Stored checked =
+            new Stored( latest.id(), latest.version(), latest.key(), latest.sitemap(), latest.validUntil(), startedAt,
+                        startedAt, obsolete, null, null );
+        stored.put( latest.id(), checked );
+        return checked;
     }
 
     @Override
@@ -129,23 +151,23 @@ final class InMemorySitemapStore
         if ( latest != null && latest.version().equals( current.version() ) &&
             ( latest.obsolete() == null || latest.obsolete().isBefore( now ) ) )
         {
-            stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued(), latest.accessed() ) );
+            stored.put( latest.id(), with( latest, now, latest.generating(), latest.queued() ) );
         }
     }
 
     @Override
-    public synchronized void touch( final Stored current, final Instant now )
+    public synchronized List<Stored> generatedOnRequestBefore( final Instant time )
     {
-        final Stored latest = stored.get( current.id() );
-        if ( latest != null && latest.version().equals( current.version() ) )
-        {
-            stored.put( latest.id(), with( latest, latest.obsolete(), latest.generating(), latest.queued(), now ) );
-        }
+        return stored.values()
+            .stream()
+            .filter( s -> !s.key().isPublic() && s.generatedAt() != null && s.generatedAt().isBefore( time ) )
+            .toList();
     }
 
     @Override
     public synchronized List<Stored> find( final String repositoryId, final @Nullable String branch )
     {
+        finds.incrementAndGet();
         return stored.values()
             .stream()
             .filter( s -> s.key().repositoryId().equals( repositoryId ) && ( branch == null || s.key().branch().equals( branch ) ) )
@@ -163,9 +185,16 @@ final class InMemorySitemapStore
     }
 
     @Override
-    public synchronized void delete( final String id )
+    public synchronized boolean delete( final Stored stored )
     {
-        stored.remove( id );
+        final Stored current = this.stored.get( stored.id() );
+        if ( current == null || !current.version().equals( stored.version() ) ||
+            !Objects.equals( current.generating(), stored.generating() ) || !Objects.equals( current.queued(), stored.queued() ) )
+        {
+            return false;
+        }
+        this.stored.remove( stored.id() );
+        return true;
     }
 
     synchronized int size()
@@ -174,9 +203,9 @@ final class InMemorySitemapStore
     }
 
     private static Stored with( final Stored s, final @Nullable Instant obsolete, final @Nullable Generating generating,
-                                final @Nullable Generating queued, final @Nullable Instant accessed )
+                                final @Nullable Generating queued )
     {
-        return new Stored( s.id(), s.version(), s.key(), s.background(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
-                           obsolete, generating, queued, accessed );
+        return new Stored( s.id(), s.version(), s.key(), s.sitemap(), s.validUntil(), s.startedAt(), s.generatedAt(),
+                           obsolete, generating, queued );
     }
 }

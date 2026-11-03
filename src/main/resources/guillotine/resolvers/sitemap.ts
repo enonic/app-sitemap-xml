@@ -21,7 +21,6 @@ import {
 	TRACE,
 } from '/constants';
 import {SITEMAP_FIELD_NAME} from '/guillotine/constants';
-import {newSitemapBean} from '/lib/app-sitemapxml/sitemapBean';
 import {resolveSourceConfig} from '/lib/app-sitemapxml/resolveSourceConfig';
 
 
@@ -64,11 +63,9 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		if (!siteConfig) {
 			return null;
 		}
-		const baseUrl = siteConfig.overrideDomain || newSitemapBean().portalBaseUrl(site?._path || '') || null;
+		// baseUrl has its own resolver, so the portal Base URL is only looked up when it is queried
 		return graphQL.createDataFetcherResult({
-			data: __.toScriptValue<SiteMapResolverData>({
-				baseUrl,
-			}),
+			data: __.toScriptValue<SiteMapResolverData>({}),
 			localContext: {
 				siteJson: JSON.stringify(site),
 				siteConfigJson: JSON.stringify(siteConfig),

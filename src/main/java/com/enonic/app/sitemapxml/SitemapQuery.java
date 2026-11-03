@@ -17,6 +17,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.enonic.xp.aggregation.Bucket;
 import com.enonic.xp.aggregation.BucketAggregation;
 import com.enonic.xp.aggregation.DateHistogramBucket;
 import com.enonic.xp.content.Content;
@@ -35,6 +36,8 @@ import com.enonic.xp.data.PropertyTree;
 import com.enonic.xp.data.ValueFactory;
 import com.enonic.xp.index.IndexPath;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
+import com.enonic.xp.query.aggregation.DateRange;
+import com.enonic.xp.query.aggregation.DateRangeAggregationQuery;
 import com.enonic.xp.query.expr.DslExpr;
 import com.enonic.xp.query.expr.FieldOrderExpr;
 import com.enonic.xp.query.expr.OrderExpr;
@@ -62,6 +65,13 @@ public final class SitemapQuery
     static final int PAGE_SIZE = 10_000;
 
     static final String TIMELINE = "timeline";
+
+    static final String CHANGED = "changed";
+
+    /**
+     * The time of the node in the branch: of its last change there, also of a publication, a move or a change of permissions.
+     */
+    static final String TIMESTAMP = "_ts";
 
     static final List<Interval> INTERVALS =
         List.of( new Interval( "1d", Duration.ofDays( 1 ) ), new Interval( "1h", Duration.ofHours( 1 ) ),
@@ -96,6 +106,8 @@ public final class SitemapQuery
     private final Instant now;
 
     private final String contentRoot;
+
+    private long read;
 
 
     public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
@@ -146,10 +158,63 @@ public final class SitemapQuery
             }
         }
 
+        return nextChange();
+    }
+
+    /**
+     * The contents the last {@link #execute} read, also those it left out of the sitemap.
+     */
+    public long read()
+    {
+        return read;
+    }
+
+    /**
+     * Counts the contents of the sitemap, and those changed since the given time: the time of a node in the branch is that of its last
+     * change there, also of a publication, a move or a change of permissions.
+     */
+    public Count count( final Instant since )
+    {
+        final FindContentIdsByQueryResult result = contentService.find( ContentQuery.create()
+                                                                            .queryExpr( QueryExpr.from( DslExpr.from( dsl() ) ) )
+                                                                            .aggregationQuery( DateRangeAggregationQuery.create( CHANGED )
+                                                                                                   .fieldName( TIMESTAMP )
+                                                                                                   .addRange( DateRange.create()
+                                                                                                                  .key( CHANGED )
+                                                                                                                  .from( since )
+                                                                                                                  .build() )
+                                                                                                   .build() )
+                                                                            .size( 0 )
+                                                                            .build() );
+        long changed = 0;
+        if ( result.getAggregations().get( CHANGED ) instanceof BucketAggregation buckets )
+        {
+            for ( final Bucket bucket : buckets.getBuckets() )
+            {
+                changed += bucket.getDocCount();
+            }
+        }
+        return new Count( result.getTotalHits(), changed );
+    }
+
+    /**
+     * When the sitemap must be generated again because scheduled content goes online or offline, or null.
+     */
+    public @Nullable Instant nextChange()
+    {
         return ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
             .flatMap( field -> nextChange( field ).stream() )
             .min( Instant::compareTo )
             .orElse( null ) : null;
+    }
+
+    /**
+     * Contents of the sitemap counted.
+     *
+     * @param changed those of them changed since a given time
+     */
+    record Count(long count, long changed)
+    {
     }
 
     /**
@@ -301,6 +366,7 @@ public final class SitemapQuery
                 {
                     continue;
                 }
+                read++;
                 last = indexed( CONTENT_ROOT + content.getPath() );
                 if ( isInSite( content.getPath().toString() ) )
                 {
