@@ -108,7 +108,7 @@ public final class SitemapCache
 
     static final String ENTRY_FILE = "entry.json";
 
-    private static final int FORMAT = 3;
+    private static final int FORMAT = 2;
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 

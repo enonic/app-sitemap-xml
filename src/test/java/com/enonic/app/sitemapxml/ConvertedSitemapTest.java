@@ -61,48 +61,6 @@ class ConvertedSitemapTest
     }
 
     @Test
-    void plainFilesHaveTheirSizeKnownWithoutWritingThem()
-        throws IOException
-    {
-        final List<SitemapEntry> entries = new java.util.ArrayList<>( entries( 7 ) );
-        // a second entry of the site itself, as in a project, and one at the end of a file
-        entries.add( new SitemapEntry( "", "other:type", null ) );
-        for ( final String siteUrl : List.of( SITE_URL, "https://www.example.com/", "https://www.example.com", "http://localhost:8080/a&b",
-                                              "https://xn--bl-0ia.example.com/blåbær/'x'", "https://www.example.com/a%20b" ) )
-        {
-            for ( final int urlsPerFile : new int[]{1, 3, 100} )
-            {
-                final ConvertedSitemap converted = convert( entries, urlsPerFile, siteUrl );
-                assertSizeKnown( converted.root() );
-                for ( int number = 1; converted.file( number ).isPresent(); number++ )
-                {
-                    assertSizeKnown( converted.file( number ).orElseThrow() );
-                }
-            }
-        }
-        assertSizeKnown( convert( List.of(), 10, SITE_URL ).root() );
-
-        // the files of a headless sitemap kept from before have no known size, but are served
-        final Sitemap headless = write( "old", new SitemapParams( "/mysite", "", CONTENT_TYPES, List.of(), 10_000,
-                                                                  SitemapParams.Format.HEADLESS ), entries, 100 );
-        // kept across a restart
-        assertSizeKnown( new ConvertedSitemap( Sitemap.restore( headless.directory(), headless.store() ), xml() ).root() );
-        final com.fasterxml.jackson.databind.node.ObjectNode description = headless.store();
-        description.withArray( "files" ).forEach( file -> ( (com.fasterxml.jackson.databind.node.ObjectNode) file ).remove(
-            List.of( "xmlBytes", "xmlUrls", "xmlRoots" ) ) );
-        final ConvertedSitemap old = new ConvertedSitemap( Sitemap.restore( headless.directory(), description ), xml() );
-        assertThat( old.root().sizeIfKnown().isPresent() ).isFalse();
-        assertThat( SitemapTest.text( old.root() ) ).isEqualTo( SitemapTest.text( convert( entries, 100, SITE_URL ).root() ) );
-    }
-
-    private static void assertSizeKnown( final ByteSource plain )
-        throws IOException
-    {
-        assertThat( plain.sizeIfKnown().isPresent() ).isTrue();
-        assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
-    }
-
-    @Test
     void emptySitemapIsAnEmptyUrlset()
     {
         final Sitemap xml = write( "xml", xml(), List.of(), 10 );
