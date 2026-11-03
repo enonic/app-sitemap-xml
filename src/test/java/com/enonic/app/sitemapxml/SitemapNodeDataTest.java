@@ -1,6 +1,7 @@
 package com.enonic.app.sitemapxml;
 
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
@@ -27,7 +28,7 @@ class SitemapNodeDataTest
     @Test
     void keyAndSitemapAreNodeProperties()
     {
-        final Sitemap sitemap = sitemap();
+        final Sitemap sitemap = sitemap().withCount( 3, Instant.parse( "2024-06-01T00:00:00Z" ) );
         final PropertyTree data = new PropertyTree();
 
         SitemapNodeData.writeKey( data.getRoot(), KEY );
@@ -42,6 +43,9 @@ class SitemapNodeDataTest
 
         final PropertySet described = data.getSet( "sitemap" );
         assertThat( described.getLong( "size" ) ).isEqualTo( 3 );
+        assertThat( described.getLong( "count" ) ).isEqualTo( 3 );
+        assertThat( described.getInstant( "cutoff" ) ).isEqualTo( Instant.parse( "2024-06-01T00:00:00Z" ) );
+        assertThat( described.getInstant( "modified" ) ).isEqualTo( SitemapTest.NOW );
         assertThat( described.getSets( "files" ) ).extracting( file -> file.getInstant( "lastmod" ) )
             .containsExactlyElementsOf( sitemap.lastModified() );
         assertThat( described.getSets( "bytes" ) ).extracting( file -> file.getString( "name" ) ).contains( "sitemap.xml", "sitemap-1.xml" );

@@ -7,7 +7,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
@@ -67,8 +66,6 @@ public final class SitemapQuery
 
     static final String TIMELINE = "timeline";
 
-    static final String RANGES = "ranges";
-
     static final String CHANGED = "changed";
 
     /**
@@ -110,6 +107,8 @@ public final class SitemapQuery
 
     private final String contentRoot;
 
+    private long read;
+
 
     public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
     {
@@ -139,87 +138,63 @@ public final class SitemapQuery
         progress.report( 0 );
         if ( total <= Sitemap.MAX_URLS_PER_FILE )
         {
-            emitByPath( List.of(), sink, progress, cancelled, false );
+            emitByPath( List.of(), sink, progress, cancelled );
         }
         else
         {
-            emitByCreation( List.of(), overview, sink, progress, cancelled );
+            final List<Slice> slices = new ArrayList<>();
+            addSlices( overview, 0, slices );
+            LOG.debug( "Sitemap of {}: {} contents read in {} slices", params.sitePath(), total, slices.size() );
+            for ( final Slice slice : slices )
+            {
+                if ( slice.count() > PAGE_SIZE )
+                {
+                    emitByPath( slice.filters(), sink, progress, cancelled );
+                }
+                else
+                {
+                    emit( find( slice.filters(), CREATION_ORDER, PAGE_SIZE ), sink, progress, cancelled );
+                }
+            }
         }
+
         return nextChange();
     }
 
     /**
-     * Streams the entries of the contents created in the given range, in the order they were created, as {@link #execute} does for a
-     * larger sitemap.
-     *
-     * @param from the start of the range, inclusive, or null for none
-     * @param to   the end of the range, exclusive, or null for none
+     * The contents the last {@link #execute} read, also those it left out of the sitemap.
      */
-    public void executeRange( final @Nullable Instant from, final @Nullable Instant to, final SitemapSink sink,
-                              final BooleanSupplier cancelled )
+    public long read()
     {
-        final List<Filter> range = from == null && to == null ? List.of() : List.of( createdRange( from, to ) );
-        final FindContentIdsByQueryResult overview = histogram( range, 0 );
-        final Progress progress = new Progress( sink, overview.getTotalHits() );
-        progress.report( 0 );
-        emitByCreation( range, overview, sink, progress, cancelled );
+        return read;
     }
 
     /**
-     * Counts the contents created in each range, and those of them changed (published, moved, their permissions changed...) since the
-     * given time: the time of their node in the branch is that of the change.
-     *
-     * @param starts the starts of the consecutive ranges, in order; the first is null and covers all before the second
-     * @return per range, the count of contents and of those changed since
+     * Counts the contents of the sitemap, and those changed since the given time: the time of a node in the branch is that of its last
+     * change there, also of a publication, a move or a change of permissions.
      */
-    public List<RangeCount> counts( final List<@Nullable Instant> starts, final Instant since )
+    public Count count( final Instant since )
     {
-        final DateRangeAggregationQuery.Builder ranges = DateRangeAggregationQuery.create( RANGES ).fieldName( CREATED_TIME.getPath() );
-        for ( int i = 0; i < starts.size(); i++ )
-        {
-            final DateRange.Builder range = DateRange.create().key( Integer.toString( i ) );
-            final Instant from = starts.get( i );
-            if ( from != null )
-            {
-                range.from( from );
-            }
-            if ( i + 1 < starts.size() )
-            {
-                range.to( Objects.requireNonNull( starts.get( i + 1 ) ) );
-            }
-            ranges.addRange( range.build() );
-        }
-        ranges.addSubQuery( DateRangeAggregationQuery.create( CHANGED )
-                                .fieldName( TIMESTAMP )
-                                .addRange( DateRange.create().key( CHANGED ).from( since ).build() )
-                                .build() );
         final FindContentIdsByQueryResult result = contentService.find( ContentQuery.create()
                                                                             .queryExpr( QueryExpr.from( DslExpr.from( dsl() ) ) )
-                                                                            .aggregationQuery( ranges.build() )
+                                                                            .aggregationQuery( DateRangeAggregationQuery.create( CHANGED )
+                                                                                                   .fieldName( TIMESTAMP )
+                                                                                                   .addRange( DateRange.create()
+                                                                                                                  .key( CHANGED )
+                                                                                                                  .from( since )
+                                                                                                                  .build() )
+                                                                                                   .build() )
                                                                             .size( 0 )
                                                                             .build() );
-        final Map<String, RangeCount> counted = new HashMap<>();
-        if ( result.getAggregations().get( RANGES ) instanceof BucketAggregation buckets )
+        long changed = 0;
+        if ( result.getAggregations().get( CHANGED ) instanceof BucketAggregation buckets )
         {
             for ( final Bucket bucket : buckets.getBuckets() )
             {
-                long changed = 0;
-                if ( bucket.getSubAggregations().get( CHANGED ) instanceof BucketAggregation sub )
-                {
-                    for ( final Bucket changedBucket : sub.getBuckets() )
-                    {
-                        changed += changedBucket.getDocCount();
-                    }
-                }
-                counted.put( bucket.getKey(), new RangeCount( bucket.getDocCount(), changed ) );
+                changed += bucket.getDocCount();
             }
         }
-        final List<RangeCount> counts = new ArrayList<>();
-        for ( int i = 0; i < starts.size(); i++ )
-        {
-            counts.add( counted.getOrDefault( Integer.toString( i ), new RangeCount( 0, 0 ) ) );
-        }
-        return counts;
+        return new Count( result.getTotalHits(), changed );
     }
 
     /**
@@ -233,45 +208,12 @@ public final class SitemapQuery
             .orElse( null ) : null;
     }
 
-    private void emitByCreation( final List<Filter> outer, final FindContentIdsByQueryResult overview, final SitemapSink sink,
-                                 final Progress progress, final BooleanSupplier cancelled )
-    {
-        final List<Slice> slices = new ArrayList<>();
-        addSlices( outer, overview, 0, slices );
-        LOG.debug( "Sitemap of {}: {} contents read in {} slices", params.sitePath(), overview.getTotalHits(), slices.size() );
-        for ( final Slice slice : slices )
-        {
-            if ( slice.count() > PAGE_SIZE )
-            {
-                emitByPath( slice.filters(), sink, progress, cancelled, true );
-            }
-            else
-            {
-                emit( find( slice.filters(), CREATION_ORDER, PAGE_SIZE ), sink, progress, cancelled, true );
-            }
-        }
-    }
-
-    private static RangeFilter createdRange( final @Nullable Instant from, final @Nullable Instant to )
-    {
-        final RangeFilter.Builder range = RangeFilter.create().fieldName( CREATED_TIME.getPath() );
-        if ( from != null )
-        {
-            range.from( ValueFactory.newDateTime( from ) );
-        }
-        if ( to != null )
-        {
-            range.lt( ValueFactory.newDateTime( to ) );
-        }
-        return range.build();
-    }
-
     /**
-     * Contents counted in a range of creation times.
+     * Contents of the sitemap counted.
      *
      * @param changed those of them changed since a given time
      */
-    record RangeCount(long count, long changed)
+    record Count(long count, long changed)
     {
     }
 
@@ -280,7 +222,7 @@ public final class SitemapQuery
      * at most {@value #PAGE_SIZE} contents. A bucket holding more is split by the next finer interval. A millisecond holding more is one
      * slice, read by path: the order is the same in every generation, as paths only change when contents move.
      */
-    private void addSlices( final List<Filter> outer, final FindContentIdsByQueryResult result, final int level, final List<Slice> slices )
+    private void addSlices( final FindContentIdsByQueryResult result, final int level, final List<Slice> slices )
     {
         final Duration interval = INTERVALS.get( level ).duration();
         final List<DateHistogramBucket> buckets = new ArrayList<>();
@@ -302,13 +244,13 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( pendingFrom, pendingTo ) ), pendingCount ) );
+                    slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
                     pendingFrom = null;
                 }
-                final List<Filter> filters = with( outer, range( from, to ) );
+                final List<Filter> filters = List.of( range( from, to ) );
                 if ( level + 1 < INTERVALS.size() )
                 {
-                    addSlices( outer, histogram( filters, level + 1 ), level + 1, slices );
+                    addSlices( histogram( filters, level + 1 ), level + 1, slices );
                 }
                 else
                 {
@@ -324,7 +266,7 @@ public final class SitemapQuery
             {
                 if ( pendingFrom != null )
                 {
-                    slices.add( new Slice( with( outer, range( pendingFrom, pendingTo ) ), pendingCount ) );
+                    slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
                 }
                 pendingFrom = from;
                 pendingTo = to;
@@ -333,7 +275,7 @@ public final class SitemapQuery
         }
         if ( pendingFrom != null )
         {
-            slices.add( new Slice( with( outer, range( pendingFrom, pendingTo ) ), pendingCount ) );
+            slices.add( new Slice( List.of( range( pendingFrom, pendingTo ) ), pendingCount ) );
         }
     }
 
@@ -371,8 +313,7 @@ public final class SitemapQuery
      * Reads the contents matching the filters sorted by path, {@value #PAGE_SIZE} at a time: each page continues after the last path of
      * the previous one. Paths are compared as indexed, in lower case.
      */
-    private void emitByPath( final List<Filter> outer, final SitemapSink sink, final Progress progress, final BooleanSupplier cancelled,
-                             final boolean creationOrder )
+    private void emitByPath( final List<Filter> outer, final SitemapSink sink, final Progress progress, final BooleanSupplier cancelled )
     {
         String after = null;
         while ( true )
@@ -380,7 +321,7 @@ public final class SitemapQuery
             final List<Filter> filters =
                 after == null ? outer : with( outer, RangeFilter.create().fieldName( PATH.getPath() ).gt( ValueFactory.newString( after ) ).build() );
             final List<ContentId> ids = find( filters, List.of( FieldOrderExpr.create( PATH, OrderExpr.Direction.ASC ) ), PAGE_SIZE );
-            final String last = emit( ids, sink, progress, cancelled, creationOrder );
+            final String last = emit( ids, sink, progress, cancelled );
             if ( ids.size() < PAGE_SIZE || last == null )
             {
                 return;
@@ -402,7 +343,7 @@ public final class SitemapQuery
      * @return the indexed path of the last content loaded, or null if none was
      */
     private @Nullable String emit( final List<ContentId> ids, final SitemapSink sink, final Progress progress,
-                                   final BooleanSupplier cancelled, final boolean creationOrder )
+                                   final BooleanSupplier cancelled )
     {
         String last = null;
         for ( int start = 0; start < ids.size(); start += FETCH_BATCH_SIZE )
@@ -425,12 +366,12 @@ public final class SitemapQuery
                 {
                     continue;
                 }
+                read++;
                 last = indexed( CONTENT_ROOT + content.getPath() );
                 if ( isInSite( content.getPath().toString() ) )
                 {
                     sink.accept( new SitemapEntry( content.getPath().toString().substring( params.sitePath().length() ),
-                                                   content.getType().toString(), content.getModifiedTime(),
-                                                   creationOrder ? content.getCreatedTime() : null ) );
+                                                   content.getType().toString(), content.getModifiedTime() ) );
                 }
             }
             progress.report( batch.size() );

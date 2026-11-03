@@ -100,8 +100,8 @@ public final class SitemapCache
     static final int MAX_PER_SITE = 10;
 
     /**
-     * How long before a generation starts its counts of contents end: changes of nodes are timed by the cluster node making them, whose
-     * clock may differ a little. A content changed within it counts as changed at the next generation too.
+     * How long before a generation starts its count of contents is taken: changes of nodes are timed by the cluster node making them,
+     * whose clock may differ a little. A content changed within it counts as changed at the next generation too.
      */
     static final Duration CUTOFF_MARGIN = Duration.ofSeconds( 2 );
 
@@ -171,11 +171,6 @@ public final class SitemapCache
     private final Instant clusterStarted;
 
     private final Duration regenerationDelay;
-
-    /**
-     * The most URLs in a file, {@link Sitemap#MAX_URLS_PER_FILE} but in tests.
-     */
-    private volatile int urlsPerFile = Sitemap.MAX_URLS_PER_FILE;
 
     /**
      * Whether a request could still get the sitemap of a public key: its "Base URL" or virtual host is still configured.
@@ -820,8 +815,7 @@ public final class SitemapCache
         final String id = key.id();
         final Entry local = entries.get( key );
         final long changes = local == null ? -1 : local.changes;
-        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( UUID.randomUUID().toString() ), key.params(), urlsPerFile,
-                                                        Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ))
+        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( UUID.randomUUID().toString() ), key.params() ))
         {
             final Generated result = ContextBuilder.create()
                 .repositoryId( key.repositoryId() )
@@ -877,16 +871,13 @@ public final class SitemapCache
     }
 
     /**
-     * Generates the sitemap of the key, writing only the groups of files whose contents changed when the source can tell which.
-     * <ul>
-     * <li>When no group changed since the previous sitemap was counted, it is the previous sitemap, which nothing was read for.</li>
-     * <li>When some did, and the previous sitemap is split in files by creation time, those groups are written again, under their
-     * numbers, and the others are kept as they are. Files of a group that grew beyond the limits get new numbers; a group that became
-     * empty is gone.</li>
-     * <li>Otherwise, also when scheduled content went online or offline, the sitemap is written whole.</li>
-     * </ul>
-     * The groups written are counted at the end, as of a little before the generation started: contents changed since are not counted,
-     * so the next generation sees them changed even when they changed while this one read them.
+     * Generates the sitemap of the key. When the source can count its contents, it first checks whether any changed since the previous
+     * sitemap was generated: none changed when none has changed in the branch since then and as many are counted as were read. The
+     * previous sitemap then stays, and nothing is read; otherwise, also when scheduled content went online or offline, the sitemap is
+     * written whole.
+     * <p>
+     * The contents read are counted, also those left out of the sitemap, as of a little before the generation started: contents changed
+     * while they were read count as changed next time, and those unpublished after they were read make the next count lower.
      */
     private Generated generate( final Key key, final Source source, final Sitemap.Builder builder,
                                 final SitemapStore.@Nullable Stored previous, final Instant startedAt,
@@ -894,77 +885,28 @@ public final class SitemapCache
     {
         final Sitemap before = previous == null ? null : previous.sitemap();
         final boolean scheduled = previous != null && previous.validUntil() != null && !startedAt.isBefore( previous.validUntil() );
-        final SitemapSink sink = sink( builder, progress );
-        @Nullable Instant validUntil = null;
-        boolean written = false;
-        if ( source.ranges() && before != null && before.hasRanges() && !scheduled )
+        if ( source.counts() && before != null && before.count() >= 0 && before.cutoff() != null && !scheduled )
         {
-            final List<@Nullable Instant> starts = before.groupStarts();
-            final List<Long> stored = before.groupCounts();
-            final List<SitemapQuery.RangeCount> counts = source.counts( starts, Objects.requireNonNull( before.cutoff() ) );
-            final List<Boolean> changed = new ArrayList<>();
-            long total = 0;
-            for ( int i = 0; i < starts.size(); i++ )
-            {
-                changed.add( counts.get( i ).changed() > 0 || counts.get( i ).count() != stored.get( i ) );
-                total += counts.get( i ).count();
-            }
-            if ( !changed.contains( true ) )
+            final SitemapQuery.Count count = source.count( before.cutoff() );
+            if ( count.changed() == 0 && count.count() == before.count() )
             {
                 LOG.debug( "Sitemap {}: no contents changed", key );
+                report( progress, "No contents changed" );
                 return new Generated( before, source.nextChange() );
             }
-            if ( before.isIndex() && total > urlsPerFile && changed.contains( false ) )
-            {
-                final List<List<Sitemap.SitemapFile>> groups = before.groups();
-                LOG.debug( "Sitemap {}: {} of {} groups of files changed", key, changed.stream().filter( Boolean::booleanValue ).count(),
-                           groups.size() );
-                builder.numbersFrom( before.fileNumbers().stream().mapToInt( Integer::intValue ).max().orElse( 0 ) + 1 );
-                for ( int i = 0; i < groups.size(); i++ )
-                {
-                    if ( stopped )
-                    {
-                        throw new CancellationException();
-                    }
-                    if ( changed.get( i ) )
-                    {
-                        builder.beginGroup( starts.get( i ), groups.get( i ).get( 0 ).number() );
-                        source.writeRange( starts.get( i ), i + 1 < starts.size() ? starts.get( i + 1 ) : null, sink, () -> stopped );
-                    }
-                    else
-                    {
-                        groups.get( i ).forEach( file -> builder.reuse( file, before ) );
-                    }
-                }
-                validUntil = source.nextChange();
-                written = true;
-            }
         }
-        if ( !written )
-        {
-            validUntil = source.write( sink, () -> stopped );
-        }
+        final Instant validUntil = source.write( sink( builder, progress ), () -> stopped );
         if ( stopped )
         {
             throw new CancellationException();
         }
-        Sitemap generated = builder.build( before, clock.instant() );
-        if ( source.ranges() )
-        {
-            final Instant cutoff = startedAt.minus( CUTOFF_MARGIN );
-            final List<SitemapQuery.RangeCount> counts = source.counts( generated.groupStarts(), cutoff );
-            generated = generated.withCounts( cutoff, counts.stream().map( count -> count.count() - count.changed() ).toList() );
-        }
-        return new Generated( generated, validUntil );
+        final Sitemap generated = builder.build( before, clock.instant() );
+        return new Generated( source.counts() ? generated.withCount( source.read(), startedAt.minus( CUTOFF_MARGIN ) ) : generated,
+                              validUntil );
     }
 
     private record Generated(Sitemap sitemap, @Nullable Instant validUntil)
     {
-    }
-
-    void urlsPerFile( final int urlsPerFile )
-    {
-        this.urlsPerFile = urlsPerFile;
     }
 
     /**
@@ -1269,29 +1211,28 @@ public final class SitemapCache
         @Nullable Instant write( SitemapSink sink, BooleanSupplier cancelled );
 
         /**
-         * Whether the source can count and write ranges of creation times, so that only the groups of files whose contents changed are
-         * generated again. A source that can't is always written whole.
+         * Whether the source can count its contents and those changed since a time, and tell how many {@link #write} read, so that a
+         * generation can tell nothing changed. A source that can't is always written.
          */
-        default boolean ranges()
+        default boolean counts()
         {
             return false;
         }
 
         /**
-         * @see SitemapQuery#counts
+         * @see SitemapQuery#count
          */
-        default List<SitemapQuery.RangeCount> counts( final List<@Nullable Instant> starts, final Instant since )
+        default SitemapQuery.Count count( final Instant since )
         {
             throw new UnsupportedOperationException();
         }
 
         /**
-         * Writes the entries of the contents created in the range, in the order they were created.
+         * The contents the last {@link #write} read, also those it left out.
          */
-        default void writeRange( final @Nullable Instant from, final @Nullable Instant to, final SitemapSink sink,
-                                 final BooleanSupplier cancelled )
+        default long read()
         {
-            throw new UnsupportedOperationException();
+            return -1;
         }
 
         /**
@@ -1316,22 +1257,21 @@ public final class SitemapCache
         }
 
         @Override
-        public boolean ranges()
+        public boolean counts()
         {
             return true;
         }
 
         @Override
-        public List<SitemapQuery.RangeCount> counts( final List<@Nullable Instant> starts, final Instant since )
+        public SitemapQuery.Count count( final Instant since )
         {
-            return query.counts( starts, since );
+            return query.count( since );
         }
 
         @Override
-        public void writeRange( final @Nullable Instant from, final @Nullable Instant to, final SitemapSink sink,
-                                final BooleanSupplier cancelled )
+        public long read()
         {
-            query.executeRange( from, to, sink, cancelled );
+            return query.read();
         }
 
         @Override

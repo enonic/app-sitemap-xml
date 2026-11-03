@@ -1,6 +1,7 @@
 package com.enonic.app.sitemapxml;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 import org.jspecify.annotations.Nullable;
@@ -74,37 +75,28 @@ final class SitemapNodeData
         final JsonNode stored = sitemap.store();
         final PropertySet set = data.addSet( SITEMAP );
         set.addLong( "size", stored.required( "size" ).asLong() );
+        final JsonNode count = stored.get( "count" );
+        if ( count != null )
+        {
+            set.addLong( "count", count.asLong() );
+        }
+        for ( final String time : List.of( "cutoff", "modified" ) )
+        {
+            final JsonNode value = stored.get( time );
+            if ( value != null )
+            {
+                set.addInstant( time, Instant.parse( value.asText() ) );
+            }
+        }
         for ( final JsonNode file : stored.required( "files" ) )
         {
             final PropertySet described = set.addSet( "files" );
-            described.addLong( "number", file.required( "number" ).asLong() );
             final JsonNode lastmod = file.get( "lastmod" );
             if ( lastmod != null )
             {
                 described.addInstant( "lastmod", Instant.parse( lastmod.asText() ) );
             }
             described.addString( "digest", file.required( "digest" ).asText() );
-            final JsonNode range = file.get( "range" );
-            if ( range != null )
-            {
-                described.addInstant( "range", Instant.parse( range.asText() ) );
-            }
-            final JsonNode count = file.get( "count" );
-            if ( count != null )
-            {
-                described.addLong( "count", count.asLong() );
-            }
-            described.addLong( "urls", file.required( "urls" ).asLong() );
-        }
-        final JsonNode cutoff = stored.get( "cutoff" );
-        if ( cutoff != null )
-        {
-            set.addInstant( "cutoff", Instant.parse( cutoff.asText() ) );
-        }
-        final JsonNode modified = stored.get( "modified" );
-        if ( modified != null )
-        {
-            set.addInstant( "modified", Instant.parse( modified.asText() ) );
         }
         for ( final Map.Entry<String, JsonNode> file : stored.required( "bytes" ).properties() )
         {
@@ -133,38 +125,29 @@ final class SitemapNodeData
         }
         final ObjectNode description = JsonNodeFactory.instance.objectNode();
         description.put( "size", set.getLong( "size" ) );
+        final Long count = set.getLong( "count" );
+        if ( count != null )
+        {
+            description.put( "count", count );
+        }
+        for ( final String time : List.of( "cutoff", "modified" ) )
+        {
+            final Instant value = set.getInstant( time );
+            if ( value != null )
+            {
+                description.put( time, value.toString() );
+            }
+        }
         final ArrayNode described = description.putArray( "files" );
         for ( final PropertySet file : set.getSets( "files" ) )
         {
             final ObjectNode entry = described.addObject();
-            entry.put( "number", file.getLong( "number" ) );
             final Instant lastmod = file.getInstant( "lastmod" );
             if ( lastmod != null )
             {
                 entry.put( "lastmod", lastmod.toString() );
             }
             entry.put( "digest", file.getString( "digest" ) );
-            final Instant range = file.getInstant( "range" );
-            if ( range != null )
-            {
-                entry.put( "range", range.toString() );
-            }
-            final Long count = file.getLong( "count" );
-            if ( count != null )
-            {
-                entry.put( "count", count );
-            }
-            entry.put( "urls", file.getLong( "urls" ) );
-        }
-        final Instant cutoff = set.getInstant( "cutoff" );
-        if ( cutoff != null )
-        {
-            description.put( "cutoff", cutoff.toString() );
-        }
-        final Instant modified = set.getInstant( "modified" );
-        if ( modified != null )
-        {
-            description.put( "modified", modified.toString() );
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         set.getSets( "bytes" ).forEach( file -> bytes.put( file.getString( "name" ), file.getLong( "size" ) ) );

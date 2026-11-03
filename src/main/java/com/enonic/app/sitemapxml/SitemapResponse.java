@@ -3,6 +3,7 @@ package com.enonic.app.sitemapxml;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 import org.jspecify.annotations.Nullable;
 
@@ -11,6 +12,11 @@ import com.google.common.io.ByteSource;
 public final class SitemapResponse
 {
     static final int RETRY_AFTER_SECONDS = 10;
+
+    /**
+     * An HTTP date (IMF-fixdate), with a two-digit day, which {@link DateTimeFormatter#RFC_1123_DATE_TIME} leaves out.
+     */
+    static final DateTimeFormatter HTTP_DATE = DateTimeFormatter.ofPattern( "EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.ENGLISH );
 
     private final int status;
 
@@ -74,7 +80,7 @@ public final class SitemapResponse
      */
     public @Nullable String getLastModified()
     {
-        return lastModified == null ? null : DateTimeFormatter.RFC_1123_DATE_TIME.format( lastModified.atOffset( ZoneOffset.UTC ) );
+        return lastModified == null ? null : HTTP_DATE.format( lastModified.atOffset( ZoneOffset.UTC ) );
     }
 
     public int getRetryAfter()

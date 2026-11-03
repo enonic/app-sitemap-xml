@@ -388,7 +388,7 @@ class SitemapServiceTest
 
         final SitemapResponse first = inContext( () -> bean.root( scriptValue() ) );
         // the files were last changed at SitemapTest.NOW
-        assertThat( first.getLastModified() ).isEqualTo( "Sat, 1 Jun 2024 00:00:00 GMT" );
+        assertThat( first.getLastModified() ).isEqualTo( "Sat, 01 Jun 2024 00:00:00 GMT" );
 
         assertThat( inContext( () -> bean.root( since( "Sat, 01 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
         assertThat( inContext( () -> bean.root( since( "Sun, 02 Jun 2024 00:00:00 GMT", null ) ) ).getStatus() ).isEqualTo( 304 );
