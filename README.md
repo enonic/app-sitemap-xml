@@ -32,7 +32,7 @@ When doing external rendering, via for example Next.XP, you can fetch the data n
 
 Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `HeadlessCms` object type.
 
-The `sitemap` field is served from the same cached, published-only sitemap as `sitemap.xml`. `urlset(count: N)` returns the first `N` URLs, at most "Max included items", as paths relative to the site, so the client prefixes them with its own base URL. `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
+The `sitemap` field is served from its own cached, published-only headless sitemap (separate from `sitemap.xml`, which keeps only the XML files, while this one keeps only the paths). `urlset(count: N)` returns the first `N` URLs, at most "Max included items", as paths relative to the site, so the client prefixes them with its own base URL. Paths are percent-encoded and safe to put in XML as they are (`&` and `'` are encoded too), so the base URL followed by the path is the `<loc>`. Paths longer than 1 688 characters are left out, so that URLs stay within 2 048 characters with a base URL of up to 360 characters. `lastmod` is the time the content was last modified; `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
 
 The app can also be added to a project instead of a site. When the query is not scoped to a site (no `x-guillotine-sitekey` header), the project's configuration of the app is used, and the sitemap lists all published content of the project, with paths relative to the project root. `sitemap.xml` itself is only served for sites, as projects are not rendered by XP.
 
@@ -91,7 +91,7 @@ By default, the URLs in `sitemap.xml` use the scheme, host and port the site is 
 * The value is put in front of the path of each URL as XP renders it for the request, with the virtual host mapping applied. A site mapped to `/en` gets `https://www.example.com/en/...`.
 * Include the scheme (`https://`) and leave out the trailing slash. The value may end with a path, which then comes before the site's path.
 * The sitemap is then the same whichever host it is requested from, and it is generated again in the background when content changes.
-* Guillotine returns the value as `baseUrl`; the URLs it returns are paths relative to the site.
+* Guillotine returns the value as `baseUrl` (`null` when it is empty); the URLs it returns are paths relative to the site.
 
 ### Size of the sitemap
 
@@ -101,6 +101,8 @@ When the items do not fit in one file of 50MB, `sitemap.xml` becomes a [sitemap 
 
 URLs are sorted by path, which compresses better. When the site has more items than "Max included items", the most recently modified items are included, sorted newest first.
 
+A public `sitemap.xml` whose URLs are taken from the request is written from the headless sitemap (see [Caching and background generation](#caching-and-background-generation)), whose files are split as if each URL took its path plus 500 bytes: that leaves room for a site URL of up to 360 characters. A request with a longer site URL, or one taking more than 360 bytes in the XML, gets `400 Bad Request`.
+
 ### Gzip
 
 Every sitemap file is also served gzip-compressed, as allowed by the [sitemap protocol](https://www.sitemaps.org/protocol.html#index): `sitemap.xml.gz`, `sitemap-1.xml.gz`, `sitemap-2.xml.gz`, etc. A sitemap index requested as `sitemap.xml.gz` points to the `.xml.gz` files. The size limit of 50MB applies to the uncompressed file.
@@ -109,7 +111,7 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 ### Conditional requests
 
-Every sitemap file is sent with an `ETag`, as Booster does: the first 16 bytes of the SHA-256 digest of its uncompressed content in hex, with a `-gzip` suffix when it is sent gzip-compressed (`"…-gzip"`). A request whose `If-None-Match` is that tag (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
+Every sitemap file is sent with an `ETag`, as Booster does: the first 16 bytes of the SHA-256 digest of its uncompressed content in hex, with a `-gzip` suffix when it is sent gzip-compressed (`"…-gzip"`). A request whose `If-None-Match` is that tag (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. The files are written in a fixed order, so every cluster node holding the same sitemap sends the same tag for a `<urlset>` file. A file written on the fly from the headless sitemap gets a tag made from what it is written from and the site URL. `Last-Modified` is not sent: cluster nodes generate their sitemaps independently, at slightly different times.
 
 ## Caching and background generation
 
@@ -119,16 +121,20 @@ The sitemap lists published content only: it is generated from the `master` bran
 * In preview (`draft` branch), the sitemap lists the site URL only, and is not kept.
 * A site URL taken from the request must be `http` or `https` (lower case) without user info; other requests get `400 Bad Request`. Query and fragment are left out.
 
-A generated sitemap is served until a newer one of the same site has been generated and replaces it, also after content changed and after XP or the app is restarted. How it is generated again when content in the project changes (any node event in the project repository, e.g. publish, unpublish, move or delete) depends on whether its URLs are known without a request:
+A generated sitemap is served until a newer one has been generated and replaces it, also after content changed and after XP or the app is restarted.
 
-* With a `Base URL` override in the site configuration, and for Guillotine, which returns paths: the sitemap is generated again in the background a few seconds after the change. A generation still running when content changes again is halted and started over. It is also generated again when scheduled content goes online or offline (`Online from` / `Online to`). Sitemaps not requested for an hour are generated again on their next request instead.
-* Without a `Base URL` override, the URLs depend on the host of the request: the sitemap is generated again on its next request.
+* Public sitemaps (those of anonymous requests, or of a site readable by everyone) are generated again in the background a few seconds after content in the project changes (any node event in the project repository, e.g. publish, unpublish, move, delete or a permission change), covering every change until then. Only the sitemaps of the site the change is in, of sites below it, and of the project are affected; changes in other sites leave them alone. A change while a sitemap is being generated is followed by one more generation once it is done. They are also generated again when scheduled content goes online or offline (`Online from` / `Online to`).
+* Each generation first counts the contents of the sitemap and those changed since the previous one (one query). When none changed and as many are counted, the previous sitemap stays and nothing is read.
+* Sitemaps of logged-in users are generated again on their next request, and deleted when not requested for a day.
+* A public sitemap is deleted instead of generated again once the app is removed from the site, or its "Base URL" override or virtual host changed.
 
 A request for a sitemap that is being generated again gets the previous one right away. Only the first request for a sitemap waits for it to be generated.
 
+A public `sitemap.xml` whose URLs are taken from the request (no "Base URL" override, and no virtual host matching its host exactly, without a port) is not generated for each host: it is written on the fly from the site's headless sitemap, which is the same for every host, putting the site URL of the request in front of each path. It is served right away also for a host that never requested it, and compressed as it is written when the request accepts gzip. With an override, or through a virtual host whose host is the request's host exactly, the URLs come from the configuration, and `sitemap.xml` is generated and stored as such.
+
 Sitemaps of a project are generated one at a time, in the order they are needed; different projects generate in parallel. Any number of generations can be queued. Requests for generated sitemaps are always answered at once; when more than 10 requests are already waiting for sitemaps that are not generated yet, further such requests get `429 Too Many Requests` with a `Retry-After` header. Their sitemap is generated anyway, so it is ready when the request is retried.
 
-Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapxml`, next to XP's own image cache (one directory per generated sitemap, with an `entry.json` describing it, written once the sitemap is complete). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away and generated again on their first request, since content may have changed in the meantime. Without a "Base URL" override, each host, port and scheme the site is requested through gets its own sitemap; the host is taken in lower case. Of the sitemaps of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently used. The override makes the sitemap the same for every host. The cache is per cluster node.
+Generated sitemap files are kept in `$XP_HOME/work/cache/com.enonic.app.sitemapxml`, next to XP's own image cache (one directory per generated sitemap, with an `entry.json` describing it, written once the sitemap is complete). They are stored gzip-compressed only: `.xml.gz` requests stream the stored files as they are, so are plain `.xml` requests that accept gzip; other plain `.xml` requests are decompressed on the fly. Files of a replaced sitemap are deleted a minute later. Sitemaps kept from before a restart are served right away; public ones are generated again in the background, others on their first request, since content may have changed in the meantime. Logged-in users' sitemaps with URLs from the request are kept per host, port and scheme, the host in lower case; of those of a site for the same user, 10 are kept: when there are more, those whose URL names a port are deleted first, then the least recently used. The cache is per cluster node: each node generates its own sitemaps.
 
 ### Mappings
 
@@ -166,6 +172,14 @@ Check out [Sitemaps XML format](https://www.sitemaps.org/protocol.html) to learn
 ## Upgrade Notes
 
 ### 2.0.x to 2.0.3
+
+#### XP 7.16 required
+
+The app requires XP 7.16 or later (Java 21).
+
+#### Guillotine paths are percent-encoded
+
+The paths Guillotine returns are percent-encoded, and safe to put in XML as they are (`&` and `'` are encoded too). Clients that encoded them themselves must stop, or the URLs are encoded twice.
 
 #### JSON sitemap removed
 

@@ -19,9 +19,9 @@ dependencies {
 	compileOnly "com.enonic.xp:script-api:${xpVersion}"
 	compileOnly "com.enonic.xp:web-api:${xpVersion}"
 	compileOnly "com.enonic.xp:portal-api:${xpVersion}"
-	// Provided by XP: the version XP 7.16.11 ships with
-	compileOnly 'com.fasterxml.jackson.core:jackson-core:2.22.4'
-	compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
+	// Provided by XP: the version XP 7.16.0, the oldest supported, ships with
+	compileOnly 'com.fasterxml.jackson.core:jackson-core:2.19.2'
+	compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.19.2'
 
 	include "com.enonic.xp:lib-context:${xpVersion}"
 	include "com.enonic.xp:lib-content:${xpVersion}"
@@ -32,8 +32,8 @@ dependencies {
 	testImplementation "com.enonic.xp:script-api:${xpVersion}"
 	testImplementation "com.enonic.xp:web-api:${xpVersion}"
 	testImplementation "com.enonic.xp:portal-api:${xpVersion}"
-	testImplementation 'com.fasterxml.jackson.core:jackson-core:2.22.4'
-	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
+	testImplementation 'com.fasterxml.jackson.core:jackson-core:2.19.2'
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.19.2'
 	testImplementation platform('org.junit:junit-bom:5.13.4')
 	testImplementation 'org.junit.jupiter:junit-jupiter'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
