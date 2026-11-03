@@ -171,7 +171,7 @@ Check out [Sitemaps XML format](https://www.sitemaps.org/protocol.html) to learn
 
 ## Upgrade Notes
 
-### 2.0.x to 2.0.3
+### 2.0.x to 2.1.0
 
 #### XP 7.16 required
 
