@@ -101,6 +101,11 @@ final class SitemapNodeData
         {
             set.addInstant( "cutoff", Instant.parse( cutoff.asText() ) );
         }
+        final JsonNode modified = stored.get( "modified" );
+        if ( modified != null )
+        {
+            set.addInstant( "modified", Instant.parse( modified.asText() ) );
+        }
         for ( final Map.Entry<String, JsonNode> file : stored.required( "bytes" ).properties() )
         {
             final PropertySet size = set.addSet( "bytes" );
@@ -155,6 +160,11 @@ final class SitemapNodeData
         if ( cutoff != null )
         {
             description.put( "cutoff", cutoff.toString() );
+        }
+        final Instant modified = set.getInstant( "modified" );
+        if ( modified != null )
+        {
+            description.put( "modified", modified.toString() );
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         set.getSets( "bytes" ).forEach( file -> bytes.put( file.getString( "name" ), file.getLong( "size" ) ) );

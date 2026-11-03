@@ -114,10 +114,13 @@ public final class Sitemap
 
     private final @Nullable Instant cutoff;
 
+    private final @Nullable Instant modified;
+
     private Sitemap( final FileSource files, final @Nullable Path directory, final int size, final Map<String, Long> plainSizes,
                      final List<SitemapFile> fileList, final Map<String, String> namedDigests, final Set<String> local,
-                     final @Nullable Instant cutoff )
+                     final @Nullable Instant cutoff, final @Nullable Instant modified )
     {
+        this.modified = modified;
         this.fileList = List.copyOf( fileList );
         this.namedDigests = Map.copyOf( namedDigests );
         this.files = files;
@@ -222,7 +225,7 @@ public final class Sitemap
             counted.add(
                 new SitemapFile( file.number(), file.lastModified(), file.digest(), file.range(), counts.get( group ), file.urls() ) );
         }
-        return new Sitemap( files, directory, size, plainSizes, counted, namedDigests, local, cutoff );
+        return new Sitemap( files, directory, size, plainSizes, counted, namedDigests, local, cutoff, modified );
     }
 
     /**
@@ -326,6 +329,30 @@ public final class Sitemap
     public List<@Nullable Instant> lastModified()
     {
         return fileList.stream().map( SitemapFile::lastModified ).toList();
+    }
+
+    /**
+     * When the root last changed: {@code sitemap.xml}, a sitemap index or the only file. It is kept while the root stays the same, so
+     * it never goes back, also when files leave the index.
+     */
+    @Override
+    public @Nullable Instant rootLastModified()
+    {
+        return modified != null ? modified : SitemapFiles.super.rootLastModified();
+    }
+
+    /**
+     * What the root is made of: the numbers of the files an index lists and when each last changed, or the content of the only file.
+     */
+    private String rootContent()
+    {
+        if ( !isIndex() )
+        {
+            return fileList.isEmpty() ? "" : "file " + fileList.get( 0 ).digest();
+        }
+        final StringBuilder index = new StringBuilder( "index" );
+        fileList.forEach( file -> index.append( ' ' ).append( file.number() ).append( '@' ).append( file.lastModified() ) );
+        return index.toString();
     }
 
     @Override
@@ -442,7 +469,7 @@ public final class Sitemap
      */
     Sitemap withFiles( final FileSource files )
     {
-        return new Sitemap( files, null, size, plainSizes, fileList, namedDigests, Set.of(), cutoff );
+        return new Sitemap( files, null, size, plainSizes, fileList, namedDigests, Set.of(), cutoff, modified );
     }
 
     /**
@@ -495,6 +522,10 @@ public final class Sitemap
         {
             description.put( "cutoff", cutoff.toString() );
         }
+        if ( modified != null )
+        {
+            description.put( "modified", modified.toString() );
+        }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
         final ObjectNode index = description.putObject( "namedDigests" );
@@ -534,8 +565,10 @@ public final class Sitemap
             }
         }
         final JsonNode cutoff = description.get( "cutoff" );
+        final JsonNode modified = description.get( "modified" );
         return new Sitemap( files, null, description.required( "size" ).asInt(), plainSizes, fileList, namedDigests, Set.of(),
-                            cutoff == null ? null : Instant.parse( cutoff.asText() ) );
+                            cutoff == null ? null : Instant.parse( cutoff.asText() ),
+                            modified == null ? null : Instant.parse( modified.asText() ) );
     }
 
     static String fileName( final int number )
@@ -1000,7 +1033,12 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, files, namedDigests, local, null );
+                final Sitemap built =
+                    new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, files, namedDigests, local, null, null );
+                final Instant modified = previous != null && previous.modified != null && previous.rootContent().equals( built.rootContent() )
+                    ? previous.modified
+                    : now;
+                return new Sitemap( built.files, directory, size, plainSizes, files, namedDigests, local, null, modified );
             }
             catch ( IOException e )
             {

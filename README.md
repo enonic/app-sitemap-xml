@@ -151,7 +151,7 @@ Crawlers usually only know `sitemap.xml` (from `robots.txt` or a Search Console 
 
 Every sitemap file is sent with an `ETag`, as Booster does: the first 16 bytes of the SHA-256 digest of its uncompressed content in hex (for a file written on the fly from the Guillotine sitemap, of what it is written from and the site URL), with a `-gzip` suffix when it is sent gzip-compressed (`"…-gzip"`). A request whose `If-None-Match` is that tag (which crawlers send when they fetch a sitemap again) gets `304 Not Modified` without a body. All cluster nodes serve the same stored files, so they send the same tags.
 
-Every file is also sent with `Last-Modified`: the time the file last changed, the same as its `<lastmod>` in the sitemap index (for the index, or a sitemap in one file, the latest of its files). A request without `If-None-Match` whose `If-Modified-Since` is not before that time gets `304 Not Modified` too. `HEAD` requests get the same headers without a body; a file written on the fly is not written.
+Every file is also sent with `Last-Modified`: the time the file last changed, the same as its `<lastmod>` in the sitemap index. `sitemap.xml` has its own: the time it last changed, also when a file left the index, so it never goes back. A request without `If-None-Match` whose `If-Modified-Since` is not before that time gets `304 Not Modified` too. `HEAD` requests get the same headers without a body; a file written on the fly is not written.
 
 ## Caching and background generation
 

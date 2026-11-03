@@ -491,6 +491,53 @@ class SitemapTest
         }
     }
 
+    @Test
+    void rootKeepsItsOwnModificationTimeWhichNeverGoesBack()
+    {
+        final Instant t = Instant.parse( "2024-01-01T00:00:00Z" );
+        final List<SitemapEntry> entries =
+            IntStream.range( 0, 6 ).mapToObj( i -> entry( "/item-" + i, t.plusSeconds( i ) ) ).toList();
+        final Sitemap first = write( params( "https://example.com" ), 2, entries );
+        assertThat( first.rootLastModified() ).isEqualTo( NOW );
+
+        // the same files again: the root keeps its time
+        final Instant later = NOW.plusSeconds( 60 );
+        final Sitemap same = rebuild( first, later, builder -> first.files().forEach( file -> builder.reuse( file, first ) ) );
+        assertThat( same.rootLastModified() ).isEqualTo( NOW );
+
+        // the last file changes: it and the root get the time
+        final Sitemap changed = rebuild( same, later, builder -> {
+            builder.reuse( same.files().get( 0 ), same );
+            builder.reuse( same.files().get( 1 ), same );
+            builder.beginGroup( t.plusSeconds( 4 ), 3 );
+            builder.add( entry( "/changed", t.plusSeconds( 4 ) ) );
+        } );
+        assertThat( changed.lastModified() ).containsExactly( NOW, NOW, later );
+        assertThat( changed.rootLastModified() ).isEqualTo( later );
+
+        // that file leaves the index: the latest of the files is older, the root is newer
+        final Instant latest = later.plusSeconds( 60 );
+        final Sitemap shrunk = rebuild( changed, latest, builder -> {
+            builder.reuse( changed.files().get( 0 ), changed );
+            builder.reuse( changed.files().get( 1 ), changed );
+            builder.beginGroup( t.plusSeconds( 4 ), 3 );
+        } );
+        assertThat( shrunk.lastModified() ).containsExactly( NOW, NOW );
+        assertThat( shrunk.rootLastModified() ).isEqualTo( latest );
+        assertThat( Sitemap.restore( Sitemap.FileSource.directory( temp ), shrunk.store() ).rootLastModified() ).isEqualTo( latest );
+    }
+
+    private Sitemap rebuild( final Sitemap previous, final Instant now, final java.util.function.Consumer<Sitemap.Builder> content )
+    {
+        try (Sitemap.Builder builder = Sitemap.builder( temp.resolve( "sitemap-" + System.nanoTime() ), params( "https://example.com" ), 2,
+                                                        Sitemap.MAX_FILE_BYTES, Sitemap.MAX_FILES ))
+        {
+            builder.numbersFrom( 4 );
+            content.accept( builder );
+            return builder.build( previous, now );
+        }
+    }
+
     private static SitemapEntry entry( final String path, final Instant created )
     {
         return new SitemapEntry( path, "base:folder", null, created );

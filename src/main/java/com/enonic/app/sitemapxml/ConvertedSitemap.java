@@ -133,6 +133,13 @@ final class ConvertedSitemap
         return source.fileNumbers();
     }
 
+    @Override
+    public @Nullable Instant rootLastModified()
+    {
+        // the index follows the files the source lists and their times, and a single file its content: the same changes
+        return source.rootLastModified();
+    }
+
     private int first()
     {
         return source.fileNumbers().get( 0 );

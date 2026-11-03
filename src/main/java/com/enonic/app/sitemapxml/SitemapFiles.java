@@ -51,7 +51,8 @@ public interface SitemapFiles
     List<Integer> fileNumbers();
 
     /**
-     * When the root last changed: that of its only file, or the latest of the files a sitemap index lists.
+     * When the root last changed. By default that of its only file, or the latest of the files a sitemap index lists, which goes back
+     * when the latest file leaves the index: a sitemap that keeps the time of its root overrides it.
      */
     default @Nullable Instant rootLastModified()
     {
