@@ -61,43 +61,58 @@ final class SitemapRenderer
         {
             return params.siteUrl();
         }
-        final StringBuilder url = new StringBuilder( baseUrl() );
+        return baseUrl() + path( entry );
+    }
+
+    /**
+     * The path of the entry relative to the site, percent-encoded; for the headless sitemap also safe in XML as it is.
+     */
+    String path( final SitemapEntry entry )
+    {
+        final StringBuilder path = new StringBuilder();
         for ( final String segment : entry.path().split( "/" ) )
         {
             if ( !segment.isEmpty() )
             {
-                url.append( '/' );
-                encodePathSegment( url, segment );
+                path.append( '/' );
+                encodePathSegment( path, segment, params.format() == SitemapParams.Format.HEADLESS );
             }
         }
-        return url.toString();
+        return path.isEmpty() ? "/" : path.toString();
     }
 
     String url( final SitemapEntry entry, final String loc )
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
+        return url( loc, entry.lastModified(), setting.changefreq(), setting.priority() );
+    }
+
+    String url( final String loc, final Instant lastModified, final String changefreq, final String priority )
+    {
         return element( () -> {
             xml.writeStartElement( "url" );
             textElement( "loc", loc );
-            if ( entry.lastModified() != null )
+            if ( lastModified != null )
             {
-                textElement( "lastmod", DATE.format( entry.lastModified() ) );
+                textElement( "lastmod", DATE.format( lastModified ) );
             }
-            textElement( "changefreq", setting.changefreq() );
-            textElement( "priority", setting.priority() );
+            textElement( "changefreq", changefreq );
+            textElement( "priority", priority );
             xml.writeEndElement();
         } );
     }
 
     /**
-     * Writes the path-based entry served through Guillotine. Change frequency and priority are left out when they have default values.
+     * Writes the path-based entry of the headless sitemap, served through Guillotine. Change frequency and priority are left out
+     * when they have default values.
      */
     void urlsetEntry( final JsonGenerator json, final SitemapEntry entry )
         throws IOException
     {
         final ContentTypeSetting setting = params.setting( entry.contentType() );
         json.writeStartObject();
-        json.writeStringField( "path", entry.path().isEmpty() ? "/" : entry.path() );
+        // percent-encoded, also & and ': clients put it in <loc> as it is
+        json.writeStringField( "path", path( entry ) );
         if ( entry.lastModified() != null )
         {
             json.writeStringField( "lastmod", entry.lastModified().toString() );
@@ -163,6 +178,25 @@ final class SitemapRenderer
         return siteUrl.endsWith( "/" ) ? siteUrl.substring( 0, siteUrl.length() - 1 ) : siteUrl;
     }
 
+    /**
+     * The bytes the given text takes in the XML, escaped and encoded in UTF-8.
+     */
+    static long xmlTextLength( final String text )
+    {
+        final StringWriter escaped = new StringWriter();
+        try
+        {
+            final XMLStreamWriter writer = XML_OUTPUT.createXMLStreamWriter( escaped );
+            writer.writeCharacters( text );
+            writer.flush();
+        }
+        catch ( XMLStreamException e )
+        {
+            throw new IllegalStateException( e );
+        }
+        return utf8Length( escaped.getBuffer() );
+    }
+
     static long utf8Length( final CharSequence value )
     {
         long bytes = 0;
@@ -190,12 +224,18 @@ final class SitemapRenderer
         return bytes;
     }
 
-    static void encodePathSegment( final StringBuilder out, final String segment )
+    /**
+     * Percent-encodes a path segment like portal URLs do.
+     *
+     * @param xmlSafe whether {@code &} and {@code '} are encoded too, so that the result needs no escaping in XML
+     */
+    static void encodePathSegment( final StringBuilder out, final String segment, final boolean xmlSafe )
     {
+        final String allowed = xmlSafe ? "-._~!$()*+,;=:@" : "-._~!$&'()*+,;=:@";
         for ( final byte b : segment.getBytes( StandardCharsets.UTF_8 ) )
         {
             final char c = (char) ( b & 0xFF );
-            if ( ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || "-._~!$&'()*+,;=:@".indexOf( c ) >= 0 )
+            if ( ( c >= 'a' && c <= 'z' ) || ( c >= 'A' && c <= 'Z' ) || ( c >= '0' && c <= '9' ) || allowed.indexOf( c ) >= 0 )
             {
                 out.append( c );
             }

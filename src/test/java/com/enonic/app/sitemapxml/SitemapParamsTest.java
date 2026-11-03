@@ -41,7 +41,7 @@ class SitemapParamsTest
     {
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
                                                         List.of( new ContentTypeSetting( "base:folder", "", "" ),
-                                                                 new ContentTypeSetting( "", "daily", "0.1" ) ), List.of( "", "/x" ), 50_000 );
+                                                                 new ContentTypeSetting( "", "daily", "0.1" ) ), List.of( "", "/x" ), 10_000 );
 
         assertThat( params.contentTypes() ).containsExactly( new ContentTypeSetting( "base:folder", "monthly", "0.5" ),
                                                              new ContentTypeSetting( "portal:site", "hourly", "1.0" ) );
@@ -54,7 +54,7 @@ class SitemapParamsTest
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
                                                         List.of( new ContentTypeSetting( "portal:site", "weekly", "0.9" ),
                                                                  new ContentTypeSetting( "base:folder", "daily", "0.1" ),
-                                                                 new ContentTypeSetting( "base:folder", "yearly", "0.2" ) ), List.of(), 50_000 );
+                                                                 new ContentTypeSetting( "base:folder", "yearly", "0.2" ) ), List.of(), 10_000 );
 
         assertThat( params.contentTypes() ).containsExactly( new ContentTypeSetting( "portal:site", "weekly", "0.9" ),
                                                              new ContentTypeSetting( "base:folder", "yearly", "0.2" ) );
@@ -81,6 +81,6 @@ class SitemapParamsTest
 
     private static SitemapParams site( final String siteUrl )
     {
-        return new SitemapParams( "/s", siteUrl, List.of(), List.of(), 10 );
+        return new SitemapParams( "/s", siteUrl, List.of(), List.of(), 10_000 );
     }
 }

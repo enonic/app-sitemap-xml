@@ -1,6 +1,5 @@
 package com.enonic.app.sitemapxml;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
@@ -18,11 +17,15 @@ import com.enonic.xp.content.ContentService;
 import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextAccessor;
 import com.enonic.xp.context.ContextBuilder;
+import com.enonic.xp.portal.PortalRequest;
+import com.enonic.xp.portal.PortalRequestAccessor;
 import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.RoleKeys;
 import com.enonic.xp.security.acl.AccessControlList;
 import com.enonic.xp.security.acl.Permission;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.web.vhost.VirtualHost;
+import com.enonic.xp.web.vhost.VirtualHostHelper;
 
 public final class SitemapService
 {
@@ -32,13 +35,13 @@ public final class SitemapService
 
     private final SitemapCache cache;
 
-    private final Clock clock;
+    private final SiteUrls siteUrls;
 
-    public SitemapService( final ContentService contentService, final SitemapCache cache, final Clock clock )
+    public SitemapService( final ContentService contentService, final SitemapCache cache, final SiteUrls siteUrls )
     {
         this.contentService = contentService;
         this.cache = cache;
-        this.clock = clock;
+        this.siteUrls = siteUrls;
     }
 
     /**
@@ -46,27 +49,69 @@ public final class SitemapService
      * everyone, the public sitemap. Without a site path, the sitemap lists the whole project. Requests on the draft branch (preview) get
      * a sitemap with the site URL only, or nothing for a project, which is not kept.
      *
-     * @param siteUrlFromRequest true when the site URL of the params is taken from the request: the sitemap is then generated on request
-     *                           only. Otherwise ("Base URL" override, or Guillotine which returns paths) it is generated again in the
-     *                           background when content changes.
+     * @param siteUrlFromRequest true when the site URL of the params is taken from the request
      */
     public Sitemap sitemap( final SitemapParams requested, final boolean siteUrlFromRequest )
     {
-        final SitemapParams params = siteUrlFromRequest ? requested.forRequestSiteUrl() : requested;
         final Context context = ContextAccessor.current();
-        final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
-        final AuthenticationInfo authInfo = sitemapAuthInfo( context, params.sitePath() );
-        final SitemapCache.Key key =
-            new SitemapCache.Key( repositoryId, ContentConstants.BRANCH_MASTER.getValue(), principals( authInfo ), params );
+        return sitemap( context, key( context, requested, siteUrlFromRequest ) );
+    }
 
+    /**
+     * The headless sitemap for Guillotine: paths relative to the site, the same for every host.
+     */
+    public Sitemap headless( final SitemapParams requested )
+    {
+        return sitemap( requested.withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS ), false );
+    }
+
+    private Sitemap sitemap( final Context context, final SitemapCache.Key key )
+    {
         if ( ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) )
         {
-            final SitemapCache.Source draft = params.sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
+            final SitemapCache.Source draft = key.params().sitePath().isEmpty() ? SitemapService::nothing : SitemapService::siteOnly;
             return cache.uncached( key, context.getAuthInfo(), draft );
         }
-        final SitemapCache.Source source =
-            ( sink, cancelled ) -> new SitemapQuery( contentService, params, clock.instant() ).execute( sink, cancelled );
-        return cache.get( key, !siteUrlFromRequest, authInfo, source );
+        return cache.get( key );
+    }
+
+    /**
+     * The files of {@code sitemap.xml} for the request. A public sitemap whose URLs are taken from the request, as no "Base URL"
+     * override or virtual host matching its host exactly gives them, is converted from the site's headless sitemap with the request's
+     * site URL, instead of being generated for each host: the headless sitemap is the same for every host and generated again without a
+     * request.
+     *
+     * @throws InvalidSiteUrlException when such a site URL is too long, see {@link ConvertedSitemap}
+     */
+    public SitemapFiles files( final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
+        final Context context = ContextAccessor.current();
+        final SitemapCache.Key key = key( context, requested, siteUrlFromRequest );
+        if ( !ContentConstants.BRANCH_DRAFT.equals( context.getBranch() ) && key.isPublic() && siteUrlFromRequest &&
+            !siteUrls.isVirtualHostUrl( key.params(), servedVirtualHost() ) )
+        {
+            final SitemapParams headless = key.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS );
+            return new ConvertedSitemap(
+                cache.get( new SitemapCache.Key( key.repositoryId(), key.branch(), key.principals(), headless ) ), key.params() );
+        }
+        return sitemap( context, key );
+    }
+
+    /**
+     * The key of the sitemap for the request, for the principals the sitemap is generated for.
+     */
+    private SitemapCache.Key key( final Context context, final SitemapParams requested, final boolean siteUrlFromRequest )
+    {
+        final String repositoryId = Objects.requireNonNull( context.getRepositoryId(), "No repository in context" ).toString();
+        final SitemapParams params = siteUrlFromRequest ? requested.forRequestSiteUrl() : requested;
+        final AuthenticationInfo authInfo = sitemapAuthInfo( context, params.sitePath() );
+        return new SitemapCache.Key( repositoryId, ContentConstants.BRANCH_MASTER.getValue(), principals( authInfo ), params );
+    }
+
+    private static VirtualHost servedVirtualHost()
+    {
+        final PortalRequest request = PortalRequestAccessor.get();
+        return request == null || request.getRawRequest() == null ? null : VirtualHostHelper.getVirtualHost( request.getRawRequest() );
     }
 
     /**

@@ -17,6 +17,8 @@ app {
 dependencies {
 	compileOnly "com.enonic.xp:core-api:${xpVersion}"
 	compileOnly "com.enonic.xp:script-api:${xpVersion}"
+	compileOnly "com.enonic.xp:web-api:${xpVersion}"
+	compileOnly "com.enonic.xp:portal-api:${xpVersion}"
 	// Provided by XP: the version XP 7.16.11 ships with
 	compileOnly 'com.fasterxml.jackson.core:jackson-core:2.22.4'
 	compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
@@ -28,6 +30,8 @@ dependencies {
 
 	testImplementation "com.enonic.xp:core-api:${xpVersion}"
 	testImplementation "com.enonic.xp:script-api:${xpVersion}"
+	testImplementation "com.enonic.xp:web-api:${xpVersion}"
+	testImplementation "com.enonic.xp:portal-api:${xpVersion}"
 	testImplementation 'com.fasterxml.jackson.core:jackson-core:2.22.4'
 	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
 	testImplementation platform('org.junit:junit-bom:5.13.4')

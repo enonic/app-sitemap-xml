@@ -4,64 +4,59 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
-public final class SitemapParams
+/**
+ * What a sitemap lists and how.
+ *
+ * @param maxItems "Max included items": at most this many contents are listed, the most recently modified
+ * @param format   whether the sitemap is served as {@code sitemap.xml} or headless (through Guillotine): each has its own cached
+ *                 sitemap, with the files that one needs only
+ */
+public record SitemapParams(String sitePath, String siteUrl, List<ContentTypeSetting> contentTypes, List<String> ignorePatterns,
+                            int maxItems, Format format)
 {
+    public enum Format
+    {
+        /**
+         * {@code sitemap.xml} and its files, with full URLs.
+         */
+        XML,
+        /**
+         * Headless, for the Guillotine {@code sitemap} field: URLs as paths, kept as JSON lines.
+         */
+        HEADLESS
+    }
+
     public static final String SITE_CONTENT_TYPE = "portal:site";
 
     public static final String DEFAULT_CHANGEFREQ = "monthly";
 
     public static final String DEFAULT_PRIORITY = "0.5";
 
-    private final String sitePath;
-
-    private final String siteUrl;
-
-    private final List<ContentTypeSetting> contentTypes;
-
-    private final List<String> ignorePatterns;
-
-    private final int maxItems;
-
     public SitemapParams( final String sitePath, final String siteUrl, final List<ContentTypeSetting> contentTypes,
                           final List<String> ignorePatterns, final int maxItems )
+    {
+        this( sitePath, siteUrl, contentTypes, ignorePatterns, maxItems, Format.XML );
+    }
+
+    public SitemapParams
     {
         if ( maxItems < 1 )
         {
             throw new IllegalArgumentException( "maxItems must be positive: " + maxItems );
         }
-        this.sitePath = Objects.requireNonNull( sitePath );
-        this.siteUrl = Objects.requireNonNull( siteUrl );
-        this.contentTypes = normalize( contentTypes );
-        this.ignorePatterns = ignorePatterns.stream().filter( pattern -> !pattern.isBlank() ).collect( Collectors.toUnmodifiableList() );
-        this.maxItems = maxItems;
+        contentTypes = normalize( contentTypes );
+        ignorePatterns = ignorePatterns.stream().filter( pattern -> !pattern.isBlank() ).toList();
     }
 
-    public String sitePath()
+    public SitemapParams withSiteUrl( final String url )
     {
-        return sitePath;
+        return new SitemapParams( sitePath, url, contentTypes, ignorePatterns, maxItems, format );
     }
 
-    public String siteUrl()
+    public SitemapParams withFormat( final Format format )
     {
-        return siteUrl;
-    }
-
-    public List<ContentTypeSetting> contentTypes()
-    {
-        return contentTypes;
-    }
-
-    public List<String> ignorePatterns()
-    {
-        return ignorePatterns;
-    }
-
-    public int maxItems()
-    {
-        return maxItems;
+        return new SitemapParams( sitePath, siteUrl, contentTypes, ignorePatterns, maxItems, format );
     }
 
     public ContentTypeSetting setting( final String contentType )
@@ -100,7 +95,7 @@ public final class SitemapParams
             pathEnd++;
         }
         final String url = protocol + "://" + authority.toLowerCase( Locale.ROOT ) + siteUrl.substring( end, pathEnd );
-        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns, maxItems );
+        return url.equals( siteUrl ) ? this : new SitemapParams( sitePath, url, contentTypes, ignorePatterns, maxItems, format );
     }
 
     /**
@@ -115,6 +110,21 @@ public final class SitemapParams
         }
         final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
         return host.startsWith( "[" ) ? host.contains( "]:" ) : host.contains( ":" );
+    }
+
+    /**
+     * The host of the site URL when it names no port, as in {@code https://www.example.com/path}; null when it names a port or has no
+     * host.
+     */
+    public String hostWithoutPort()
+    {
+        final int start = hostStart( siteUrl );
+        if ( start < 0 || hasExplicitPort() )
+        {
+            return null;
+        }
+        final String host = siteUrl.substring( start, authorityEnd( siteUrl, start ) );
+        return host.isEmpty() ? null : host;
     }
 
     private static int hostStart( final String url )
@@ -144,35 +154,7 @@ public final class SitemapParams
 
     public List<String> contentTypeNames()
     {
-        return contentTypes.stream().map( ContentTypeSetting::contentType ).collect( Collectors.toUnmodifiableList() );
-    }
-
-    @Override
-    public boolean equals( final Object o )
-    {
-        if ( this == o )
-        {
-            return true;
-        }
-        if ( !( o instanceof SitemapParams ) )
-        {
-            return false;
-        }
-        final SitemapParams that = (SitemapParams) o;
-        return maxItems == that.maxItems && sitePath.equals( that.sitePath ) &&
-            siteUrl.equals( that.siteUrl ) && contentTypes.equals( that.contentTypes ) && ignorePatterns.equals( that.ignorePatterns );
-    }
-
-    @Override
-    public int hashCode()
-    {
-        return Objects.hash( sitePath, siteUrl, contentTypes, ignorePatterns, maxItems );
-    }
-
-    @Override
-    public String toString()
-    {
-        return "SitemapParams[" + sitePath + ", " + siteUrl + ", " + contentTypes + ", " + ignorePatterns + ", " + maxItems + "]";
+        return contentTypes.stream().map( ContentTypeSetting::contentType ).toList();
     }
 
     private static List<ContentTypeSetting> normalize( final List<ContentTypeSetting> contentTypes )

@@ -49,7 +49,7 @@ const URLS = [
 ];
 
 const bean = {
-	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
+	headlessUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
 };
 
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
@@ -263,13 +263,13 @@ describe('guillotine extensions', () => {
 			});
 			// print(urlsetResolverResult);
 			expect(urlsetResolverResult).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 				sitePath: '/sitePath',
 				siteUrl: 'https://enonic.com',
 				maxItems: 1000,
 			}), 10);
 			expect(urlsetResolver({args: {count: 0}, localContext: sitemapResolverResult.localContext, source: sitemapResolverResult.source})).toEqual([]);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 0);
 			const {run} = await import('/lib/xp/context');
 			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
 				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
@@ -280,7 +280,7 @@ describe('guillotine extensions', () => {
 				localContext: sitemapResolverResult.localContext,
 				source: sitemapResolverResult.source,
 			});
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.anything(), 1000);
 
 			urlsetResolver({
 				args: {},
@@ -307,7 +307,7 @@ describe('guillotine extensions', () => {
 			expect(projectResult.localContext.siteJson).toBe('null');
 			expect(projectResult.localContext.siteConfigJson).toBe(JSON.stringify(projectConfig));
 			expect(urlsetResolver({args: {}, localContext: projectResult.localContext, source: projectResult.source})).toEqual(URLS);
-			expect(bean.guillotineUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
+			expect(bean.headlessUrlset).toHaveBeenLastCalledWith(expect.objectContaining({
 				sitePath: '',
 				siteUrl: projectConfig.overrideDomain,
 			}), 1000);

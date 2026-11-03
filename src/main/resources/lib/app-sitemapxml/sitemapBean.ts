@@ -38,7 +38,7 @@ export interface SitemapBean {
 	rootGzip(params: ScriptValue): SitemapResponse
 	rootEncoded(params: ScriptValue): SitemapResponse
 	fileGzip(params: ScriptValue, number: number): SitemapResponse
-	guillotineUrlset(params: ScriptValue, count: number): string
+	headlessUrlset(params: ScriptValue, count: number): string
 }
 
 export function toInt(value: string | number | undefined, defaultValue: number, max: number): number {

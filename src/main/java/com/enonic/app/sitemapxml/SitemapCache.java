@@ -9,7 +9,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -21,9 +22,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -33,11 +34,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,41 +50,49 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import com.enonic.xp.app.ApplicationKey;
+import com.enonic.xp.content.ContentService;
+import com.enonic.xp.context.Context;
 import com.enonic.xp.context.ContextBuilder;
 import com.enonic.xp.event.Event;
 import com.enonic.xp.event.EventListener;
 import com.enonic.xp.home.HomeDir;
+import com.enonic.xp.project.ProjectService;
+import com.enonic.xp.security.PrincipalKey;
 import com.enonic.xp.security.auth.AuthenticationInfo;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 /**
- * Generated sitemaps. A sitemap is served until a newer one of the same site replaces it, also when its content changed in the
- * meantime and across restarts: its files and a description of them are kept on disk.
+ * Generated sitemaps of this cluster node. A sitemap is served until a newer one of the same key replaces it, also when its content
+ * changed in the meantime and across restarts: its files and a description of them are kept on disk.
  * <p>
- * Sitemaps of a project are generated one at a time, in the order they are requested; different projects generate in parallel. There
- * is no limit on how many generations are queued, but when more than {@value #MAX_WAITING} requests are already waiting for sitemaps
- * that are not generated yet, further such requests get {@link SitemapBusyException}. Requests for generated sitemaps are always
- * answered right away.
+ * Sitemaps of a project are generated one at a time; different projects generate in parallel. There is no limit on how many generations
+ * are queued, but when more than {@value #MAX_WAITING} requests are already waiting for sitemaps that are not generated yet, further such
+ * requests get {@link SitemapBusyException}. Requests for generated sitemaps are always answered right away.
  * <p>
- * A sitemap whose URLs do not depend on the request ("Base URL" override in the site configuration) is generated again in the background a few seconds after
- * its content changes, unless it was not requested for {@link #IDLE_TIMEOUT}. Other sitemaps, and all sitemaps kept from before a restart,
- * are generated again when they are next requested; the request gets the previous sitemap. A generation still running when the content
- * changes again is halted and started over.
+ * Public sitemaps (those of anonymous requests) are generated again in the background a few seconds after content that may change them
+ * changed. A change while one is generated starts one more generation once it is done. Each generation first checks whether any content
+ * changed since the previous one: if none did, nothing is read. Sitemaps of logged-in users are generated again on their next request,
+ * which gets the previous sitemap, and are deleted after {@link #USER_RETENTION} without a request.
  */
 @Component(immediate = true, service = {SitemapCache.class, EventListener.class})
 public final class SitemapCache
     implements EventListener
 {
-    static final int MAX_PER_SITE = 10;
+    static final ApplicationKey APPLICATION = ApplicationKey.from( "com.enonic.app.sitemapxml" );
 
-    private static final Comparator<Map.Entry<Key, Entry>> EVICTION_ORDER =
-        Comparator.<Map.Entry<Key, Entry>, Boolean>comparing( e -> !e.getKey().params().hasExplicitPort() )
-            .thenComparing( e -> e.getValue().lastAccess );
+    /**
+     * Sitemaps of logged-in users kept per site and principals: their site URLs come from the request.
+     */
+    static final int MAX_PER_SITE = 10;
 
     static final int MAX_WAITING = 10;
 
     static final Duration REGENERATION_DELAY = Duration.ofSeconds( 5 );
 
-    static final Duration IDLE_TIMEOUT = Duration.ofHours( 1 );
+    static final Duration USER_RETENTION = Duration.ofDays( 1 );
+
+    static final Duration CLEANUP_INTERVAL = Duration.ofHours( 1 );
 
     static final Duration FILE_RETENTION = Duration.ofMinutes( 1 );
 
@@ -89,9 +100,15 @@ public final class SitemapCache
 
     static final Duration GENERATOR_KEEP_ALIVE = Duration.ofMinutes( 1 );
 
+    /**
+     * Contents changed at most this long before a generation started count as changed for the next one: node times are stamped by the
+     * clocks of the cluster nodes.
+     */
+    static final Duration CUTOFF_MARGIN = Duration.ofSeconds( 2 );
+
     static final String ENTRY_FILE = "entry.json";
 
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
 
     private static final Logger LOG = LoggerFactory.getLogger( SitemapCache.class );
 
@@ -119,17 +136,30 @@ public final class SitemapCache
 
     private final Path storage;
 
-    public SitemapCache()
+    private final Function<Key, Source> sources;
+
+    private final Predicate<Key> current;
+
+    @Activate
+    public SitemapCache( @Reference final ContentService contentService, @Reference final ProjectService projectService,
+                         @Reference final VirtualHostService virtualHostService )
     {
         this( Executors.newSingleThreadScheduledExecutor( runnable -> {
-            final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
-            thread.setDaemon( true );
-            return thread;
-        } ), SitemapCache::newGenerator, Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION, HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ) );
+                  final Thread thread = new Thread( runnable, "sitemapxml-scheduler" );
+                  thread.setDaemon( true );
+                  return thread;
+              } ), SitemapCache::newGenerator, Clock.systemUTC(), REGENERATION_DELAY, FILE_RETENTION,
+              HomeDir.get().toPath().resolve( "work" ).resolve( "cache" ).resolve( "com.enonic.app.sitemapxml" ),
+              query( contentService, Clock.systemUTC() ), new SiteUrls( contentService, projectService, virtualHostService )::isCurrent );
     }
 
+    /**
+     * @param sources the source of the contents of a key's sitemap, for one generation
+     * @param current whether a public sitemap may still be requested, see {@link SiteUrls#isCurrent}
+     */
     SitemapCache( final ScheduledExecutorService scheduler, final Function<String, ExecutorService> generatorFactory, final Clock clock,
-                  final Duration regenerationDelay, final Duration fileRetention, final Path storage )
+                  final Duration regenerationDelay, final Duration fileRetention, final Path storage, final Function<Key, Source> sources,
+                  final Predicate<Key> current )
     {
         this.scheduler = scheduler;
         this.generatorFactory = generatorFactory;
@@ -137,7 +167,26 @@ public final class SitemapCache
         this.regenerationDelay = regenerationDelay;
         this.fileRetention = fileRetention;
         this.storage = storage;
+        this.sources = sources;
+        this.current = current;
         restore();
+        try
+        {
+            scheduler.scheduleWithFixedDelay( this::deleteUnused, CLEANUP_INTERVAL.toMillis(), CLEANUP_INTERVAL.toMillis(),
+                                              TimeUnit.MILLISECONDS );
+        }
+        catch ( RejectedExecutionException e )
+        {
+            LOG.debug( "Sitemaps of logged-in users are not cleaned up", e );
+        }
+    }
+
+    /**
+     * The contents of a key's sitemap, from the content API.
+     */
+    static Function<Key, Source> query( final ContentService contentService, final Clock clock )
+    {
+        return key -> new QuerySource( new SitemapQuery( contentService, key.params(), clock.instant() ) );
     }
 
     /**
@@ -179,8 +228,7 @@ public final class SitemapCache
         final long deadline = System.nanoTime() + STOP_TIMEOUT.toNanos();
         try
         {
-            for ( final ExecutorService executor : Stream.concat( Stream.of( scheduler ), generators.values().stream() )
-                .collect( Collectors.toList() ) )
+            for ( final ExecutorService executor : Stream.concat( Stream.of( scheduler ), generators.values().stream() ).toList() )
             {
                 if ( !executor.awaitTermination( deadline - System.nanoTime(), TimeUnit.NANOSECONDS ) )
                 {
@@ -196,52 +244,41 @@ public final class SitemapCache
     }
 
     /**
-     * Returns the sitemap of the given key, generating it first when there is none yet.
+     * Returns the sitemap of the given key, generating it first when there is none yet. A sitemap of a logged-in user that content
+     * changed since is generated again, and the previous one returned meanwhile.
      *
-     * @param background whether the sitemap may be generated again in the background: its URLs do not depend on the request
-     * @param authInfo   the generation runs with these principals
-     * @param source     writes the entries of the sitemap
      * @throws SitemapBusyException when the sitemap is not generated yet and too many requests are already waiting
      */
-    public Sitemap get( final Key key, final boolean background, final AuthenticationInfo authInfo, final Source source )
+    public Sitemap get( final Key key )
     {
-        while ( true )
+        final Instant now = clock.instant();
+        final Entry entry = entries.computeIfAbsent( key, k -> new Entry( now ) );
+        entry.lastAccess = now;
+
+        final Sitemap current = entry.sitemap;
+        if ( current != null )
         {
-            final Instant now = clock.instant();
-            final Entry entry = entries.computeIfAbsent( key, k -> new Entry( now ) );
-            entry.lastAccess = now;
-            entry.background = background;
-            if ( entry.source == null )
+            final Generation queued = entry.generation;
+            if ( entry.isOutdated( now ) && ( queued == null || !queued.startsWithin( regenerationDelay ) ) )
             {
-                entry.authInfo = authInfo;
-                entry.source = source;
+                generate( key, entry, Duration.ZERO );
             }
+            return current;
+        }
 
-            final Sitemap current = entry.sitemap;
-            if ( current != null )
-            {
-                final Generation queued = entry.generation;
-                if ( entry.isOutdated( now ) && ( queued == null || !queued.startsWithin( regenerationDelay ) ) )
-                {
-                    generate( key, entry, Duration.ZERO, false );
-                }
-                return current;
-            }
-
-            evictOverflow( key );
-            generate( key, entry, Duration.ZERO, false );
-            if ( !waiting.tryAcquire() )
-            {
-                throw new SitemapBusyException();
-            }
-            try
-            {
-                return await( entry.ready );
-            }
-            finally
-            {
-                waiting.release();
-            }
+        evictOverflow( key );
+        generate( key, entry, Duration.ZERO );
+        if ( !waiting.tryAcquire() )
+        {
+            throw new SitemapBusyException();
+        }
+        try
+        {
+            return await( entry.ready );
+        }
+        finally
+        {
+            waiting.release();
         }
     }
 
@@ -266,26 +303,6 @@ public final class SitemapCache
         }
     }
 
-    public void invalidate( final String repositoryId, final String branch )
-    {
-        entries.forEach( ( key, entry ) -> {
-            if ( key.repositoryId().equals( repositoryId ) && key.branch().equals( branch ) )
-            {
-                invalidate( key, entry );
-            }
-        } );
-    }
-
-    public void invalidate( final String repositoryId )
-    {
-        entries.forEach( ( key, entry ) -> {
-            if ( key.repositoryId().equals( repositoryId ) )
-            {
-                invalidate( key, entry );
-            }
-        } );
-    }
-
     int size()
     {
         return entries.size();
@@ -300,79 +317,98 @@ public final class SitemapCache
     public void onEvent( final Event event )
     {
         final String type = event.getType();
-        final Map<String, Object> data = event.getData();
+        // changed paths per repository and branch, or per repository
+        final Map<List<String>, Set<String>> changed = new LinkedHashMap<>();
         if ( type.startsWith( "node." ) )
         {
-            final Object nodes = data.get( "nodes" );
-            if ( nodes instanceof List )
+            final Object data = event.getData().get( "nodes" );
+            for ( final Object node : data instanceof List<?> nodes ? nodes : List.of( event.getData() ) )
             {
-                for ( final Object node : (List<?>) nodes )
+                if ( node instanceof Map<?, ?> map && map.get( "repo" ) instanceof String repo &&
+                    map.get( "branch" ) instanceof String branch )
                 {
-                    if ( node instanceof Map )
+                    final Set<String> paths = changed.computeIfAbsent( List.of( repo, branch ), scope -> new LinkedHashSet<>() );
+                    // the path before and after a move, or a push of a moved node
+                    for ( final String field : List.of( "path", "newPath", "currentTargetPath" ) )
                     {
-                        invalidate( (Map<?, ?>) node );
+                        if ( map.get( field ) instanceof String path )
+                        {
+                            paths.add( changedPath( path ) );
+                        }
+                    }
+                    if ( paths.isEmpty() )
+                    {
+                        paths.add( "/" );
                     }
                 }
             }
-            else
+        }
+        else if ( type.startsWith( "repository." ) && event.getData().get( "id" ) instanceof String repo )
+        {
+            changed.put( List.of( repo ), Set.of( "/" ) );
+        }
+        changed.forEach( ( scope, paths ) -> entries.forEach( ( key, entry ) -> {
+            if ( key.repositoryId().equals( scope.get( 0 ) ) && ( scope.size() == 1 || key.branch().equals( scope.get( 1 ) ) ) &&
+                paths.stream().anyMatch( path -> affects( path, key ) ) )
             {
-                invalidate( data );
+                contentChanged( key, entry );
             }
-        }
-        else if ( type.startsWith( "repository." ) && data.get( "id" ) instanceof String )
-        {
-            invalidate( (String) data.get( "id" ) );
-        }
+        } ) );
     }
 
-    private void invalidate( final Map<?, ?> node )
+    /**
+     * The changed node path as changes are matched: at most two levels, as {@code /content/<name>}. A site deeper than that counts as
+     * changed when anything under the same {@code /content/<name>} changes.
+     */
+    static String changedPath( final String path )
     {
-        final Object repo = node.get( "repo" );
-        final Object branch = node.get( "branch" );
-        if ( repo instanceof String && branch instanceof String )
-        {
-            invalidate( (String) repo, (String) branch );
-        }
+        int end = path.indexOf( '/', 1 );
+        end = end < 0 ? -1 : path.indexOf( '/', end + 1 );
+        return end < 0 ? path : path.substring( 0, end );
     }
 
-    private void invalidate( final Key key, final Entry entry )
+    /**
+     * Whether a change at the given path, as {@link #changedPath} keeps it, may change the sitemap of the key: it is in the site (or the
+     * project's content), or above it, or {@code /} for a change of the whole repository.
+     */
+    static boolean affects( final String path, final Key key )
+    {
+        final String root = "/content" + key.params().sitePath();
+        return path.equals( "/" ) || path.equals( root ) || path.startsWith( root + "/" ) || root.startsWith( path + "/" );
+    }
+
+    private void contentChanged( final Key key, final Entry entry )
     {
         synchronized ( entry )
         {
             entry.changes++;
         }
-        if ( entry.sitemap == null )
+        // a generation running now is followed by another one once it is done, see Generation#done
+        if ( key.isPublic() && entry.sitemap != null )
         {
-            generate( key, entry, Duration.ZERO, true );
-        }
-        else if ( entry.generation != null ||
-            entry.background && entry.source != null && !entry.lastAccess.plus( IDLE_TIMEOUT ).isBefore( clock.instant() ) )
-        {
-            generate( key, entry, regenerationDelay, true );
+            generate( key, entry, regenerationDelay );
         }
     }
 
     /**
-     * Queues a generation of the entry after the given delay, unless one is already queued to start by then.
-     *
-     * @param restart whether content changed: a generation already running is then halted and queued again
+     * Queues a generation of the entry after the given delay, unless one is already running, or queued to start by then.
      */
-    private void generate( final Key key, final Entry entry, final Duration delay, final boolean restart )
+    private void generate( final Key key, final Entry entry, final Duration delay )
     {
         synchronized ( entry )
         {
+            if ( entry.removed )
+            {
+                return;
+            }
             final Generation current = entry.generation;
             if ( current != null )
             {
-                if ( current.started ? !restart : current.startsWithin( delay ) )
+                if ( current.started || current.startsWithin( delay ) )
                 {
                     return;
                 }
                 current.cancel();
-            }
-            if ( entry.source == null )
-            {
-                return;
             }
             final Generation generation = new Generation( key, entry, delay );
             entry.generation = generation;
@@ -430,6 +466,20 @@ public final class SitemapCache
     }
 
     /**
+     * Deletes the sitemaps of logged-in users not requested for {@link #USER_RETENTION}.
+     */
+    void deleteUnused()
+    {
+        final Instant before = clock.instant().minus( USER_RETENTION );
+        entries.forEach( ( key, entry ) -> {
+            if ( !key.isPublic() && entry.ready.isDone() && entry.generation == null && entry.lastAccess.isBefore( before ) )
+            {
+                remove( key, entry );
+            }
+        } );
+    }
+
+    /**
      * Stops the sitemap from being restored after a restart, and deletes its files later: requests may still be reading them.
      */
     private void retire( final Sitemap sitemap )
@@ -459,7 +509,6 @@ public final class SitemapCache
             final ObjectNode description = JsonNodeFactory.instance.objectNode();
             description.put( "format", FORMAT );
             description.set( "key", key.store() );
-            description.put( "background", entry.background );
             description.put( "lastAccess", entry.lastAccess.toString() );
             final Instant validUntil = entry.validUntil;
             if ( validUntil != null )
@@ -468,7 +517,7 @@ public final class SitemapCache
             }
             description.set( "sitemap", sitemap.store() );
             MAPPER.writeValue( temporary.toFile(), description );
-            Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE );
+            Files.move( temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING );
         }
         catch ( IOException e )
         {
@@ -478,9 +527,9 @@ public final class SitemapCache
     }
 
     /**
-     * Reads back the sitemaps kept on disk. Content may have changed since they were generated, so they are generated again when
-     * requested. Files of unfinished generations are deleted, and of two sitemaps with the same key the older one: directories are
-     * named by version 7 UUIDs, which sort by creation time.
+     * Reads back the sitemaps kept on disk. Content may have changed since they were generated: public ones are generated again in the
+     * background, others when requested. Files of unfinished generations and of earlier versions of the app are deleted, and of two
+     * sitemaps with the same key the older one: directories are named by version 7 UUIDs, which sort by creation time.
      */
     private void restore()
     {
@@ -491,7 +540,7 @@ public final class SitemapCache
         final List<Path> directories;
         try (Stream<Path> list = Files.list( storage ))
         {
-            directories = list.sorted().collect( Collectors.toList() );
+            directories = list.sorted().toList();
         }
         catch ( IOException e )
         {
@@ -514,6 +563,12 @@ public final class SitemapCache
             }
         }
         List.copyOf( entries.keySet() ).forEach( this::evictOverflow );
+        entries.forEach( ( key, entry ) -> {
+            if ( key.isPublic() )
+            {
+                generate( key, entry, regenerationDelay );
+            }
+        } );
         LOG.debug( "Restored {} sitemaps", entries.size() );
     }
 
@@ -533,7 +588,6 @@ public final class SitemapCache
             }
             final Key key = Key.restore( description.required( "key" ) );
             final Entry entry = new Entry( Instant.parse( description.required( "lastAccess" ).asText() ) );
-            entry.background = description.required( "background" ).asBoolean();
             final JsonNode validUntil = description.get( "validUntil" );
             entry.validUntil = validUntil == null ? null : Instant.parse( validUntil.asText() );
             final Sitemap sitemap = Sitemap.restore( directory, description.required( "sitemap" ) );
@@ -577,18 +631,24 @@ public final class SitemapCache
     }
 
     /**
-     * Removes generated sitemaps of the site and principals of the given key beyond {@value #MAX_PER_SITE}: a site is requested
-     * through a few hosts, ports and schemes, but they come from the request and can be made up. Sitemaps whose site URL names a port go first, then the
-     * least recently used. Sitemaps that requests are waiting for are kept.
+     * Removes sitemaps of logged-in users of the site and principals of the given key beyond {@value #MAX_PER_SITE}: their site URLs
+     * come from the request and can be made up. Sitemaps whose site URL names a port go first, then the least recently used. Sitemaps
+     * that requests are waiting for are kept.
      */
     private void evictOverflow( final Key key )
     {
-        final List<Map.Entry<Key, Entry>> site = entries.entrySet().stream().filter( e -> e.getKey().isSameSiteForSamePrincipals( key ) ).collect( Collectors.toList() );
+        if ( key.isPublic() )
+        {
+            return;
+        }
+        final List<Map.Entry<Key, Entry>> site =
+            entries.entrySet().stream().filter( e -> e.getKey().isSameSiteForSamePrincipals( key ) ).toList();
         site.stream()
             .filter( e -> e.getValue().sitemap != null && e.getValue().ready.isDone() )
-            .sorted( EVICTION_ORDER )
+            .sorted( java.util.Comparator.<Map.Entry<Key, Entry>, Boolean>comparing( e -> !e.getKey().params().hasExplicitPort() )
+                         .thenComparing( e -> e.getValue().lastAccess ) )
             .limit( Math.max( 0, site.size() - MAX_PER_SITE ) )
-            .collect( Collectors.toList() )
+            .toList()
             .forEach( e -> remove( e.getKey(), e.getValue() ) );
     }
 
@@ -600,12 +660,19 @@ public final class SitemapCache
         }
         catch ( CompletionException e )
         {
-            if ( e.getCause() instanceof RuntimeException )
+            if ( e.getCause() instanceof RuntimeException cause )
             {
-                throw (RuntimeException) e.getCause();
+                throw cause;
             }
             throw e;
         }
+    }
+
+    private static AuthenticationInfo authInfo( final Key key )
+    {
+        return AuthenticationInfo.copyOf( AuthenticationInfo.unAuthenticated() )
+            .principals( key.principals().stream().map( PrincipalKey::from ).toList() )
+            .build();
     }
 
     /**
@@ -620,72 +687,71 @@ public final class SitemapCache
          * @return when the sitemap must be generated again, or null
          */
         Instant write( Consumer<SitemapEntry> sink, BooleanSupplier cancelled );
+
+        /**
+         * Counts the contents of the sitemap, and those of them changed since the given time; null when the source can't.
+         */
+        default SitemapQuery.Count count( final Instant since )
+        {
+            return null;
+        }
+
+        /**
+         * The contents of the sitemap counted before {@link #write} read any, as {@link #count} counts them; -1 when unknown.
+         */
+        default long total()
+        {
+            return -1;
+        }
     }
 
-    public static final class Key
+    record QuerySource(SitemapQuery query)
+        implements Source
     {
-        private final String repositoryId;
-
-        private final String branch;
-
-        private final Set<String> principals;
-
-        private final SitemapParams params;
-
-        public Key( final String repositoryId, final String branch, final Set<String> principals, final SitemapParams params )
+        @Override
+        public Instant write( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
         {
-            this.repositoryId = Objects.requireNonNull( repositoryId );
-            this.branch = Objects.requireNonNull( branch );
-            this.principals = Set.copyOf( principals );
-            this.params = Objects.requireNonNull( params );
-        }
-
-        public String repositoryId()
-        {
-            return repositoryId;
-        }
-
-        public String branch()
-        {
-            return branch;
-        }
-
-        public Set<String> principals()
-        {
-            return principals;
-        }
-
-        public SitemapParams params()
-        {
-            return params;
+            return query.execute( sink, cancelled );
         }
 
         @Override
-        public boolean equals( final Object o )
+        public SitemapQuery.Count count( final Instant since )
         {
-            if ( this == o )
-            {
-                return true;
-            }
-            if ( !( o instanceof Key ) )
-            {
-                return false;
-            }
-            final Key key = (Key) o;
-            return repositoryId.equals( key.repositoryId ) && branch.equals( key.branch ) && principals.equals( key.principals ) &&
-                params.equals( key.params );
+            return query.count( since );
         }
 
         @Override
-        public int hashCode()
+        public long total()
         {
-            return Objects.hash( repositoryId, branch, principals, params );
+            return query.total();
+        }
+    }
+
+    public record Key(String repositoryId, String branch, Set<String> principals, SitemapParams params)
+    {
+        static final String ANONYMOUS = "user:system:anonymous";
+
+        public Key
+        {
+            Objects.requireNonNull( repositoryId );
+            Objects.requireNonNull( branch );
+            principals = Set.copyOf( principals );
+            Objects.requireNonNull( params );
+        }
+
+        /**
+         * Whether the sitemap is that of anonymous requests: it is generated again in the background when content changes.
+         */
+        public boolean isPublic()
+        {
+            return principals.contains( ANONYMOUS );
         }
 
         @Override
         public String toString()
         {
-            return repositoryId + " " + branch + " " + params.sitePath();
+            return repositoryId + " " + branch + " " + params.sitePath() + " " + params.format().name().toLowerCase() +
+                ( params.siteUrl().isEmpty() ? "" : " " + params.siteUrl() );
         }
 
         boolean isSameSiteForSamePrincipals( final Key other )
@@ -714,6 +780,7 @@ public final class SitemapCache
             final ArrayNode ignorePatterns = key.putArray( "ignorePatterns" );
             params.ignorePatterns().forEach( ignorePatterns::add );
             key.put( "maxItems", params.maxItems() );
+            key.put( "format", params.format().name().toLowerCase() );
             return key;
         }
 
@@ -728,7 +795,8 @@ public final class SitemapCache
             }
             final SitemapParams params =
                 new SitemapParams( key.required( "sitePath" ).asText(), key.required( "siteUrl" ).asText(), contentTypes,
-                                   strings( key.required( "ignorePatterns" ) ), key.required( "maxItems" ).asInt() );
+                                   strings( key.required( "ignorePatterns" ) ), key.required( "maxItems" ).asInt(),
+                                   SitemapParams.Format.valueOf( key.required( "format" ).asText().toUpperCase() ) );
             return new Key( key.required( "repository" ).asText(), key.required( "branch" ).asText(),
                             Set.copyOf( strings( key.required( "principals" ) ) ), params );
         }
@@ -810,40 +878,77 @@ public final class SitemapCache
                 started = true;
                 changes = entry.changes;
             }
-            final Source source = entry.source;
-            final AuthenticationInfo authInfo = entry.authInfo;
             try
             {
-                if ( source == null || authInfo == null )
+                final Sitemap previous = entry.sitemap;
+                if ( key.isPublic() && previous != null && !current.test( key ) )
                 {
-                    throw new CancellationException();
+                    LOG.debug( "Sitemap {} is no longer configured", key );
+                    remove( key, entry );
+                    return;
                 }
-                final Instant validUntil;
+                final Instant startedAt = clock.instant();
+                final Context context =
+                    ContextBuilder.create().repositoryId( key.repositoryId() ).branch( key.branch() ).authInfo( authInfo( key ) ).build();
+                final Source source = sources.apply( key );
+                final Instant validUntil = entry.validUntil;
+                final boolean scheduled = validUntil != null && !startedAt.isBefore( validUntil );
+                if ( previous != null && previous.count() >= 0 && previous.cutoff() != null && !scheduled )
+                {
+                    final SitemapQuery.Count count = context.callWith( () -> source.count( previous.cutoff() ) );
+                    if ( count != null && count.changed() == 0 && count.count() == previous.count() )
+                    {
+                        LOG.debug( "Sitemap {}: no contents changed", key );
+                        unchanged( previous.withCount( previous.count(), startedAt.minus( CUTOFF_MARGIN ) ) );
+                        return;
+                    }
+                }
+                final Instant nextChange;
                 final Sitemap sitemap;
                 try (Sitemap.Builder builder = Sitemap.builder( storage.resolve( uuid7( clock.millis() ) ), key.params() ))
                 {
-                    validUntil = ContextBuilder.create()
-                        .repositoryId( key.repositoryId() )
-                        .branch( key.branch() )
-                        .authInfo( authInfo )
-                        .build()
-                        .callWith( () -> source.write( builder::add, () -> cancelled ) );
+                    nextChange = context.callWith( () -> source.write( builder::add, () -> cancelled ) );
                     if ( cancelled )
                     {
                         throw new CancellationException();
                     }
-                    sitemap = builder.build( entry.sitemap, clock.instant() );
+                    final Sitemap built = builder.build( previous, clock.instant() );
+                    final long total = source.total();
+                    sitemap = total >= 0 ? built.withCount( total, startedAt.minus( CUTOFF_MARGIN ) ) : built;
                 }
-                publish( sitemap, validUntil );
+                publish( sitemap, nextChange );
             }
             catch ( CancellationException e )
             {
                 LOG.debug( "Generation of sitemap {} halted", key );
+                done();
             }
             catch ( RuntimeException e )
             {
                 failed( e );
             }
+        }
+
+        /**
+         * Keeps the sitemap, with the time contents count as changed since moved to this generation: no content changed before it.
+         */
+        private void unchanged( final Sitemap sitemap )
+        {
+            synchronized ( entry )
+            {
+                if ( entry.generation == this )
+                {
+                    entry.generation = null;
+                }
+                if ( cancelled || entry.removed )
+                {
+                    return;
+                }
+                entry.sitemap = sitemap;
+                entry.sitemapChanges = changes;
+                persist( key, entry, sitemap );
+            }
+            followUp();
         }
 
         private void publish( final Sitemap sitemap, final Instant validUntil )
@@ -874,9 +979,32 @@ public final class SitemapCache
             evictOverflow( key );
             LOG.debug( "Generated sitemap {}", key );
 
-            if ( entry.background && validUntil != null )
+            if ( key.isPublic() && validUntil != null )
             {
-                generate( key, entry, Duration.between( clock.instant(), validUntil ), false );
+                generate( key, entry, Duration.between( clock.instant(), validUntil ) );
+            }
+            followUp();
+        }
+
+        private void done()
+        {
+            synchronized ( entry )
+            {
+                if ( entry.generation == this )
+                {
+                    entry.generation = null;
+                }
+            }
+        }
+
+        /**
+         * Generates a public sitemap again when content changed while it was generated.
+         */
+        private void followUp()
+        {
+            if ( key.isPublic() && entry.changes != changes )
+            {
+                generate( key, entry, regenerationDelay );
             }
         }
 
@@ -897,22 +1025,13 @@ public final class SitemapCache
                     return;
                 }
             }
-            LOG.warn( "Could not generate sitemap for {} {} {}", key.repositoryId(), key.branch(), key.params().sitePath(), e );
+            LOG.warn( "Could not generate sitemap {}", key, e );
         }
     }
 
     private static final class Entry
     {
         final CompletableFuture<Sitemap> ready = new CompletableFuture<>();
-
-        /**
-         * Source and principals of the latest request: entries restored from disk have none until requested.
-         */
-        volatile Source source;
-
-        volatile AuthenticationInfo authInfo;
-
-        volatile boolean background;
 
         volatile Generation generation;
 

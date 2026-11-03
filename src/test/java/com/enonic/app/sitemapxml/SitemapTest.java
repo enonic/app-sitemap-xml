@@ -6,8 +6,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.zip.GZIPInputStream;
 
@@ -50,7 +50,7 @@ class SitemapTest
     {
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
             .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + ( 6 - i ) + "T10:00:00Z" ) ) )
-            .collect( Collectors.toList() );
+            .toList();
         final Sitemap sitemap = write( params( "https://example.com/site/project/master/mysite" ), 2, entries );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
@@ -81,9 +81,21 @@ class SitemapTest
     void encodesPathSegmentsLikePortalUrls()
     {
         final StringBuilder out = new StringBuilder();
-        SitemapRenderer.encodePathSegment( out, "æøå ~-._!$&'()*+,;=:@?#/%" );
+        SitemapRenderer.encodePathSegment( out, "æøå ~-._!$&'()*+,;=:@?#/%", false );
 
         assertThat( out ).hasToString( "%C3%A6%C3%B8%C3%A5%20~-._!$&'()*+,;=:@%3F%23%2F%25" );
+    }
+
+    @Test
+    void headlessPathsArePercentEncodedAndSafeInXml()
+    {
+        final StringBuilder out = new StringBuilder();
+        SitemapRenderer.encodePathSegment( out, "æ ~-._!$&'()*+,;=:@<>\"", true );
+        assertThat( out ).hasToString( "%C3%A6%20~-._!$%26%27()*+,;=:@%3C%3E%22" );
+
+        final Sitemap sitemap =
+            write( headless(), 10, List.of( new SitemapEntry( "", "portal:site", null ), new SitemapEntry( "/a&b/æ 'c'", "base:folder", null ) ) );
+        assertThat( sitemap.urlsetJson( 10 ) ).contains( "\"path\":\"/\"" ).contains( "\"path\":\"/a%26b/%C3%A6%20%27c%27\"" );
     }
 
     @Test
@@ -91,7 +103,7 @@ class SitemapTest
         throws IOException
     {
         final List<SitemapEntry> entries =
-            IntStream.rangeClosed( 1, 5 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).collect( Collectors.toList() );
+            IntStream.rangeClosed( 1, 5 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).toList();
         final long urlBytes = SitemapRenderer.utf8Length(
             "<url><loc>https://example.com/item-1</loc><changefreq>daily</changefreq><priority>0.8</priority></url>" );
         final long overhead = write( params( "https://example.com" ), 10, List.of() ).root().size();
@@ -117,21 +129,74 @@ class SitemapTest
 
         assertThat( sitemap.size() ).isEqualTo( 1 );
         assertThat( text( sitemap.root() ) ).contains( "https://example.com/ok" ).doesNotContain( longName );
-        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( longName );
+    }
+
+    @Test
+    void headlessLeavesOutUrlsTooLongWithTheLongestBaseUrl()
+    {
+        final String fits = "a".repeat( Sitemap.MAX_LOC_LENGTH - Sitemap.MAX_BASE_URL_LENGTH - 1 );
+        final String tooLong = "b".repeat( Sitemap.MAX_LOC_LENGTH - Sitemap.MAX_BASE_URL_LENGTH );
+        final List<SitemapEntry> entries =
+            List.of( new SitemapEntry( "/" + fits, "base:folder", null ), new SitemapEntry( "/" + tooLong, "base:folder", null ) );
+
+        assertThat( write( params( "https://example.com" ), 10, entries ).size() ).isEqualTo( 2 );
+        final Sitemap headless = write( headless(), 10, entries );
+        assertThat( headless.size() ).isEqualTo( 1 );
+        assertThat( headless.urlsetJson( 10 ) ).contains( fits ).doesNotContain( tooLong );
+    }
+
+    @Test
+    void headlessFilesFitWhatNextJsWritesWithTheLongestBaseUrl()
+    {
+        final Instant lastmod = Instant.parse( "2024-01-01T10:00:00.123456789Z" );
+        final List<SitemapEntry> entries =
+            IntStream.range( 0, 50 ).mapToObj( i -> new SitemapEntry( "/item-" + i + "/æ ø", "base:folder", lastmod ) ).toList();
+        final long maxFileBytes = 10_000;
+
+        final Sitemap headless = write( temp.resolve( "headless" ), headless(), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
+        final Sitemap shortHost =
+            write( temp.resolve( "short" ), params( "https://example.com" ), entries, 1_000, maxFileBytes, Sitemap.MAX_FILES );
+
+        assertThat( headless.size() ).isEqualTo( 50 );
+        assertThat( headless.fileCount() ).isGreaterThan( shortHost.fileCount() );
+        final String baseUrl = "https://" + "a".repeat( Sitemap.MAX_BASE_URL_LENGTH - "https://".length() );
+        for ( int number = 1; number <= headless.fileCount(); number++ )
+        {
+            final String json = headless.fileUrlsetJson( number ).orElseThrow();
+            // as Next.js resolveSitemap writes the file: the base URL, the path as returned, the full time
+            final StringBuilder xml = new StringBuilder( "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ).append(
+                "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n" );
+            for ( final String path : json.split( "\"path\":\"" ) )
+            {
+                if ( path.startsWith( "/" ) )
+                {
+                    final String encoded = path.substring( 0, path.indexOf( '"' ) );
+                    assertThat( encoded ).doesNotContain( " ", "æ", "ø" );
+                    xml.append( "<url>\n<loc>" ).append( baseUrl ).append( encoded ).append( "</loc>\n" )
+                        .append( "<lastmod>" ).append( lastmod ).append( "</lastmod>\n" )
+                        .append( "<changefreq>monthly</changefreq>\n<priority>0.8</priority>\n</url>\n" );
+                }
+            }
+            xml.append( "</urlset>\n" );
+            assertThat( SitemapRenderer.utf8Length( xml ) ).isLessThanOrEqualTo( maxFileBytes );
+        }
     }
 
     @Test
     void indexListsAtMostMaxFiles()
     {
         final List<SitemapEntry> entries =
-            IntStream.range( 0, 7 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).collect( Collectors.toList() );
+            IntStream.range( 0, 7 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).toList();
 
         final Sitemap sitemap = write( temp.resolve( "capped" ), params( "https://example.com" ), entries, 2, Sitemap.MAX_FILE_BYTES, 3 );
 
         assertThat( sitemap.fileCount() ).isEqualTo( 3 );
         assertThat( sitemap.size() ).isEqualTo( 6 );
         assertThat( sitemap.file( 4 ) ).isEmpty();
-        assertThat( sitemap.urlsetJson( 10 ) ).doesNotContain( "item-6" );
+
+        final Sitemap headless = write( temp.resolve( "headless" ), headless(), entries, 2, Sitemap.MAX_FILE_BYTES, 3 );
+        assertThat( headless.fileCount() ).isEqualTo( 3 );
+        assertThat( headless.urlsetJson( 10 ) ).doesNotContain( "item-6" );
     }
 
     @Test
@@ -196,7 +261,7 @@ class SitemapTest
     {
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
             .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
-            .collect( Collectors.toList() );
+            .toList();
         final Sitemap sitemap = write( params( "https://example.com" ), 2, entries );
 
         assertThat( gunzip( sitemap.rootGzip() ) ).isEqualTo( text( sitemap.root() ).replace( ".xml<", ".xml.gz<" ) )
@@ -234,17 +299,21 @@ class SitemapTest
     {
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 3 )
             .mapToObj( i -> new SitemapEntry( "/æøå-" + i, "base:folder", Instant.parse( "2024-01-0" + i + "T10:00:00Z" ) ) )
-            .collect( Collectors.toList() );
+            .toList();
         final Sitemap sitemap = write( params( "https://example.com" ), 2, entries );
 
         try (var files = Files.list( sitemap.directory() ))
         {
             assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "sitemap.xml.gz",
                                                                                                        "sitemap-index.xml.gz",
-                                                                                                       "urlset-1.jsonl.gz",
-                                                                                                       "urlset-2.jsonl.gz",
                                                                                                        "sitemap-1.xml.gz",
                                                                                                        "sitemap-2.xml.gz" );
+        }
+        final Sitemap headless = write( headless(), 2, entries );
+        try (var files = Files.list( headless.directory() ))
+        {
+            assertThat( files.map( path -> path.getFileName().toString() ) ).containsExactlyInAnyOrder( "urlset-1.jsonl.gz",
+                                                                                                       "urlset-2.jsonl.gz" );
         }
         for ( final ByteSource plain : List.of( sitemap.root(), sitemap.file( 1 ).orElseThrow(), sitemap.file( 2 ).orElseThrow() ) )
         {
@@ -253,24 +322,25 @@ class SitemapTest
     }
 
     @Test
-    void urlsetForGuillotineFollowsFileSplit()
+    void urlsetForHeadlessFollowsFileSplit()
     {
         final List<SitemapEntry> entries = List.of( new SitemapEntry( "", "portal:site", Instant.parse( "2024-01-03T10:00:00Z" ) ),
                                                     new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-02T10:00:00Z" ) ),
                                                     new SitemapEntry( "/b c", "other:type", null ) );
         final SitemapParams params = new SitemapParams( "/mysite", "https://example.com",
                                                         List.of( new ContentTypeSetting( "base:folder", "daily", "0.8" ),
-                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 50_000 );
+                                                                 new ContentTypeSetting( "other:type", "", "" ) ), List.of(), 10_000,
+                                                        SitemapParams.Format.HEADLESS );
         final Sitemap sitemap = write( params, 2, entries );
 
         assertThat( sitemap.lastModified() ).containsExactly( NOW, NOW );
         assertThat( sitemap.urlsetJson( 10 ) ).isEqualTo(
             "[{\"path\":\"/\",\"lastmod\":\"2024-01-03T10:00:00Z\",\"changefreq\":\"hourly\",\"priority\":\"1.0\"}," +
                 "{\"path\":\"/a\",\"lastmod\":\"2024-01-02T10:00:00Z\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}," +
-                "{\"path\":\"/b c\"}]" );
-        assertThat( sitemap.urlsetJson( 2 ) ).doesNotContain( "/b c" ).contains( "\"/a\"" );
+                "{\"path\":\"/b%20c\"}]" );
+        assertThat( sitemap.urlsetJson( 2 ) ).doesNotContain( "/b%20c" ).contains( "\"/a\"" );
         assertThat( sitemap.urlsetJson( 0 ) ).isEqualTo( "[]" );
-        assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b c\"}]" );
+        assertThat( sitemap.fileUrlsetJson( 2 ) ).contains( "[{\"path\":\"/b%20c\"}]" );
         assertThat( sitemap.fileUrlsetJson( 3 ) ).isEmpty();
         assertThat( sitemap.fileUrlsetJson( 0 ) ).isEmpty();
     }
@@ -280,7 +350,7 @@ class SitemapTest
     {
         final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
             .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", Instant.parse( "2024-01-0" + ( 6 - i ) + "T10:00:00Z" ) ) )
-            .collect( Collectors.toList() );
+            .toList();
         final Sitemap first = write( params( "https://example.com" ), 2, entries );
         final Instant later = NOW.plusSeconds( 3600 );
 
@@ -300,11 +370,32 @@ class SitemapTest
     }
 
     @Test
+    void headlessFileChangesWhenOnlyTimesChangeWithinTheDayButXmlFileDoesNot()
+    {
+        final List<SitemapEntry> entries = List.of( new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-05T10:00:00Z" ) ),
+                                                    new SitemapEntry( "/b", "base:folder", Instant.parse( "2024-01-04T10:00:00Z" ) ) );
+        final Sitemap first = write( params( "https://example.com" ), 10, entries );
+        final List<SitemapEntry> edited = List.of( new SitemapEntry( "/a", "base:folder", Instant.parse( "2024-01-05T11:00:00Z" ) ),
+                                                   entries.get( 1 ) );
+        final Instant later = NOW.plusSeconds( 3600 );
+
+        final Sitemap same = build( params( "https://example.com" ), 10, entries, first, later );
+        final Sitemap changed = build( params( "https://example.com" ), 10, edited, same, later );
+
+        assertThat( same.lastModified() ).containsExactly( NOW );
+        assertThat( changed.rootETag( false ) ).isEqualTo( first.rootETag( false ) );
+        assertThat( changed.lastModified() ).containsExactly( NOW );
+
+        final Sitemap headless = write( headless(), 10, entries );
+        assertThat( build( headless(), 10, entries, headless, later ).lastModified() ).containsExactly( NOW );
+        assertThat( build( headless(), 10, edited, headless, later ).lastModified() ).containsExactly( later );
+    }
+
+    @Test
     void entityTagsAreDigestsOfContentAndSurviveRestore()
     {
-        final List<SitemapEntry> entries = IntStream.rangeClosed( 1, 5 )
-            .mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) )
-            .collect( Collectors.toList() );
+        final List<SitemapEntry> entries =
+            IntStream.rangeClosed( 1, 5 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).toList();
         final Sitemap split = write( params( "https://example.com" ), 2, entries );
         final Sitemap again = write( params( "https://example.com" ), 2, entries );
 
@@ -327,16 +418,49 @@ class SitemapTest
     }
 
     @Test
-    void urlsetForGuillotineOfSingleAndEmptySitemap()
+    void urlsetForHeadlessOfSingleAndEmptySitemap()
     {
-        final Sitemap single = write( params( "https://example.com" ), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
+        final Sitemap single = write( headless(), 10, List.of( new SitemapEntry( "/a", "base:folder", null ) ) );
         assertThat( single.lastModified() ).hasSize( 1 );
         assertThat( single.fileUrlsetJson( 1 ) ).contains( "[{\"path\":\"/a\",\"changefreq\":\"daily\",\"priority\":\"0.8\"}]" );
 
-        final Sitemap empty = write( params( "https://example.com" ), 10, List.of() );
+        final Sitemap empty = write( headless(), 10, List.of() );
         assertThat( empty.lastModified() ).hasSize( 1 );
         assertThat( empty.urlsetJson( 10 ) ).isEqualTo( "[]" );
         assertThat( empty.fileUrlsetJson( 1 ) ).contains( "[]" );
+    }
+
+    @Test
+    void rootKeepsItsOwnModificationTimeWhichNeverGoesBack()
+    {
+        final List<SitemapEntry> entries =
+            IntStream.range( 0, 5 ).mapToObj( i -> new SitemapEntry( "/item-" + i, "base:folder", null ) ).toList();
+        final Sitemap first = write( params( "https://example.com" ), 2, entries );
+        assertThat( first.rootLastModified() ).isEqualTo( NOW );
+
+        // the same files again: the root keeps its time
+        final Instant later = NOW.plusSeconds( 60 );
+        final Sitemap same = build( params( "https://example.com" ), 2, entries, first, later );
+        assertThat( same.rootLastModified() ).isEqualTo( NOW );
+
+        // the last file changes: it and the root get the time
+        final List<SitemapEntry> changed = new ArrayList<>( entries );
+        changed.set( 4, new SitemapEntry( "/changed", "base:folder", null ) );
+        final Sitemap edited = build( params( "https://example.com" ), 2, changed, same, later );
+        assertThat( edited.lastModified() ).containsExactly( NOW, NOW, later );
+        assertThat( edited.rootLastModified() ).isEqualTo( later );
+
+        // that file leaves the index: the latest of the files is older, the root is newer
+        final Instant latest = later.plusSeconds( 60 );
+        final Sitemap shrunk = build( params( "https://example.com" ), 2, entries.subList( 0, 4 ), edited, latest );
+        assertThat( shrunk.lastModified() ).containsExactly( NOW, NOW );
+        assertThat( shrunk.rootLastModified() ).isEqualTo( latest );
+        assertThat( Sitemap.restore( temp, shrunk.withCount( 4, latest ).store() ) )
+            .satisfies( restored -> {
+                assertThat( restored.rootLastModified() ).isEqualTo( latest );
+                assertThat( restored.count() ).isEqualTo( 4 );
+                assertThat( restored.cutoff() ).isEqualTo( latest );
+            } );
     }
 
     @Test
@@ -386,6 +510,11 @@ class SitemapTest
 
     private static SitemapParams params( final String siteUrl )
     {
-        return new SitemapParams( "/mysite", siteUrl, CONTENT_TYPES, List.of(), 50_000 );
+        return new SitemapParams( "/mysite", siteUrl, CONTENT_TYPES, List.of(), 10_000 );
+    }
+
+    private static SitemapParams headless()
+    {
+        return params( "" ).withFormat( SitemapParams.Format.HEADLESS );
     }
 }

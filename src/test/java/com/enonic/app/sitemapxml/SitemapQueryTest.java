@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.enonic.xp.aggregation.Aggregation;
 import com.enonic.xp.aggregation.Aggregations;
+import com.enonic.xp.aggregation.Bucket;
 import com.enonic.xp.aggregation.Buckets;
 import com.enonic.xp.aggregation.DateHistogramBucket;
 import com.enonic.xp.content.Content;
@@ -38,6 +39,7 @@ import com.enonic.xp.data.PropertySet;
 import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.aggregation.AggregationQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
+import com.enonic.xp.query.aggregation.DateRangeAggregationQuery;
 import com.enonic.xp.query.filter.Filter;
 import com.enonic.xp.query.filter.RangeFilter;
 import com.enonic.xp.schema.content.ContentTypeName;
@@ -321,6 +323,53 @@ class SitemapQueryTest
 
         assertThat( entries ).extracting( SitemapEntry::path ).containsExactly( "/a", "/b" );
         verify( contentService, times( 2 ) ).find( any( ContentQuery.class ) );
+    }
+
+    @Test
+    void countsContentsAndThoseChangedSince()
+    {
+        final Instant since = Instant.parse( "2024-03-01T00:00:00Z" );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenReturn( FindContentIdsByQueryResult.create()
+                                                                                 .contents( ContentIds.empty() )
+                                                                                 .totalHits( 12 )
+                                                                                 .aggregations( Aggregations.from(
+                                                                                     Aggregation.bucketAggregation( SitemapQuery.CHANGED )
+                                                                                         .buckets( Buckets.create()
+                                                                                                       .add( Bucket.create()
+                                                                                                                 .key( SitemapQuery.CHANGED )
+                                                                                                                 .docCount( 2 )
+                                                                                                                 .build() )
+                                                                                                       .build() )
+                                                                                         .build() ) )
+                                                                                 .build() );
+
+        assertThat( new SitemapQuery( contentService, params(), NOW ).count( since ) ).isEqualTo( new SitemapQuery.Count( 12, 2 ) );
+
+        final ArgumentCaptor<ContentQuery> query = ArgumentCaptor.forClass( ContentQuery.class );
+        verify( contentService ).find( query.capture() );
+        assertThat( query.getValue().getSize() ).isZero();
+        final DateRangeAggregationQuery changed = (DateRangeAggregationQuery) query.getValue().getAggregationQueries().first();
+        assertThat( changed.getFieldName() ).isEqualTo( "_ts" );
+        assertThat( changed.getRanges() ).extracting( range -> range.getFrom() + " " + range.getTo() ).containsExactly( since + " null" );
+    }
+
+    @Test
+    void totalIsCountedBeforeAnyContentIsReadAlsoBeyondMaxItems()
+    {
+        final Instant day = Instant.parse( "2024-05-01T00:00:00Z" );
+        final List<Content> contents = List.of( content( "a", "/mysite/a" ), content( "b", "/mysite/b" ), content( "c", "/mysite/c" ) );
+        answerGetByIds( contents );
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            return query.getSize() == 0 ? overview( 3, bucket( day, 3 ) ) : result( contents );
+        } );
+
+        final SitemapQuery query = new SitemapQuery( contentService, params( 2 ), NOW );
+        assertThat( query.total() ).isEqualTo( -1 );
+        draft( () -> query.execute( entry -> {
+        }, () -> false ) );
+
+        assertThat( query.total() ).isEqualTo( 3 );
     }
 
     @Test

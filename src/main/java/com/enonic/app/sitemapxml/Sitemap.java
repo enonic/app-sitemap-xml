@@ -20,12 +20,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -51,9 +51,11 @@ import static com.enonic.app.sitemapxml.SitemapRenderer.URLSET_START;
 import static com.enonic.app.sitemapxml.SitemapRenderer.utf8Length;
 
 /**
- * A generated sitemap. Its files are kept on disk, gzip-compressed only, and decompressed on the fly when served plain.
+ * A generated sitemap. Its files are kept gzip-compressed only, and decompressed on the fly when served plain. They are written to a
+ * local directory, and then stored as attachments of a node, see {@link RepositorySitemapStore}.
  */
 public final class Sitemap
+    implements SitemapFiles
 {
     static final int MAX_URLS_PER_FILE = 50_000;
 
@@ -65,6 +67,21 @@ public final class Sitemap
 
     static final int MAX_LOC_LENGTH = 2_048;
 
+    /**
+     * The longest base URL a headless client is assumed to put in front of the paths. Paths longer than the rest of
+     * {@link #MAX_LOC_LENGTH} are left out of a headless sitemap.
+     */
+    static final int MAX_BASE_URL_LENGTH = 360;
+
+    /**
+     * The bytes a headless client is assumed to write for a URL besides its path, and for each entry of its sitemap index: a
+     * headless sitemap is split as if each URL took its percent-encoded path plus this many bytes. A round number: what Next.js
+     * writes for a sitemap entry besides the URL ({@code <url>}, {@code <loc>}, {@code <lastmod>}, {@code <changefreq>},
+     * {@code <priority>}, each on its own line, 133 bytes with a full time) leaves room for a base URL of {@link #MAX_BASE_URL_LENGTH}
+     * characters.
+     */
+    static final int RESERVED_BYTES_PER_URL = 500;
+
     static final String GZIP_EXTENSION = ".gz";
 
     static final String ROOT_FILE = "sitemap.xml";
@@ -74,6 +91,8 @@ public final class Sitemap
     static final JsonFactory JSON = new JsonFactory();
 
     private static final Logger LOG = LoggerFactory.getLogger( Sitemap.class );
+
+    private final FileSource files;
 
     private final Path directory;
 
@@ -85,13 +104,30 @@ public final class Sitemap
 
     private final List<String> digests;
 
-    private final Map<String, String> indexDigests;
+    private final Map<String, String> namedDigests;
 
-    private Sitemap( final Path directory, final int size, final Map<String, Long> plainSizes, final List<Instant> lastModified,
-                     final List<String> digests, final Map<String, String> indexDigests )
+    private final long count;
+
+    private final Instant cutoff;
+
+    private final Instant modified;
+
+    private Sitemap( final FileSource files, final Path directory, final int size, final Map<String, Long> plainSizes,
+                     final List<Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests )
     {
+        this( files, directory, size, plainSizes, lastModified, digests, namedDigests, -1, null, null );
+    }
+
+    private Sitemap( final FileSource files, final Path directory, final int size, final Map<String, Long> plainSizes,
+                     final List<Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests,
+                     final long count, final Instant cutoff, final Instant modified )
+    {
+        this.count = count;
+        this.cutoff = cutoff;
+        this.modified = modified;
         this.digests = List.copyOf( digests );
-        this.indexDigests = Map.copyOf( indexDigests );
+        this.namedDigests = Map.copyOf( namedDigests );
+        this.files = files;
         this.directory = directory;
         this.size = size;
         this.plainSizes = Map.copyOf( plainSizes );
@@ -190,6 +226,60 @@ public final class Sitemap
     }
 
     /**
+     * When the root last changed: {@code sitemap.xml}, a sitemap index or the only file. It is kept while the root stays the same, so
+     * it never goes back, also when a file leaves the index.
+     */
+    @Override
+    public Instant rootLastModified()
+    {
+        return modified != null ? modified : SitemapFiles.super.rootLastModified();
+    }
+
+    /**
+     * The contents the sitemap was generated from, as read, or -1 when not counted.
+     */
+    long count()
+    {
+        return count;
+    }
+
+    /**
+     * When the contents were counted: contents changed since were not, or may not have been, read.
+     */
+    Instant cutoff()
+    {
+        return cutoff;
+    }
+
+    /**
+     * The same sitemap, generated from the given number of contents, which had not changed since the given time.
+     */
+    Sitemap withCount( final long count, final Instant cutoff )
+    {
+        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, count, cutoff, modified );
+    }
+
+    /**
+     * The same sitemap with the time its root last changed: that of the previous sitemap while the root is the same, the given time
+     * otherwise.
+     */
+    private Sitemap withModified( final Sitemap previous, final Instant now )
+    {
+        final Instant time = previous != null && previous.modified != null && previous.rootContent().equals( rootContent() )
+            ? previous.modified
+            : now;
+        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, count, cutoff, time );
+    }
+
+    /**
+     * What the root is made of: the files an index lists, with the time each last changed, or the content of the only file.
+     */
+    private String rootContent()
+    {
+        return isIndex() ? "index " + lastModified : "file " + ( digests.isEmpty() ? "" : digests.get( 0 ) );
+    }
+
+    /**
      * The first {@code count} URLs of the sitemap as a JSON array of path-based entries.
      */
     public String urlsetJson( final int count )
@@ -271,9 +361,20 @@ public final class Sitemap
         return out.toString();
     }
 
+    /**
+     * Deletes the local directory the sitemap was written to, if any.
+     */
     public void delete()
     {
-        delete( directory );
+        if ( directory != null )
+        {
+            delete( directory );
+        }
+    }
+
+    Path directory()
+    {
+        return directory;
     }
 
     /**
@@ -283,6 +384,18 @@ public final class Sitemap
     {
         final ObjectNode description = JsonNodeFactory.instance.objectNode();
         description.put( "size", size );
+        if ( count >= 0 )
+        {
+            description.put( "count", count );
+        }
+        if ( cutoff != null )
+        {
+            description.put( "cutoff", cutoff.toString() );
+        }
+        if ( modified != null )
+        {
+            description.put( "modified", modified.toString() );
+        }
         final ArrayNode files = description.putArray( "files" );
         for ( int i = 0; i < lastModified.size(); i++ )
         {
@@ -296,22 +409,18 @@ public final class Sitemap
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
-        final ObjectNode index = description.putObject( "indexDigests" );
-        new TreeMap<>( indexDigests ).forEach( index::put );
+        final ObjectNode index = description.putObject( "namedDigests" );
+        new TreeMap<>( namedDigests ).forEach( index::put );
         return description;
     }
 
     /**
-     * Reads back a sitemap that {@link #store} described from its directory.
+     * Reads back a sitemap that {@link #store} described, with its files in the given directory.
      *
-     * @throws IllegalArgumentException when the description is incomplete or the files are missing
+     * @throws IllegalArgumentException when the description is incomplete
      */
     static Sitemap restore( final Path directory, final JsonNode description )
     {
-        if ( !Files.isRegularFile( directory.resolve( ROOT_FILE + GZIP_EXTENSION ) ) )
-        {
-            throw new IllegalArgumentException( "No sitemap in " + directory );
-        }
         final List<Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
         for ( final JsonNode file : description.required( "files" ) )
@@ -325,21 +434,21 @@ public final class Sitemap
         {
             plainSizes.put( file.getKey(), file.getValue().asLong() );
         }
-        final Map<String, String> indexDigests = new HashMap<>();
-        final JsonNode index = description.get( "indexDigests" );
+        final Map<String, String> namedDigests = new HashMap<>();
+        final JsonNode index = description.get( "namedDigests" );
         if ( index != null )
         {
             for ( final Map.Entry<String, JsonNode> file : index.properties() )
             {
-                indexDigests.put( file.getKey(), file.getValue().asText() );
+                namedDigests.put( file.getKey(), file.getValue().asText() );
             }
         }
-        return new Sitemap( directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests, indexDigests );
-    }
-
-    Path directory()
-    {
-        return directory;
+        final JsonNode count = description.get( "count" );
+        final JsonNode cutoff = description.get( "cutoff" );
+        final JsonNode modified = description.get( "modified" );
+        return new Sitemap( FileSource.directory( directory ), directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests, namedDigests,
+                            count == null ? -1 : count.asLong(), cutoff == null ? null : Instant.parse( cutoff.asText() ),
+                            modified == null ? null : Instant.parse( modified.asText() ) );
     }
 
     static String fileName( final int number )
@@ -364,9 +473,9 @@ public final class Sitemap
 
     private String digest( final String name )
     {
-        if ( indexDigests.containsKey( name ) )
+        if ( namedDigests.containsKey( name ) )
         {
-            return indexDigests.get( name );
+            return namedDigests.get( name );
         }
         if ( name.equals( ROOT_FILE ) && !isIndex() )
         {
@@ -380,6 +489,22 @@ public final class Sitemap
             }
         }
         return null;
+    }
+
+    /**
+     * The JSON lines of the headless entries of a file, uncompressed.
+     */
+    ByteSource urlset( final int number )
+    {
+        return plain( urlsetFileName( number ) );
+    }
+
+    /**
+     * The digest of the content of a file: its XML, or the JSON lines of a headless sitemap.
+     */
+    String fileDigest( final int number )
+    {
+        return digests.get( number - 1 );
     }
 
     private String plainRootFile()
@@ -398,7 +523,7 @@ public final class Sitemap
 
     private ByteSource gzip( final String fileName )
     {
-        return MoreFiles.asByteSource( directory.resolve( fileName + GZIP_EXTENSION ) );
+        return files.gzipped( fileName );
     }
 
     private ByteSource plain( final String fileName )
@@ -414,7 +539,7 @@ public final class Sitemap
         }
         try (Stream<Path> paths = Files.walk( directory ))
         {
-            for ( final Path path : paths.sorted( Comparator.reverseOrder() ).collect( Collectors.toList() ) )
+            for ( final Path path : paths.sorted( Comparator.reverseOrder() ).toList() )
             {
                 Files.deleteIfExists( path );
             }
@@ -422,6 +547,20 @@ public final class Sitemap
         catch ( IOException e )
         {
             LOG.warn( "Could not delete sitemap files in {}", directory, e );
+        }
+    }
+
+    /**
+     * Gives the gzip-compressed content of a sitemap file by name, without the {@code .gz} extension.
+     */
+    @FunctionalInterface
+    interface FileSource
+    {
+        ByteSource gzipped( String name );
+
+        static FileSource directory( final Path directory )
+        {
+            return name -> MoreFiles.asByteSource( directory.resolve( name + GZIP_EXTENSION ) );
         }
     }
 
@@ -514,17 +653,7 @@ public final class Sitemap
 
         String digest()
         {
-            return toHex( digest.digest() );
-        }
-
-        private static String toHex( final byte[] bytes )
-        {
-            final StringBuilder hex = new StringBuilder( bytes.length * 2 );
-            for ( final byte b : bytes )
-            {
-                hex.append( Character.forDigit( ( b >> 4 ) & 0xF, 16 ) ).append( Character.forDigit( b & 0xF, 16 ) );
-            }
-            return hex.toString();
+            return HexFormat.of().formatHex( digest.digest() );
         }
 
         private static MessageDigest sha256()
@@ -564,7 +693,7 @@ public final class Sitemap
 
         private final List<String> digests = new ArrayList<>();
 
-        private final Map<String, String> indexDigests = new HashMap<>();
+        private final Map<String, String> namedDigests = new HashMap<>();
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
@@ -604,20 +733,28 @@ public final class Sitemap
         {
             try
             {
-                final String loc = renderer.loc( entry );
-                if ( loc.length() > MAX_LOC_LENGTH )
+                // for the headless sitemap, the path the client puts after its base URL
+                final String loc = xml() ? renderer.loc( entry ) : renderer.path( entry );
+                if ( loc.length() > ( xml() ? MAX_LOC_LENGTH : MAX_LOC_LENGTH - MAX_BASE_URL_LENGTH ) )
                 {
                     tooLong++;
                     return;
                 }
-                final String url = renderer.url( entry, loc );
-                if ( leftOut > 0 || !reserve( utf8Length( url ) ) )
+                final String url = xml() ? renderer.url( entry, loc ) : null;
+                final long urlBytes = xml() ? utf8Length( Objects.requireNonNull( url ) ) : utf8Length( loc ) + RESERVED_BYTES_PER_URL;
+                if ( leftOut > 0 || !reserve( urlBytes ) )
                 {
                     leftOut++;
                     return;
                 }
-                Objects.requireNonNull( file ).write( url );
-                renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
+                if ( xml() )
+                {
+                    Objects.requireNonNull( file ).write( Objects.requireNonNull( url ) );
+                }
+                else
+                {
+                    renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
+                }
                 fileUrls++;
                 size++;
             }
@@ -627,9 +764,15 @@ public final class Sitemap
             }
         }
 
+        private boolean xml()
+        {
+            return params.format() == SitemapParams.Format.XML;
+        }
+
         /**
          * Finishes the files. A file keeps the modification time of the same file of the previous sitemap when its content is the same,
-         * and gets the given time otherwise: crawlers fetch a file of a sitemap index again when its modification time changes.
+         * and gets the given time otherwise: crawlers and headless clients fetch a file again when its modification time changes. The
+         * XML files hold dates, the headless entries full modification times.
          *
          * @param previous the sitemap this one replaces, if any
          * @param now      the modification time of the files that changed
@@ -658,10 +801,10 @@ public final class Sitemap
                 {
                     lastModified.set( i, unchanged( previous, i ) ? previous.lastModified.get( i ) : now );
                 }
-                if ( empty )
+                if ( empty || !xml() )
                 {
                     built = true;
-                    return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
+                    return local().withModified( previous, now );
                 }
                 if ( lastModified.size() == 1 )
                 {
@@ -674,12 +817,17 @@ public final class Sitemap
                     writeIndex( PLAIN_INDEX_FILE, ".xml" );
                 }
                 built = true;
-                return new Sitemap( directory, size, plainSizes, lastModified, digests, indexDigests );
+                return local().withModified( previous, now );
             }
             catch ( IOException e )
             {
                 throw new UncheckedIOException( e );
             }
+        }
+
+        private Sitemap local()
+        {
+            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, namedDigests );
         }
 
         private boolean unchanged( final Sitemap previous, final int index )
@@ -691,11 +839,14 @@ public final class Sitemap
         private void writeEmpty()
             throws IOException
         {
-            final CountingWriter root = open( ROOT_FILE );
-            root.write( URLSET_START + URLSET_END );
-            close( root, ROOT_FILE );
+            final String name = xml() ? ROOT_FILE : urlsetFileName( 1 );
+            final CountingWriter root = open( name );
+            if ( xml() )
+            {
+                root.write( URLSET_START + URLSET_END );
+            }
+            close( root, name );
             digests.add( root.digest() );
-            close( open( urlsetFileName( 1 ) ), urlsetFileName( 1 ) );
             lastModified.add( null );
         }
 
@@ -710,33 +861,41 @@ public final class Sitemap
             }
             index.write( INDEX_END );
             close( index, name );
-            indexDigests.put( name, index.digest() );
+            namedDigests.put( name, index.digest() );
         }
 
         private boolean reserve( final long urlBytes )
             throws IOException
         {
             final long available = maxFileBytes - utf8Length( URLSET_START ) - utf8Length( URLSET_END );
-            if ( file != null && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
+            if ( !lastModified.isEmpty() && fileUrls < maxUrlsPerFile && fileBytes + urlBytes <= available )
             {
                 fileBytes += urlBytes;
                 return true;
             }
 
             final int number = lastModified.size() + 1;
-            final long indexEntryBytes =
-                utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES;
+            final long indexEntryBytes = xml()
+                ? utf8Length( renderer.indexEntry( renderer.fileUrl( fileName( number ) + GZIP_EXTENSION ), null ) ) + INDEX_LASTMOD_BYTES
+                : RESERVED_BYTES_PER_URL;
             if ( number > maxFiles || indexBytes + indexEntryBytes > MAX_FILE_BYTES )
             {
                 return false;
             }
             closeFile();
             indexBytes += indexEntryBytes;
-            file = open( fileName( number ) );
-            file.write( URLSET_START );
-            urlsetFile = open( urlsetFileName( number ) );
-            urlset = JSON.createGenerator( urlsetFile );
-            urlset.setRootValueSeparator( new SerializedString( "\n" ) );
+            if ( xml() )
+            {
+                file = open( fileName( number ) );
+                file.write( URLSET_START );
+            }
+            else
+            {
+                // split where the XML files would be split, so that a client rendering one per file stays within the limits
+                urlsetFile = open( urlsetFileName( number ) );
+                urlset = JSON.createGenerator( urlsetFile );
+                urlset.setRootValueSeparator( new SerializedString( "\n" ) );
+            }
             lastModified.add( null );
             fileUrls = 0;
             fileBytes = urlBytes;
@@ -752,9 +911,13 @@ public final class Sitemap
                 close( file, fileName( lastModified.size() ) );
                 digests.add( file.digest() );
                 file = null;
-                Objects.requireNonNull( urlset ).close();
+            }
+            if ( urlset != null )
+            {
+                urlset.close();
                 urlset = null;
                 plainSizes.put( urlsetFileName( lastModified.size() ), Objects.requireNonNull( urlsetFile ).bytes() );
+                digests.add( urlsetFile.digest() );
                 urlsetFile = null;
             }
         }

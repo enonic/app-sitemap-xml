@@ -1,6 +1,5 @@
 package com.enonic.app.sitemapxml;
 
-import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -11,9 +10,11 @@ import java.util.stream.Collectors;
 import com.google.common.io.ByteSource;
 
 import com.enonic.xp.content.ContentService;
+import com.enonic.xp.project.ProjectService;
 import com.enonic.xp.script.ScriptValue;
 import com.enonic.xp.script.bean.BeanContext;
 import com.enonic.xp.script.bean.ScriptBean;
+import com.enonic.xp.web.vhost.VirtualHostService;
 
 public final class SitemapBean
     implements ScriptBean
@@ -23,8 +24,10 @@ public final class SitemapBean
     @Override
     public void initialize( final BeanContext context )
     {
-        this.service = new SitemapService( context.getService( ContentService.class ).get(), context.getService( SitemapCache.class ).get(),
-                                           Clock.systemUTC() );
+        final ContentService contentService = context.getService( ContentService.class ).get();
+        this.service = new SitemapService( contentService, context.getService( SitemapCache.class ).get(),
+                                           new SiteUrls( contentService, context.getService( ProjectService.class ).get(),
+                                                         context.getService( VirtualHostService.class ).get() ) );
     }
 
     public SitemapResponse root( final ScriptValue params )
@@ -53,19 +56,19 @@ public final class SitemapBean
         return respond( params, sitemap -> sitemap.fileGzip( number ), sitemap -> sitemap.fileETag( number, true ) );
     }
 
-    public String guillotineUrlset( final ScriptValue params, final int count )
+    public String headlessUrlset( final ScriptValue params, final int count )
     {
-        return Objects.requireNonNull( service, "Bean not initialized" ).sitemap( toParams( params.getMap() ), false ).urlsetJson( count );
+        return Objects.requireNonNull( service, "Bean not initialized" ).headless( toParams( params.getMap() ) ).urlsetJson( count );
     }
 
-    private SitemapResponse respond( final ScriptValue params, final Function<Sitemap, Optional<ByteSource>> body,
-                                     final Function<Sitemap, Optional<String>> etag )
+    private SitemapResponse respond( final ScriptValue params, final Function<SitemapFiles, Optional<ByteSource>> body,
+                                     final Function<SitemapFiles, Optional<String>> etag )
     {
         try
         {
             final Map<String, Object> map = params.getMap();
-            final Sitemap sitemap = Objects.requireNonNull( service, "Bean not initialized" )
-                .sitemap( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
+            final SitemapFiles sitemap = Objects.requireNonNull( service, "Bean not initialized" )
+                .files( toParams( map ), Boolean.TRUE.equals( map.get( "siteUrlFromRequest" ) ) );
             final Optional<ByteSource> content = body.apply( sitemap );
             if ( content.isEmpty() )
             {

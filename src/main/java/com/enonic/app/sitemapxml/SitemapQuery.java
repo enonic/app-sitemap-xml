@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.enonic.xp.aggregation.Aggregation;
+import com.enonic.xp.aggregation.Bucket;
 import com.enonic.xp.aggregation.BucketAggregation;
 import com.enonic.xp.aggregation.DateHistogramBucket;
 import com.enonic.xp.content.Content;
@@ -38,6 +39,8 @@ import com.enonic.xp.data.ValueFactory;
 import com.enonic.xp.index.IndexPath;
 import com.enonic.xp.node.NodeQuery;
 import com.enonic.xp.query.aggregation.DateHistogramAggregationQuery;
+import com.enonic.xp.query.aggregation.DateRange;
+import com.enonic.xp.query.aggregation.DateRangeAggregationQuery;
 import com.enonic.xp.query.expr.DslExpr;
 import com.enonic.xp.query.expr.FieldOrderExpr;
 import com.enonic.xp.query.expr.OrderExpr;
@@ -66,6 +69,8 @@ public final class SitemapQuery
     static final int PAGE_SIZE = 10_000;
 
     static final String TIMELINE = "timeline";
+
+    static final String CHANGED = "changed";
 
     static final List<Interval> INTERVALS =
         List.of( new Interval( "1d", Duration.ofDays( 1 ) ), new Interval( "1h", Duration.ofHours( 1 ) ),
@@ -109,6 +114,8 @@ public final class SitemapQuery
 
     private long remaining;
 
+    private long total = -1;
+
     private long planned;
 
     public SitemapQuery( final ContentService contentService, final SitemapParams params, final Instant now )
@@ -134,7 +141,7 @@ public final class SitemapQuery
     public Instant execute( final Consumer<SitemapEntry> sink, final BooleanSupplier cancelled )
     {
         final FindContentIdsByQueryResult overview = histogram( List.of(), 0, 0 );
-        final long total = overview.getTotalHits();
+        total = overview.getTotalHits();
         remaining = params.maxItems();
         if ( total <= Math.min( params.maxItems(), Sitemap.MAX_URLS_PER_FILE ) )
         {
@@ -162,6 +169,53 @@ public final class SitemapQuery
             .flatMap( field -> nextChange( field ).stream() )
             .min( Instant::compareTo )
             .orElse( null ) : null;
+    }
+
+    /**
+     * The contents of the sitemap counted by the first query of {@link #execute}, before any was read, including those left out when
+     * they are loaded and those beyond "Max included items"; -1 before {@link #execute}.
+     */
+    public long total()
+    {
+        return total;
+    }
+
+    /**
+     * Counts the contents of the sitemap, and those of them changed since the given time: stored in the branch then or later, which
+     * includes a publication, a move and a permission change. XP's stats aggregations only take numbers, so the change times are counted
+     * with a date range.
+     */
+    public Count count( final Instant since )
+    {
+        final FindContentIdsByQueryResult result = contentService.find( ContentQuery.create()
+                                                                            .queryExpr( QueryExpr.from( DslExpr.from( dsl() ) ) )
+                                                                            .aggregationQuery( DateRangeAggregationQuery.create( CHANGED )
+                                                                                                   .fieldName( TIMESTAMP.getPath() )
+                                                                                                   .addRange( DateRange.create()
+                                                                                                                  .key( CHANGED )
+                                                                                                                  .from( since )
+                                                                                                                  .build() )
+                                                                                                   .build() )
+                                                                            .size( 0 )
+                                                                            .build() );
+        long changed = 0;
+        if ( result.getAggregations().get( CHANGED ) instanceof BucketAggregation buckets )
+        {
+            for ( final Bucket bucket : buckets.getBuckets() )
+            {
+                changed += bucket.getDocCount();
+            }
+        }
+        return new Count( result.getTotalHits(), changed );
+    }
+
+    /**
+     * Contents of the sitemap counted.
+     *
+     * @param changed those of them changed since a given time
+     */
+    public record Count(long count, long changed)
+    {
     }
 
     /**
