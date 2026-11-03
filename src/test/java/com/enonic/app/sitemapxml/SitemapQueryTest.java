@@ -262,6 +262,43 @@ class SitemapQueryTest
     }
 
     @Test
+    void sliceAddedBeforeABusyTimeIsCountedOnce()
+    {
+        final Instant newest = Instant.parse( "2024-05-03T00:00:00Z" );
+        final Instant busy = Instant.parse( "2024-05-02T00:00:00Z" );
+        final Instant older = Instant.parse( "2024-05-01T00:00:00Z" );
+        final List<String> histograms = new ArrayList<>();
+        when( contentService.find( any( ContentQuery.class ) ) ).thenAnswer( invocation -> {
+            final ContentQuery query = invocation.getArgument( 0 );
+            final String histogram = histogram( query );
+            if ( histogram == null )
+            {
+                return result( List.of() );
+            }
+            final String filters = filters( query );
+            histograms.add( histogram + " " + filters );
+            if ( histogram.endsWith( "1d" ) )
+            {
+                return overview( 60_000, bucket( newest, 9_000 ), bucket( busy, 35_000 ), bucket( older, 16_000 ) );
+            }
+            final Instant day = filters.contains( busy.toString() ) ? busy : older;
+            final long perHour = day.equals( busy ) ? 8_750 : 8_000;
+            final DateHistogramBucket[] hours = IntStream.range( 0, day.equals( busy ) ? 4 : 2 )
+                .mapToObj( hour -> bucket( day.plus( Duration.ofHours( hour ) ), perHour ) )
+                .toArray( DateHistogramBucket[]::new );
+            return overview( perHour * hours.length, hours );
+        } );
+
+        draft( () -> new SitemapQuery( contentService, params( 50_000 ), NOW ).execute( entry -> {
+        }, () -> false ) );
+
+        // 9 000 + 35 000 planned: the older day is still needed to reach 50 000
+        assertThat( histograms ).containsExactly( "modifiedtime 1d -",
+                                                  "modifiedtime 1h modifiedtime 2024-05-02T00:00:00Z 2024-05-03T00:00:00Z",
+                                                  "modifiedtime 1h modifiedtime 2024-05-01T00:00:00Z 2024-05-02T00:00:00Z" );
+    }
+
+    @Test
     void sliceThatCannotBeSplitIsScrolled()
     {
         final Instant instant = Instant.parse( "2024-01-01T10:20:30Z" );

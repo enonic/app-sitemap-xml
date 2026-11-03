@@ -165,6 +165,14 @@ public final class SitemapQuery
             }
         }
 
+        return nextChange();
+    }
+
+    /**
+     * When the sitemap must be generated again because scheduled content goes online or offline, or null.
+     */
+    public Instant nextChange()
+    {
         return ContentConstants.BRANCH_MASTER.equals( ContextAccessor.current().getBranch() ) ? Stream.of( PUBLISH_FROM, PUBLISH_TO )
             .flatMap( field -> nextChange( field ).stream() )
             .min( Instant::compareTo )
@@ -255,6 +263,8 @@ public final class SitemapQuery
                 {
                     addSlice( slices, new Slice( with( outer, range( field, pendingFrom, pendingTo ) ), pendingCount ) );
                     pendingFrom = null;
+                    // now counted in planned
+                    pendingCount = 0;
                 }
                 final List<Filter> filters = with( outer, range( field, from, to ) );
                 if ( level + 1 < INTERVALS.size() )
