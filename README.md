@@ -32,7 +32,7 @@ When doing external rendering, via for example Next.XP, you can fetch the data n
 
 Use the `Query playground` in Content Studio to study the Guillotine Schema. You can find a field named `sitemap` on the `HeadlessCms` object type.
 
-The `sitemap` field is served from its own cached, published-only sitemap (separate from `sitemap.xml`, which keeps only the XML files, while this one keeps only the paths). URLs are returned as paths relative to the site, so the client prefixes them with its own base URL. Paths are percent-encoded and safe to put in XML as they are (`&` and `'` are encoded too), so the base URL (`baseUrl` when the app has one, or the client's own) followed by the path is the `<loc>`. Since the app doesn't write that XML, the files are split as if each URL took its path plus 500 bytes, which leaves room for what Next.js writes for a sitemap entry with a base URL of about 360 ASCII characters: a client writing like that stays within the protocol's limits of 50 000 URLs and 50MB per file. Paths longer than 1 688 characters are left out, so that URLs stay within 2 048 characters with such a base URL. `lastmod` is the time the content was last modified; `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
+The `sitemap` field is served from its own cached, published-only sitemap (separate from `sitemap.xml`, which keeps only the XML files, while this one keeps only the paths). URLs are returned as paths relative to the site, so the client prefixes them with its own base URL. Paths are percent-encoded and safe to put in XML as they are (`&` and `'` are encoded too), so `<baseUrl><path>` is the `<loc>`. Since the app doesn't write that XML, the files are split as if each URL took its path plus 500 bytes, which leaves room for what Next.js writes for a sitemap entry with a base URL of about 360 ASCII characters: a client writing like that stays within the protocol's limits of 50 000 URLs and 50MB per file. Paths longer than 1 688 characters are left out, so that URLs stay within 2 048 characters with such a base URL. `lastmod` is the time the content was last modified; `changefreq` and `priority` are left out when they have the default values (`monthly` and `0.5`).
 
 The app can also be added to a project instead of a site. When the query is not scoped to a site (no `scopeKey`, or one outside any site), the project's configuration of the app is used, and the sitemap lists all published content of the project, with paths relative to the project root. `sitemap.xml` itself is only served for sites, as projects are not rendered by XP.
 
@@ -72,7 +72,7 @@ query {
 }
 ```
 
-Then fetch the URLs of each file, rendering one sitemap file per response (the base URL followed by the path gives the `<loc>`), and a sitemap index that lists all of them.
+Then fetch the URLs of each file, rendering one sitemap file per response (`<baseUrl><path>` gives the `<loc>`), and a sitemap index that lists all of them.
 
 ```graphql
 query ($number: Int!) {
@@ -129,7 +129,7 @@ By default, the URLs in `sitemap.xml` use the scheme, host and port the site is 
 * The value is put in front of the path of each URL as XP renders it for the request, with the virtual host mapping applied. A site mapped to `/en` gets `https://www.example.com/en/...`.
 * Include the scheme (`https://`) and leave out the trailing slash. The value may end with a path, which then comes before the site's path.
 * The sitemap is then the same whichever host it is requested from, and it is generated again in the background when content changes.
-* Guillotine returns the value as `baseUrl` (`null` when it is empty: the Base URL configured for the site in XP is not exposed); the URLs it returns are paths relative to the site.
+* Guillotine returns the value as `baseUrl`, or, when it is empty, the Base URL configured in XP for the site (or for the project, when the query is not scoped to a site), or `null`. The URLs it returns are paths relative to the site.
 
 ### Size of the sitemap
 

@@ -63,12 +63,9 @@ export const sitemap = (graphQL: GraphQL): Resolver<
 		if (!siteConfig) {
 			return null;
 		}
-		// The app's Base URL override only: the Base URL configured for the site in XP is not exposed.
-		const baseUrl = siteConfig.overrideDomain || null;
+		// baseUrl has its own resolver, so the portal Base URL is only looked up when it is queried
 		return graphQL.createDataFetcherResult({
-			data: __.toScriptValue<SiteMapResolverData>({
-				baseUrl,
-			}),
+			data: __.toScriptValue<SiteMapResolverData>({}),
 			localContext: {
 				siteJson: JSON.stringify(site),
 				siteConfigJson: JSON.stringify(siteConfig),

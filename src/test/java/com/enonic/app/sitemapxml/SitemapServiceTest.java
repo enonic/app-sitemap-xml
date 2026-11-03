@@ -104,6 +104,16 @@ class SitemapServiceTest
     }
 
     @Test
+    void givesPortalBaseUrlWithoutTrailingSlashForGuillotine()
+    {
+        when( portalUrlService.portalScope( any() ) ).thenReturn( scope( "https://www.example.com/" ) );
+
+        assertThat( inContext( () -> new SitemapService( contentService, projectService, portalUrlService, cache,
+                                                         Clock.systemUTC(), virtualHostService ).portalBaseUrl( "/mysite" ) ) ).contains(
+            "https://www.example.com" );
+    }
+
+    @Test
     void draftGetsOnlyTheSiteWithoutCaching()
     {
         ContextBuilder.create().repositoryId( "com.enonic.cms.project" ).branch( "draft" ).build().callWith( () -> new SitemapService( contentService, projectService, portalUrlService, cache, Clock.systemUTC(), virtualHostService ).sitemap( PARAMS, false ) );

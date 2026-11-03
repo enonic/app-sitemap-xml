@@ -64,6 +64,21 @@ export function withSitemap<T>(
 	}))));
 }
 
+// The app's Base URL override, or else the Base URL configured for the site (or project) in XP.
+export const baseUrl = (_graphQL: GraphQL): Resolver<
+	{},
+	SiteMapResolverData,
+	string|null
+> => (env) => {
+	const localContext = env.localContext as LocalContext<SiteMapResolverLocaleContext>;
+	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig | null;
+	if (siteConfig?.overrideDomain) {
+		return siteConfig.overrideDomain;
+	}
+	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig> | null;
+	return withSitemap(localContext, (bean) => bean.portalBaseUrl(site?._path || '') || null);
+};
+
 export const urlset = (_graphQL: GraphQL): Resolver<
 	{
 		count?: number

@@ -50,6 +50,7 @@ const bean = {
 	guillotineUrlset: jest.fn((_params: unknown, count: number) => JSON.stringify(URLS.slice(0, count))),
 	guillotineFiles: jest.fn((_params: unknown) => JSON.stringify([{number: 1, lastmod: '2021-01-01T00:00:00Z'}, {number: 2}])),
 	guillotineFile: jest.fn((_params: unknown, number: number) => (number === 1 ? JSON.stringify(URLS) : null)),
+	portalBaseUrl: jest.fn((_sitePath: string) => 'https://portal.example.com'),
 };
 
 // @ts-ignore TS2339: Property '__' does not exist on type 'typeof globalThis'.
@@ -168,7 +169,7 @@ describe('guillotine extensions', () => {
 			expect(Object.keys(res.types)).toEqual(['Sitemap', 'Sitemap_Url', 'Sitemap_File']);
 			expect(Object.keys(res.types.Sitemap.fields)).toEqual(['baseUrl', 'urlset', 'files', 'file']);
 			expect(Object.keys(res.types.Sitemap_File.fields)).toEqual(['number', 'lastmod', 'urlset']);
-			expect(Object.keys(res.resolvers.Sitemap)).toEqual(['urlset', 'files', 'file']);
+			expect(Object.keys(res.resolvers.Sitemap)).toEqual(['baseUrl', 'urlset', 'files', 'file']);
 			expect(Object.keys(res.resolvers.Sitemap_File)).toEqual(['urlset']);
 
 			// print(res);
@@ -182,6 +183,7 @@ describe('guillotine extensions', () => {
 						sitemap: sitemapResolver
 					},
 					Sitemap: {
+						baseUrl: baseUrlResolver,
 						urlset: urlsetResolver,
 						files: filesResolver,
 						file: fileResolver,
@@ -211,10 +213,13 @@ describe('guillotine extensions', () => {
 					scopeKey: siteContent._path,
 					siteConfigJson: JSON.stringify(siteConfig)
 				},
-				source: {
-					baseUrl: 'https://enonic.com'
-				},
+				source: {},
 			});
+			const baseUrlOf = (result: typeof sitemapResolverResult) =>
+				baseUrlResolver({args: {}, localContext: result.localContext, source: result.source});
+			expect(baseUrlOf(sitemapResolverResult)).toBe('https://enonic.com');
+			// the portal Base URL is only looked up without an override
+			expect(bean.portalBaseUrl).not.toHaveBeenCalled();
 
 			for (const keys of [
 				{siteKey: siteContent._path},
@@ -231,7 +236,7 @@ describe('guillotine extensions', () => {
 					},
 					source: null
 				});
-				expect(result.source).toEqual(sitemapResolverResult.source);
+				expect(baseUrlOf(result)).toBe('https://enonic.com');
 				expect(result.localContext.siteJson).toBe(JSON.stringify(siteContent));
 			}
 
@@ -246,7 +251,7 @@ describe('guillotine extensions', () => {
 					localContext: {branch: 'master', project: 'project', ...keys},
 					source: null
 				});
-				expect(result.source).toEqual({baseUrl: projectConfig.overrideDomain});
+				expect(baseUrlOf(result)).toBe(projectConfig.overrideDomain);
 				const {run: runInContext} = await import('/lib/xp/context');
 				expect(jest.mocked(runInContext)).toHaveBeenCalledWith({principals: ['role:system.admin']}, expect.any(Function));
 				expect(result.localContext.siteJson).toBe('null');
@@ -279,13 +284,20 @@ describe('guillotine extensions', () => {
 			jest.mocked(getProject).mockReturnValueOnce({
 				siteConfig: [{applicationKey: 'com.enonic.app.sitemapxml', config: {...projectConfig, overrideDomain: ''}}]
 			} as unknown as ReturnType<typeof getProject>);
-			const withoutOverride = sitemapResolver({
+			const portalResult = sitemapResolver({
 				args: {},
 				localContext: {branch: 'master', project: 'project'},
 				source: null
 			});
-			// the Base URL configured for the site in XP is not exposed
-			expect(withoutOverride.source).toEqual({baseUrl: null});
+			expect(bean.portalBaseUrl).not.toHaveBeenCalled();
+			const {run} = await import('/lib/xp/context');
+			expect(baseUrlOf(portalResult)).toBe('https://portal.example.com');
+			expect(bean.portalBaseUrl).toHaveBeenLastCalledWith('');
+			expect(jest.mocked(run)).toHaveBeenLastCalledWith(
+				expect.objectContaining({branch: 'master', repository: 'com.enonic.cms.project'}), expect.any(Function)
+			);
+			bean.portalBaseUrl.mockReturnValueOnce(null as unknown as string);
+			expect(baseUrlOf(portalResult)).toBeNull();
 
 			const urlsetResolverResult = urlsetResolver({
 				args: {
