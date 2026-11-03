@@ -97,6 +97,12 @@ final class SitemapNodeData
                 described.addInstant( "lastmod", Instant.parse( lastmod.asText() ) );
             }
             described.addString( "digest", file.required( "digest" ).asText() );
+            if ( file.has( "xmlBytes" ) )
+            {
+                described.addLong( "xmlBytes", file.required( "xmlBytes" ).asLong() );
+                described.addLong( "xmlUrls", file.required( "xmlUrls" ).asLong() );
+                described.addLong( "xmlRoots", file.required( "xmlRoots" ).asLong() );
+            }
         }
         for ( final Map.Entry<String, JsonNode> file : stored.required( "bytes" ).properties() )
         {
@@ -148,6 +154,13 @@ final class SitemapNodeData
                 entry.put( "lastmod", lastmod.toString() );
             }
             entry.put( "digest", file.getString( "digest" ) );
+            final Long xmlBytes = file.getLong( "xmlBytes" );
+            if ( xmlBytes != null )
+            {
+                entry.put( "xmlBytes", xmlBytes );
+                entry.put( "xmlUrls", file.getLong( "xmlUrls" ) );
+                entry.put( "xmlRoots", file.getLong( "xmlRoots" ) );
+            }
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         set.getSets( "bytes" ).forEach( file -> bytes.put( file.getString( "name" ), file.getLong( "size" ) ) );

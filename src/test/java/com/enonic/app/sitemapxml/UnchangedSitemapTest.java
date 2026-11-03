@@ -9,6 +9,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executors;
@@ -20,6 +21,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.common.io.ByteSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -170,11 +174,39 @@ class UnchangedSitemapTest
         assertThat( contents.calls ).containsExactly( "write" );
     }
 
+    @Test
+    void headlessSitemapWithoutSizesOfConvertedFilesIsReadOnceMore()
+    {
+        final SitemapCache.Key headless = new SitemapCache.Key( KEY.repositoryId(), KEY.branch(), KEY.principals(),
+                                                                KEY.params().withSiteUrl( "" ).withFormat( SitemapParams.Format.HEADLESS ) );
+        generate( headless );
+        final Sitemap measured = Objects.requireNonNull( store.load( headless.id() ).sitemap() );
+        assertThat( measured.hasXmlSizes() ).isTrue();
+
+        // as stored by an earlier version
+        final ObjectNode description = measured.store();
+        description.withArray( "files" ).forEach( file -> ( (ObjectNode) file ).remove( List.of( "xmlBytes", "xmlUrls", "xmlRoots" ) ) );
+        final Map<String, ByteSource> files = measured.storedFiles();
+        store.save( headless.id(), headless, Sitemap.restore( files::get, description ), null, clock.instant(), clock.instant() );
+
+        generate( headless );
+        assertThat( contents.calls ).containsExactly( "write" );
+        assertThat( Objects.requireNonNull( store.load( headless.id() ).sitemap() ).hasXmlSizes() ).isTrue();
+
+        generate( headless );
+        assertThat( contents.calls ).containsExactly( "count" );
+    }
+
     private void generate()
+    {
+        generate( KEY );
+    }
+
+    private void generate( final SitemapCache.Key key )
     {
         contents.calls.clear();
         clock.advance( Duration.ofSeconds( 10 ) );
-        cache.runTask( KEY, clock.instant(), null );
+        cache.runTask( key, clock.instant(), null );
         clock.advance( Duration.ofSeconds( 10 ) );
     }
 

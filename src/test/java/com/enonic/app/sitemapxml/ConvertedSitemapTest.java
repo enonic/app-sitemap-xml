@@ -3,13 +3,18 @@ package com.enonic.app.sitemapxml;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.io.ByteSource;
+
+import com.enonic.xp.data.PropertyTree;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,6 +63,52 @@ class ConvertedSitemapTest
         }
         assertThat( converted.file( 4 ) ).isEmpty();
         assertThat( converted.file( 0 ) ).isEmpty();
+    }
+
+    @Test
+    void plainFilesHaveTheirSizeKnownWithoutWritingThem()
+        throws IOException
+    {
+        final List<SitemapEntry> entries = new ArrayList<>( entries( 7 ) );
+        // a second entry of the site itself, as in a project, and one at the end of a file
+        entries.add( new SitemapEntry( "", "other:type", null ) );
+        for ( final String siteUrl : List.of( SITE_URL, "https://www.example.com/", "https://www.example.com", "http://localhost:8080/a&b",
+                                              "https://xn--bl-0ia.example.com/blåbær/'x'", "https://www.example.com/a%20b" ) )
+        {
+            for ( final int urlsPerFile : new int[]{1, 3, 100} )
+            {
+                final ConvertedSitemap converted = convert( entries, urlsPerFile, siteUrl );
+                assertSizeKnown( converted.root() );
+                for ( int number = 1; converted.file( number ).isPresent(); number++ )
+                {
+                    assertSizeKnown( converted.file( number ).orElseThrow() );
+                }
+            }
+        }
+        assertSizeKnown( convert( List.of(), 10, SITE_URL ).root() );
+
+        // stored with the sitemap
+        final Sitemap headless = write( "stored", headless(), entries, 100 );
+        final PropertyTree data = new PropertyTree();
+        SitemapNodeData.writeSitemap( data.getRoot(), headless );
+        final Sitemap stored =
+            Objects.requireNonNull( SitemapNodeData.readSitemap( data.getRoot(), Sitemap.FileSource.directory( headless.directory() ) ) );
+        assertSizeKnown( new ConvertedSitemap( stored, xml() ).root() );
+
+        // a headless sitemap stored before has no known size, but is served
+        final ObjectNode description = headless.store();
+        description.withArray( "files" ).forEach( file -> ( (ObjectNode) file ).remove( List.of( "xmlBytes", "xmlUrls", "xmlRoots" ) ) );
+        final ConvertedSitemap old =
+            new ConvertedSitemap( Sitemap.restore( Sitemap.FileSource.directory( headless.directory() ), description ), xml() );
+        assertThat( old.root().sizeIfKnown().isPresent() ).isFalse();
+        assertThat( SitemapTest.text( old.root() ) ).isEqualTo( SitemapTest.text( convert( entries, 100, SITE_URL ).root() ) );
+    }
+
+    private static void assertSizeKnown( final ByteSource plain )
+        throws IOException
+    {
+        assertThat( plain.sizeIfKnown().isPresent() ).isTrue();
+        assertThat( plain.sizeIfKnown().get() ).isEqualTo( plain.read().length );
     }
 
     @Test
@@ -125,8 +176,12 @@ class ConvertedSitemapTest
 
     private ConvertedSitemap convert( final List<SitemapEntry> entries, final int urlsPerFile, final String siteUrl )
     {
-        final SitemapParams headless = new SitemapParams( "/mysite", "", CONTENT_TYPES, List.of(), SitemapParams.Format.HEADLESS );
-        return new ConvertedSitemap( write( "headless", headless, entries, urlsPerFile ), xml().withSiteUrl( siteUrl ) );
+        return new ConvertedSitemap( write( "headless", headless(), entries, urlsPerFile ), xml().withSiteUrl( siteUrl ) );
+    }
+
+    private static SitemapParams headless()
+    {
+        return new SitemapParams( "/mysite", "", CONTENT_TYPES, List.of(), SitemapParams.Format.HEADLESS );
     }
 
     private static SitemapParams xml()
