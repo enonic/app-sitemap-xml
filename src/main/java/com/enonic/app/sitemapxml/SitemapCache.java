@@ -351,6 +351,7 @@ public final class SitemapCache
             if ( key.repositoryId().equals( scope.get( 0 ) ) && ( scope.size() == 1 || key.branch().equals( scope.get( 1 ) ) ) &&
                 paths.stream().anyMatch( path -> affects( path, key ) ) )
             {
+                LOG.debug( "Sitemap {} changed by {} of {}", key, type, paths );
                 contentChanged( key, entry );
             }
         } ) );
