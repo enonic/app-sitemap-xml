@@ -106,6 +106,12 @@ public final class Sitemap
 
     private final Map<String, String> namedDigests;
 
+    /**
+     * Of each file of a headless sitemap, the size of the {@code sitemap.xml} file converted from it without base URLs: empty for other
+     * sitemaps.
+     */
+    private final List<XmlSize> xmlSizes;
+
     private final long count;
 
     private final Instant cutoff;
@@ -113,15 +119,17 @@ public final class Sitemap
     private final Instant modified;
 
     private Sitemap( final FileSource files, final Path directory, final int size, final Map<String, Long> plainSizes,
-                     final List<Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests )
+                     final List<Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests,
+                     final List<XmlSize> xmlSizes )
     {
-        this( files, directory, size, plainSizes, lastModified, digests, namedDigests, -1, null, null );
+        this( files, directory, size, plainSizes, lastModified, digests, namedDigests, xmlSizes, -1, null, null );
     }
 
     private Sitemap( final FileSource files, final Path directory, final int size, final Map<String, Long> plainSizes,
                      final List<Instant> lastModified, final List<String> digests, final Map<String, String> namedDigests,
-                     final long count, final Instant cutoff, final Instant modified )
+                     final List<XmlSize> xmlSizes, final long count, final Instant cutoff, final Instant modified )
     {
+        this.xmlSizes = List.copyOf( xmlSizes );
         this.count = count;
         this.cutoff = cutoff;
         this.modified = modified;
@@ -256,7 +264,7 @@ public final class Sitemap
      */
     Sitemap withCount( final long count, final Instant cutoff )
     {
-        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, count, cutoff, modified );
+        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, xmlSizes, count, cutoff, modified );
     }
 
     /**
@@ -268,7 +276,7 @@ public final class Sitemap
         final Instant time = previous != null && previous.modified != null && previous.rootContent().equals( rootContent() )
             ? previous.modified
             : now;
-        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, count, cutoff, time );
+        return new Sitemap( files, directory, size, plainSizes, lastModified, digests, namedDigests, xmlSizes, count, cutoff, time );
     }
 
     /**
@@ -406,6 +414,12 @@ public final class Sitemap
                 file.put( "lastmod", lastmod.toString() );
             }
             file.put( "digest", digests.get( i ) );
+            if ( i < xmlSizes.size() )
+            {
+                file.put( "xmlBytes", xmlSizes.get( i ).bytes() );
+                file.put( "xmlUrls", xmlSizes.get( i ).urls() );
+                file.put( "xmlRoots", xmlSizes.get( i ).roots() );
+            }
         }
         final ObjectNode bytes = description.putObject( "bytes" );
         new TreeMap<>( plainSizes ).forEach( bytes::put );
@@ -423,11 +437,17 @@ public final class Sitemap
     {
         final List<Instant> lastModified = new ArrayList<>();
         final List<String> digests = new ArrayList<>();
+        final List<XmlSize> xmlSizes = new ArrayList<>();
         for ( final JsonNode file : description.required( "files" ) )
         {
             final JsonNode lastmod = file.get( "lastmod" );
             lastModified.add( lastmod == null ? null : Instant.parse( lastmod.asText() ) );
             digests.add( file.required( "digest" ).asText() );
+            if ( file.has( "xmlBytes" ) )
+            {
+                xmlSizes.add( new XmlSize( file.required( "xmlBytes" ).asLong(), file.required( "xmlUrls" ).asInt(),
+                                           file.required( "xmlRoots" ).asInt() ) );
+            }
         }
         final Map<String, Long> plainSizes = new HashMap<>();
         for ( final Map.Entry<String, JsonNode> file : description.required( "bytes" ).properties() )
@@ -447,8 +467,36 @@ public final class Sitemap
         final JsonNode cutoff = description.get( "cutoff" );
         final JsonNode modified = description.get( "modified" );
         return new Sitemap( FileSource.directory( directory ), directory, description.required( "size" ).asInt(), plainSizes, lastModified, digests, namedDigests,
-                            count == null ? -1 : count.asLong(), cutoff == null ? null : Instant.parse( cutoff.asText() ),
+                            xmlSizes.size() == lastModified.size() ? xmlSizes : List.of(), count == null ? -1 : count.asLong(), cutoff == null ? null : Instant.parse( cutoff.asText() ),
                             modified == null ? null : Instant.parse( modified.asText() ) );
+    }
+
+    /**
+     * The size of the {@code sitemap.xml} file converted from the given file of a headless sitemap, with the given base URL in front
+     * of each path and the given site URL for the site itself; empty when it isn't known.
+     *
+     * @param baseUrlBytes the bytes of the base URL in the XML, see {@link SitemapRenderer#xmlTextLength}
+     * @param siteUrlBytes the bytes of the site URL in the XML
+     */
+    Optional<Long> xmlSize( final int number, final long baseUrlBytes, final long siteUrlBytes )
+    {
+        if ( number < 1 || number > xmlSizes.size() )
+        {
+            return Optional.empty();
+        }
+        final XmlSize xmlSize = xmlSizes.get( number - 1 );
+        return Optional.of( xmlSize.bytes() + xmlSize.urls() * baseUrlBytes + xmlSize.roots() * siteUrlBytes );
+    }
+
+    /**
+     * The size of a {@code sitemap.xml} file converted from a headless file, without base URLs.
+     *
+     * @param bytes the bytes of the XML, with an empty {@code <loc>} for each URL
+     * @param urls  the URLs whose {@code <loc>} is the base URL followed by the path
+     * @param roots the URLs of the site itself, whose {@code <loc>} is the site URL
+     */
+    record XmlSize(long bytes, int urls, int roots)
+    {
     }
 
     static String fileName( final int number )
@@ -697,6 +745,14 @@ public final class Sitemap
 
         private final Map<String, Long> plainSizes = new HashMap<>();
 
+        private final List<XmlSize> xmlSizes = new ArrayList<>();
+
+        private long xmlBytes;
+
+        private int xmlUrls;
+
+        private int xmlRoots;
+
         private CountingWriter file;
 
         private CountingWriter urlsetFile;
@@ -754,6 +810,18 @@ public final class Sitemap
                 else
                 {
                     renderer.urlsetEntry( Objects.requireNonNull( urlset ), entry );
+                    // what a sitemap.xml converted from it takes, without the base URL or the site URL in <loc>
+                    final ContentTypeSetting setting = params.setting( entry.contentType() );
+                    xmlBytes += utf8Length( renderer.url( "", entry.lastModified(), setting.changefreq(), setting.priority() ) );
+                    if ( "/".equals( loc ) )
+                    {
+                        xmlRoots++;
+                    }
+                    else
+                    {
+                        xmlBytes += utf8Length( loc );
+                        xmlUrls++;
+                    }
                 }
                 fileUrls++;
                 size++;
@@ -827,7 +895,8 @@ public final class Sitemap
 
         private Sitemap local()
         {
-            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, namedDigests );
+            return new Sitemap( FileSource.directory( directory ), directory, size, plainSizes, lastModified, digests, namedDigests,
+                                xmlSizes );
         }
 
         private boolean unchanged( final Sitemap previous, final int index )
@@ -847,6 +916,10 @@ public final class Sitemap
             }
             close( root, name );
             digests.add( root.digest() );
+            if ( !xml() )
+            {
+                xmlSizes.add( new XmlSize( utf8Length( URLSET_START ) + utf8Length( URLSET_END ), 0, 0 ) );
+            }
             lastModified.add( null );
         }
 
@@ -895,6 +968,9 @@ public final class Sitemap
                 urlsetFile = open( urlsetFileName( number ) );
                 urlset = JSON.createGenerator( urlsetFile );
                 urlset.setRootValueSeparator( new SerializedString( "\n" ) );
+                xmlBytes = utf8Length( URLSET_START ) + utf8Length( URLSET_END );
+                xmlUrls = 0;
+                xmlRoots = 0;
             }
             lastModified.add( null );
             fileUrls = 0;
@@ -917,6 +993,7 @@ public final class Sitemap
                 urlset.close();
                 urlset = null;
                 plainSizes.put( urlsetFileName( lastModified.size() ), Objects.requireNonNull( urlsetFile ).bytes() );
+                xmlSizes.add( new XmlSize( xmlBytes, xmlUrls, xmlRoots ) );
                 digests.add( urlsetFile.digest() );
                 urlsetFile = null;
             }
