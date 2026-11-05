@@ -1,7 +1,9 @@
 import type {
 	GraphQL,
+	LocalContext,
 	Resolver,
 } from '@enonic-types/guillotine';
+import type {ScriptValue} from '@enonic-types/core';
 import type {Site} from '@enonic-types/lib-content';
 import type {
 	SiteMapResolverData,
@@ -14,121 +16,101 @@ import type {
 } from '/types';
 
 
-import {toStr} from '@enonic/js-utils/value/toStr';
 import {
 	get as getContext,
 	run as runInContext
 } from '/lib/xp/context';
 import {
-	DEBUG,
-	// PROFILING,
-	TRACE,
-} from '/constants';
-import {
-	DEFAULT_PRIORITY,
-	DEFAULT_UPDATE_PERIOD,
-} from '/lib/app-sitemapxml/constants';
-import {queryForSitemapContent} from '/lib/app-sitemapxml/queryForSitemapContent';
-import {URLSET_FIELD_NAME} from '/guillotine/constants';
-// import {safeMs} from '/guillotine/safeMs';
+	newSitemapBean,
+	toSitemapParams,
+} from '/lib/app-sitemapxml/sitemapBean';
 
 
-interface SitemapUrl {
+export interface SitemapUrl {
 	changefreq?: tChangeFreq
 	lastmod?: string
 	priority?: tPriority
 	path: string
 }
 
-// @ts-ignore
-// const {currentTimeMillis} = Java.type('java.lang.System') as {
-// 	currentTimeMillis: () => number
-// }
+export interface SitemapFile {
+	number: number
+	lastmod?: string
+}
 
-export const urlset = (graphQL: GraphQL): Resolver<
+// Runs the given function with the bean and params of the sitemap the local context points to,
+// in the context of its project (the sitemap itself is always generated from published content).
+export function withSitemap<T>(
+	localContext: LocalContext<SiteMapResolverLocaleContext>,
+	fn: (bean: ReturnType<typeof newSitemapBean>, params: ScriptValue) => T
+): T {
+	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig> | null;
+	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig;
+	const {project} = localContext;
+	const {
+		authInfo: {
+			principals = []
+		} = {}
+	} = getContext();
+	return runInContext({
+		branch: localContext.branch,
+		repository: `com.enonic.cms.${project}`,
+		principals: principals || []
+	}, () => fn(newSitemapBean(), __.toScriptValue(toSitemapParams({
+		sitePath: site?._path || '',
+		// Guillotine returns paths, so its sitemap doesn't depend on a base URL
+		siteUrl: '',
+		siteConfig: siteConfig || {},
+	}))));
+}
+
+// The app's Base URL override, or else the Base URL configured for the site (or project) in XP.
+export const baseUrl = (_graphQL: GraphQL): Resolver<
+	{},
+	SiteMapResolverData,
+	string|null
+> => (env) => {
+	const localContext = env.localContext as LocalContext<SiteMapResolverLocaleContext>;
+	const siteConfig = JSON.parse(localContext.siteConfigJson) as SitemapXmlSiteConfig | null;
+	if (siteConfig?.overrideDomain) {
+		return siteConfig.overrideDomain;
+	}
+	const site = JSON.parse(localContext.siteJson) as Site<SitemapXmlSiteConfig> | null;
+	return withSitemap(localContext, (bean) => bean.portalBaseUrl(site?._path || '') || null);
+};
+
+export const urlset = (_graphQL: GraphQL): Resolver<
 	{
 		count?: number
 	},
-	SiteMapResolverLocaleContext,
 	SiteMapResolverData,
-	{}
+	SitemapUrl[]
 > => (env) => {
-	// const startMs = PROFILING ? currentTimeMillis() : 0;
+	const count = env.args.count === undefined || env.args.count === null ? 2147483647 : Math.max(0, env.args.count);
+	return withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
+		(bean, params) => JSON.parse(bean.headlessUrlset(params, count)) as SitemapUrl[]);
+};
 
-	TRACE && log.debug('%s resolver env: %s', URLSET_FIELD_NAME, toStr(env));
-	const {
-		args,
-		localContext,
-		// source
-	} = env;
+export const files = (_graphQL: GraphQL): Resolver<
+	{},
+	SiteMapResolverData,
+	SitemapFile[]
+> => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
+	(bean, params) => JSON.parse(bean.headlessFiles(params)) as SitemapFile[]);
 
-	const site = JSON.parse(localContext.siteJson as string) as Site<SitemapXmlSiteConfig>;
-	TRACE && log.debug('%s resolver site: %s', URLSET_FIELD_NAME, toStr(site));
+export const file = (_graphQL: GraphQL): Resolver<
+	{
+		number: number
+	},
+	SiteMapResolverData,
+	SitemapFile | null
+> => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
+	(bean, params) => (JSON.parse(bean.headlessFiles(params)) as SitemapFile[])
+		.filter(({number}) => number === env.args.number)[0] || null);
 
-	const siteConfig = JSON.parse(localContext.siteConfigJson as string) as SitemapXmlSiteConfig;
-	TRACE && log.debug('%s resolver siteConfig: %s', URLSET_FIELD_NAME, toStr(siteConfig));
-
-	const {
-		maxItems = 10000,
-	} = siteConfig || {}; // Handle null (aka no config)
-
-	const maxItemsInt = parseInt(maxItems as string, 10);
-
-	const {
-		count = maxItemsInt
-	} = args;
-
-	const {
-		branch,
-		project,
-	} = localContext;
-
-	const context = getContext();
-	const {
-		authInfo: {
-			principals = [] // Handle undefined
-		} = {}
-	} = context;
-
-	return runInContext({
-		branch,
-		repository: `com.enonic.cms.${project}`,
-		principals: principals || [] // Handle null
-	}, () => {
-		const {
-			changefreq,
-			priority,
-			result
-		} = queryForSitemapContent({
-			count,
-			site,
-			siteConfig
-		});
-
-		// Go through the results and add the corresponding settings for each match.
-		const items: SitemapUrl[] = [];
-		for (let i = 0; i < result.hits.length; i++) {
-			if (result.hits[i].type) {
-				TRACE && log.debug('%s resolver result.hits[%s].type: %s', URLSET_FIELD_NAME, i, result.hits[i].type);
-				const path = result.hits[i]._path.replace(site._path, '') || '/';
-				items.push({
-					changefreq: changefreq[result.hits[i].type] === DEFAULT_UPDATE_PERIOD ? undefined : changefreq[result.hits[i].type],
-					lastmod: result.hits[i].modifiedTime,
-					priority: priority[result.hits[i].type] === DEFAULT_PRIORITY ? undefined : priority[result.hits[i].type],
-					path
-				});
-			}
-		}
-
-		DEBUG && log.debug('%s resolver first item: %s', URLSET_FIELD_NAME, toStr(items[0]));
-		TRACE && log.debug('%s resolver all items: %s', URLSET_FIELD_NAME, toStr(items));
-
-		// if (PROFILING) {
-		// 	const endMs = currentTimeMillis();
-		// 	const durationMs = endMs - startMs;
-		// 	log.debug(`resolvers ${URLSET_FIELD_NAME} durationMs: ${safeMs(durationMs)}`);
-		// }
-
-		return items;
-	}); // runInContext
-} // urlset
+export const fileUrlset = (_graphQL: GraphQL): Resolver<
+	{},
+	SitemapFile,
+	SitemapUrl[]
+> => (env) => withSitemap(env.localContext as LocalContext<SiteMapResolverLocaleContext>,
+	(bean, params) => JSON.parse(bean.headlessFile(params, env.source.number) || '[]') as SitemapUrl[]);

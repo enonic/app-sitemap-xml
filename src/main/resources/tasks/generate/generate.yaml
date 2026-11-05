@@ -1,0 +1,15 @@
+kind: "Task"
+description: "Generate a sitemap"
+form:
+  - type: "TextArea"
+    name: "key"
+    label: "Sitemap key"
+    occurrences:
+      min: 1
+      max: 1
+  - type: "TextLine"
+    name: "changedAt"
+    label: "Content changed at"
+    occurrences:
+      min: 0
+      max: 1

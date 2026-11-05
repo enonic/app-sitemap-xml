@@ -6,20 +6,31 @@ import type {
 
 import {ObjectTypeName} from '@enonic-types/guillotine';
 import {
+	BASE_URL_FIELD_NAME,
+	FILE_FIELD_NAME,
+	FILES_FIELD_NAME,
 	SITEMAP_FIELD_NAME,
 	URLSET_FIELD_NAME,
 	GraphQLTypeName,
 } from '/guillotine/constants';
 import {Sitemap} from './types/Sitemap';
+import {SitemapFile} from './types/SitemapFile';
 import {SitemapUrl} from './types/SitemapUrl';
 import {sitemap} from './resolvers/sitemap';
-import {urlset} from '/guillotine/resolvers/urlset';
+import {
+	baseUrl,
+	file,
+	files,
+	fileUrlset,
+	urlset,
+} from '/guillotine/resolvers/urlset';
 
 
 export const extensions = (graphQL: GraphQL): Extensions => ({
 	types: {
 		[GraphQLTypeName.SITEMAP]: Sitemap(graphQL),
 		[GraphQLTypeName.SITEMAP_URL]: SitemapUrl(graphQL),
+		[GraphQLTypeName.SITEMAP_FILE]: SitemapFile(graphQL),
 	},
 	creationCallbacks: {
 		[ObjectTypeName.HeadlessCms]: (params) => {
@@ -35,7 +46,13 @@ export const extensions = (graphQL: GraphQL): Extensions => ({
 			[SITEMAP_FIELD_NAME]: sitemap(graphQL),
 		},
 		[GraphQLTypeName.SITEMAP]: {
+			[BASE_URL_FIELD_NAME]: baseUrl(graphQL),
 			[URLSET_FIELD_NAME]: urlset(graphQL),
+			[FILES_FIELD_NAME]: files(graphQL),
+			[FILE_FIELD_NAME]: file(graphQL),
+		},
+		[GraphQLTypeName.SITEMAP_FILE]: {
+			[URLSET_FIELD_NAME]: fileUrlset(graphQL),
 		},
 	}
 });

@@ -1,5 +1,5 @@
 export declare interface SiteMapResolverData {
-	baseUrl: string|null
+	baseUrl?: string|null
 }
 
 export declare interface SiteMapResolverLocaleContext {

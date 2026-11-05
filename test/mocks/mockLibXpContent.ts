@@ -35,7 +35,10 @@ export function mockLibXpContent({
 				return null;
 			}),
 			// @ts-ignore
-			getSite: jest.fn<typeof getSite>().mockReturnValue(siteContent),
+			getSite: jest.fn<(params: Parameters<typeof getSite>[0]) => Site<SitemapXmlSiteConfig>|null>().mockImplementation(({key}) =>
+								key === siteContent._path || key.startsWith(siteContent._path + '/')
+									? siteContent
+									: null),
 			getOutboundDependencies: jest.fn().mockReturnValue([]),
 			query: jest.fn().mockReturnValue({
 				count: Object.values(contents).length,
