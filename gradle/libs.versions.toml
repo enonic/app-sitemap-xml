@@ -4,7 +4,7 @@ mockito = "5.24.0"
 
 [libraries]
 # Provided by XP: the version XP 8.1.1 ships with
-jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version = "2.22.4" }
+jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version = "2.23.0" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version = "2.22.4" }
 
 junit-bom                = { module = "org.junit:junit-bom",                        version.ref = "junit" }
