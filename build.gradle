@@ -54,7 +54,7 @@ node {
 
 	// Version of node to download and install (only used if download is true)
 	// It will be unpacked in the workDir
-	version = '24.15.0'
+	version = '24.22.3'
 }
 
 processResources {
